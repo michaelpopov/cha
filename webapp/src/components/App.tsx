@@ -105,6 +105,7 @@ import { NewProviderScreen, ProviderScreen, ProvidersScreen } from './ProviderSe
 import { NewStyleScreen, StyleScreen, StylesScreen } from './StyleSettings';
 import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from './VoiceSettings';
 import { R2StorageScreen } from './R2StorageSettings';
+import { D1SyncScreen } from './D1SyncSettings';
 import { SessionSettingsScreen } from './SessionSettings';
 import { WebSearchSettingsScreen } from './WebSearchSettings';
 import { NotesSettingsScreen } from './NotesSettings';
@@ -491,6 +492,9 @@ function ScreenContent({
     case 'settings-r2-storage': return (
       <R2StorageScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
+    case 'settings-d1-sync': return (
+      <D1SyncScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
+    );
     case 'notes': return (
       <NotesScreen
         toolbarVisible={state.notesToolbarVisible}
@@ -505,6 +509,7 @@ function ScreenContent({
         noteActions={noteActions}
         imports={noteImports}
         noteRequest={state.noteRequest}
+        autoFocus={state.noteAutoFocus}
         destination={state.noteDestination}
         importSource={state.noteImportSource}
         notesEpoch={state.notesEpoch}
@@ -808,6 +813,8 @@ export function App({
   }, []);
   const [noteItems, setNoteItems] = useState<NoteItem[]>([]);
   const [noteActions, setNoteActions] = useState<NoteActions | null>(null);
+  const noteActionsRef = useRef(noteActions);
+  noteActionsRef.current = noteActions;
   const noteImports = useNoteImports({
     client,
     epoch: state.notesEpoch,
@@ -1198,6 +1205,22 @@ export function App({
       unsubscribe();
     };
   }, [clearVaultContext, client, contextEvents, navigate]);
+
+  useEffect(() => {
+    if (!contextEvents) return;
+    const unsubscribe = contextEvents.on<{
+      context_epoch?: number;
+    }>('notes.changed', (event) => {
+      try {
+        if (event.context_epoch !== client.contextEpoch()) return;
+      } catch {
+        return;
+      }
+      noteActionsRef.current?.refresh();
+      if (notesVisibleRef.current) dispatch({ type: 'reload-note' });
+    });
+    return unsubscribe;
+  }, [client, contextEvents, dispatch]);
 
   const returnToStart = useCallback(() => {
     const action = () => {

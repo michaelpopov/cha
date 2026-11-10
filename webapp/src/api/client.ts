@@ -78,6 +78,8 @@ export type CloudStoreDetail = components['schemas']['CloudStoreDetail'];
 export type CloudStoreUpdate = components['schemas']['CloudStoreUpdate'];
 export type R2StorageDetail = components['schemas']['R2StorageDetail'];
 export type SaveR2StorageRequest = components['schemas']['SaveR2StorageRequest'];
+export type D1StorageDetail = components['schemas']['D1StorageDetail'];
+export type SaveD1StorageRequest = components['schemas']['SaveD1StorageRequest'];
 export type VaultUploadCheck = {
   etag: string | null;
   status: 'match' | 'mismatch' | 'missing';
@@ -324,6 +326,9 @@ export interface ChaClient {
   getR2Storage(): Promise<R2StorageDetail | null>;
   saveR2Storage(request: SaveR2StorageRequest): Promise<R2StorageDetail>;
   deleteR2Storage(): Promise<void>;
+  getD1Storage(): Promise<D1StorageDetail | null>;
+  saveD1Storage(request: SaveD1StorageRequest): Promise<D1StorageDetail>;
+  deleteD1Storage(): Promise<void>;
   startAudioDownloadBatch(forumId: string, sessionId: string, request: AudioDownloadBatchRequest): Promise<AudioDownloadBatchAcceptance>;
   startAudioDownload(forumId: string, sessionId: string, entryId: number, request: AudioDownloadRequest): Promise<AudioDownloadAcceptance>;
   getAudioDownloads(forumId: string, sessionId: string, vaultName: string): Promise<AudioDownloadStatus>;
@@ -714,6 +719,13 @@ export function isR2StorageDetail(value: unknown): value is R2StorageDetail {
     && typeof value.url === 'string'
     && typeof value.access_key_id === 'string'
     && typeof value.has_secret_key === 'boolean';
+}
+
+export function isD1StorageDetail(value: unknown): value is D1StorageDetail {
+  return isRecord(value) && hasIdentity(value)
+    && typeof value.account_id === 'string'
+    && typeof value.database_id === 'string'
+    && typeof value.has_api_token === 'boolean';
 }
 
 export function isOpenAiAuth(value: unknown): value is OpenAiAuth {

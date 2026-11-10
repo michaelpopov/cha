@@ -5039,6 +5039,160 @@ TEST_F(BridgeRouterTest, StoreUploadReportsEditablePreflightAndOrdinaryFolderDel
 }
 
 
+TEST_F(BridgeRouterTest, D1StorageBridgeValidatesAndHidesTokens) {
+    bootstrap_epoch();
+    auto reply = call("d1Storage.get");
+    ASSERT_TRUE(reply["ok"]);
+    EXPECT_TRUE(reply["result"].is_null());
+    reply = call("d1Storage.save", {{"display_name", "D1"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    reply = call(
+        "d1Storage.save",
+        {{"display_name", "D1"},
+         {"account_id", ""},
+         {"database_id", "d"},
+         {"api_token", "t"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    reply = call(
+        "d1Storage.save",
+        {{"display_name", "D1"},
+         {"account_id", "a"},
+         {"database_id", "d"},
+         {"api_token", "t"},
+         {"extra", true}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    // The fixture vault has no machine name, so a valid save is refused
+    // before any network use.
+    reply = call(
+        "d1Storage.save",
+        {{"display_name", "D1"},
+         {"account_id", "a"},
+         {"database_id", "d"},
+         {"api_token", "t"}});
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
+    EXPECT_EQ(reply["error"]["message"],
+        "This machine has no name. Add machine to app.toml, then save again.");
+    reply = call("d1Storage.delete");
+    EXPECT_FALSE(reply["ok"]);
+    EXPECT_EQ(reply["error"]["code"], "not_found");
+}
+
+TEST_F(BridgeRouterTest, D1StorageBridgeSavesDisconnectsAndNotifiesNotes) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    auto command = make_command(workspace, database);
+    command.machine = "mac";
+    nlohmann::json incoming = nlohmann::json::array();
+    for (const auto name : {"Incoming folder", "Another incoming folder"}) {
+        const nlohmann::json record{
+            {"kind", "note.create"}, {"path", {name}}, {"item", "folder"},
+        };
+        incoming.push_back({
+            {"rowid", incoming.size() + 1}, {"piece", 1}, {"pieces", 1},
+            {"record", record.dump()},
+        });
+    }
+    std::atomic_bool fail_drop{false};
+    D1Client::Transport transport =
+        [&incoming, &fail_drop](const std::string&, const std::string& body,
+            const std::vector<std::string>&) -> std::pair<long, std::string> {
+        const auto batch = nlohmann::json::parse(body).at("batch");
+        const auto sql = batch.at(0).at("sql").get<std::string>();
+        nlohmann::json rows = nlohmann::json::array();
+        if (sql.starts_with("SELECT name FROM sqlite_master")) {
+            rows.push_back({{"name", "q/Test/mac"}});
+        } else if (sql.starts_with("SELECT rowid")) {
+            rows = incoming;
+        } else if (sql.starts_with("DELETE FROM")) {
+            incoming.clear();
+        } else if (sql.starts_with("DROP TABLE") && fail_drop) {
+            return {500, R"({"success":false})"};
+        }
+        const auto result = nlohmann::json::array({{{"success", true}, {"results", rows}}});
+        return {200, nlohmann::json{{"success", true}, {"result", result}}.dump()};
+    };
+    auto application = app::Application::open(command, {}, {}, transport);
+    auto now = std::chrono::steady_clock::now();
+    BridgeRouter router(*application, {.command_deadline = 1s, .clock = [&] { return now; }});
+    const std::string connection = router.open_connection();
+    const auto epoch = application->context_epoch();
+    std::uint64_t next_id = 1;
+    int note_events = 0;
+    auto receive = [&] {
+        auto delivery = wait_delivery(router, connection);
+        if (delivery) {
+            for (const auto& message : delivery->at("messages")) {
+                if (message.value("event", "") == "notes.changed") {
+                    EXPECT_EQ(message.at("context_epoch"), epoch);
+                    ++note_events;
+                }
+            }
+            ack_delivery(router, connection, *delivery);
+        }
+        return delivery;
+    };
+    auto round_trip = [&](std::string_view method, nlohmann::json params) {
+        const auto id = next_id++;
+        router.handle_request(
+            connection, request_json(connection, id, epoch, method, std::move(params)).dump());
+        if (method != "d1Storage.get") {
+            // D1's own transport timeouts can outlast the ordinary bridge deadline.
+            now += 2s;
+            router.expire_timeouts();
+        }
+        while (auto delivery = receive()) {
+            auto reply = reply_with_id(*delivery, id);
+            if (!reply.empty()) return reply;
+        }
+        ADD_FAILURE() << "No reply for " << method;
+        return nlohmann::json{};
+    };
+    auto saved = round_trip(
+        "d1Storage.save",
+        {{"display_name", "D1"},
+         {"account_id", "a"},
+         {"database_id", "d"},
+         {"api_token", "t"}});
+    ASSERT_TRUE(saved["ok"]) << saved.dump();
+    EXPECT_EQ(saved["result"]["account_id"], "a");
+    EXPECT_TRUE(saved["result"]["has_api_token"].get<bool>());
+    EXPECT_FALSE(saved["result"].contains("api_token"));
+    if (note_events == 0) ASSERT_TRUE(receive());
+    EXPECT_EQ(note_events, 1);
+    const auto notes = application->list_note_items(epoch);
+    EXPECT_NE(std::ranges::find(notes, "Incoming folder", &NoteItem::name), notes.end());
+    EXPECT_NE(std::ranges::find(notes, "Another incoming folder", &NoteItem::name), notes.end());
+    // Unchanged valid credentials are accepted and keep the saved token.
+    auto unchanged = round_trip(
+        "d1Storage.save",
+        {{"display_name", "D1"},
+         {"account_id", "a"},
+         {"database_id", "d"},
+         {"api_token", nullptr}});
+    ASSERT_TRUE(unchanged["ok"]) << unchanged.dump();
+    EXPECT_TRUE(unchanged["result"]["has_api_token"].get<bool>());
+    auto loaded_detail = round_trip("d1Storage.get", nlohmann::json::object());
+    ASSERT_TRUE(loaded_detail["ok"]);
+    EXPECT_EQ(loaded_detail["result"]["database_id"], "d");
+    EXPECT_TRUE(loaded_detail["result"]["has_api_token"].get<bool>());
+    EXPECT_FALSE(loaded_detail["result"].contains("api_token"));
+    // A remote drop failure still disconnects locally.
+    fail_drop = true;
+    auto removed = round_trip("d1Storage.delete", nlohmann::json::object());
+    ASSERT_TRUE(removed["ok"]) << removed.dump();
+    auto after = round_trip("d1Storage.get", nlohmann::json::object());
+    ASSERT_TRUE(after["ok"]);
+    EXPECT_TRUE(after["result"].is_null());
+    EXPECT_EQ(note_events, 1);
+    router.shutdown();
+    application->request_shutdown();
+    EXPECT_TRUE(application->join_shutdown(5s));
+}
+
 TEST_F(BridgeRouterTest, StoreChoicesMatchTheSharedWireFixture) {
     bootstrap_epoch();
     const auto openai = application_->create_api_key(

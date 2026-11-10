@@ -36,6 +36,7 @@ import {
   isProviderDetail,
   isProviderSummary,
   isR2StorageDetail,
+  isD1StorageDetail,
   isSessionLabelResult,
   isSessionListingArray,
   isSessionSnapshot,
@@ -77,6 +78,8 @@ import {
   type ProviderUpdate,
   type R2StorageDetail,
   type SaveR2StorageRequest,
+  type D1StorageDetail,
+  type SaveD1StorageRequest,
   type StyleDetail,
   type StyleUpdate,
   type VaultDetail,
@@ -828,6 +831,21 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     ),
     deleteR2Storage: async () => {
       await call('r2Storage.delete', {}, isRecord);
+    },
+    getD1Storage: () => call(
+      'd1Storage.get',
+      {},
+      (value): value is D1StorageDetail | null => (
+        isNullable(value, isD1StorageDetail)
+      ),
+    ),
+    saveD1Storage: (request: SaveD1StorageRequest) => call(
+      'd1Storage.save',
+      request,
+      isD1StorageDetail,
+    ),
+    deleteD1Storage: async () => {
+      await call('d1Storage.delete', {}, isRecord);
     },
     startAudioDownloadBatch: (forumId, sessionId, request) => call(
       'audio.startBatch',

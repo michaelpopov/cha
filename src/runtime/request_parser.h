@@ -51,5 +51,6 @@ std::string parse_rename_display_name(const nlohmann::json& json);
 ReplaceApiKeyValueRequest parse_replace_api_key_value_request(
     const nlohmann::json& json);
 SaveR2StorageRequest parse_save_r2_storage_request(const nlohmann::json& json);
+SaveD1StorageRequest parse_save_d1_storage_request(const nlohmann::json& json);
 
 } // namespace cha

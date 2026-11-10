@@ -25,10 +25,22 @@ describe('application navigation reducer', () => {
     expect(state.noteRequest).toBe(1);
     for (const action of [
       { type: 'open-note', noteId: 4 }, { type: 'open-note', noteId: 5 },
-      { type: 'close-note' }, { type: 'vault-context-reset' }, { type: 'show-settings' },
+      { type: 'reload-note' }, { type: 'close-note' },
+      { type: 'vault-context-reset' }, { type: 'show-settings' },
     ] satisfies AppAction[]) {
       expect(appReducer(state, action).noteImportSource).toBeUndefined();
     }
+  });
+
+  it('reloads the open note without switching the active split panel', () => {
+    let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
+    state = appReducer(state, { type: 'open-note', noteId: 42 });
+    state = appReducer(state, { type: 'show-chat' });
+    expect(appReducer(state, { type: 'reload-note' })).toEqual({
+      ...state,
+      noteRequest: state.noteRequest + 1,
+      noteAutoFocus: false,
+    });
   });
 
   it('retains a hidden note across unrelated actions but clears it on leaving the workspace', () => {

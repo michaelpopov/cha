@@ -357,6 +357,11 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
       id: 'api_key_1', display_name, url, access_key_id, has_secret_key: true,
     }),
     deleteR2Storage: async () => undefined,
+    getD1Storage: async () => null,
+    saveD1Storage: async ({ display_name, account_id, database_id }) => ({
+      id: 'api_key_1', display_name, account_id, database_id, has_api_token: true,
+    }),
+    deleteD1Storage: async () => undefined,
     startAudioDownload: async (forum, session, entry_id) => {
       const key = `${forum}/${session}`;
       const ids = audioCache.get(key) ?? new Set<number>();

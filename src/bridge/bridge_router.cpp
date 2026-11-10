@@ -90,6 +90,8 @@ bool deadline_exempt(Method method) noexcept {
     case Method::cloud_store_get:
     case Method::cloud_store_update:
     case Method::cloud_store_delete:
+    case Method::d1_storage_save:
+    case Method::d1_storage_delete:
         return true;
     default:
         return false;
@@ -228,6 +230,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         std::optional<ActiveSubscription> active;
         std::deque<PendingReply> pending_replies;
         std::optional<nlohmann::json> pending_context;
+        std::vector<std::uint64_t> pending_notes;
         std::map<std::int64_t, std::uint64_t> pending_audio;
         std::map<std::int64_t, std::uint64_t> pending_compression;
         std::optional<nlohmann::json> pending_invalidation;
@@ -258,6 +261,15 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     impl->publish_context_changed(epoch, state);
                 }
             });
+    }
+
+    void listen_for_notes_changed() {
+        auto weak = std::weak_ptr<Impl>(shared_from_this());
+        application.set_notes_changed([weak](std::uint64_t epoch) {
+            if (auto impl = weak.lock()) {
+                impl->publish_notes_changed(epoch);
+            }
+        });
     }
 
     void listen_for_note_audio() {
@@ -322,6 +334,16 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                         && cause->connection_id == connection->id
                         && changes_context(cause->method)
                         ? std::optional{cause->id} : std::nullopt);
+        }
+        notify();
+    }
+
+    void publish_notes_changed(std::uint64_t epoch) {
+        std::lock_guard lock(mutex);
+        if (application.check_context(epoch)) return;
+        for (auto& [id, connection] : connections) {
+            (void)id;
+            if (!connection->invalid) connection->pending_notes.push_back(epoch);
         }
         notify();
     }
@@ -450,6 +472,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         }
         connection->outstanding.clear();
         connection->pending_context.reset();
+        connection->pending_notes.clear();
         connection->pending_audio.clear();
         connection->pending_compression.clear();
         if (!drop_pending && first_invalidation) {
@@ -1860,6 +1883,7 @@ BridgeRouter::BridgeRouter(app::Application& application)
 BridgeRouter::BridgeRouter(app::Application& application, Options options)
     : impl_(std::make_shared<Impl>(application, std::move(options))) {
     impl_->listen_for_context_changes();
+    impl_->listen_for_notes_changed();
     impl_->listen_for_note_audio();
     impl_->listen_for_compression();
 }
@@ -1867,6 +1891,7 @@ BridgeRouter::BridgeRouter(app::Application& application, Options options)
 BridgeRouter::~BridgeRouter() {
     shutdown();
     impl_->application.set_context_changed({});
+    impl_->application.set_notes_changed({});
     impl_->application.set_note_audio_changed({});
     impl_->application.set_note_compression_changed({});
 }
@@ -2048,6 +2073,12 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
         messages.push_back(std::move(*connection->pending_context));
         connection->pending_context.reset();
     }
+    for (const auto epoch : connection->pending_notes) {
+        if (!impl_->application.check_context(epoch)) {
+            messages.push_back(notes_changed_event(connection->id, epoch));
+        }
+    }
+    connection->pending_notes.clear();
     for (const auto& [id, epoch] : connection->pending_audio) {
         if (!impl_->application.check_context(epoch))
             messages.push_back({{"connection_id", connection->id}, {"event", "noteAudio.changed"},
@@ -2126,6 +2157,7 @@ bool BridgeRouter::wait_for_work(std::chrono::milliseconds timeout) {
             if (!connection->in_flight
                 && (!connection->pending_replies.empty()
                     || connection->pending_context
+                    || !connection->pending_notes.empty()
                     || connection->pending_invalidation
                     || connection->pending_session
                     || std::any_of(connection->outstanding.begin(), connection->outstanding.end(),

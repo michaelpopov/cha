@@ -63,17 +63,20 @@ async function createUrlNote(url: string) {
 }
 
 function contextBus() {
-  type Handler = (event: { causing_request_id?: number; state?: string }) => void;
-  let handler: Handler | null = null;
+  type Handler = (event: { causing_request_id?: number; state?: string; context_epoch?: number }) => void;
+  const handlers = new Map<string, Handler>();
   return {
     emit() {
-      handler?.({ causing_request_id: 1, state: 'running' });
+      handlers.get('app.contextChanged')?.({ causing_request_id: 1, state: 'running' });
+    },
+    notesChanged() {
+      handlers.get('notes.changed')?.({ context_epoch: 1 });
     },
     layout(mode: string) { window.__CHA_NATIVE_SET_LAYOUT__?.(mode); },
-    on<T>(_event: string, next: (payload: T) => void) {
-      handler = next as Handler;
+    on<T>(event: string, next: (payload: T) => void) {
+      handlers.set(event, next as Handler);
       return () => {
-        if (handler === next) handler = null;
+        if (handlers.get(event) === next) handlers.delete(event);
       };
     },
   };
@@ -102,6 +105,39 @@ function historyAction(name: 'Undo' | 'Redo') {
 }
 
 describe('Notes in the application', () => {
+  it.each(['chat', 'note', 'chat during load'])('keeps typing focus in %s when an incoming change reloads the open note', async (focus) => {
+    const bus = contextBus();
+    let finish!: () => void;
+    const getNote = vi.fn()
+      .mockResolvedValueOnce({ id: plan.id, document: noteDocument('Saved plan') })
+      .mockImplementation(() => new Promise(resolve => {
+        finish = () => resolve({ id: plan.id, document: noteDocument('Incoming plan') });
+      }));
+    const saveNote = vi.fn(async () => undefined);
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, saveNote })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    act(() => bus.layout('split'));
+    const chat = await screen.findByRole('textbox', { name: 'Message' });
+    act(() => {
+      if (focus === 'chat') chat.focus();
+      else noteEditor().view.focus();
+    });
+    fireEvent.change(chat, { target: { value: 'Keep typing here' } });
+
+    act(() => bus.notesChanged());
+    await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
+    if (focus === 'chat during load') act(() => chat.focus());
+    await act(async () => finish());
+    await screen.findByText('Incoming plan');
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    expect(focus === 'note' ? noteEditor().view.dom : chat).toHaveFocus();
+    expect(chat).toHaveValue('Keep typing here');
+    expect(getNote).toHaveBeenCalledTimes(2);
+    expect(saveNote).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['https://example.org/article', false], ['https://youtu.be/video', true],
   ] as const)('creates, imports, titles, saves, and locks %s without submitting the prompt (hidden=%s)', async (url, hidden) => {
@@ -340,7 +376,10 @@ describe('Notes in the application', () => {
   it('rejects stale folder targets after a context notice without a causing request', async () => {
     let epoch = 1;
     let changed!: (event: { state: string }) => void;
-    const bus = { on: vi.fn((_name, handler) => { changed = handler; return () => {}; }) };
+    const bus = { on: vi.fn((name: string, handler: (event: never) => void) => {
+      if (name === 'app.contextChanged') changed = handler as never;
+      return () => {};
+    }) };
     const getNote = vi.fn();
     const start = vi.fn();
     render(<App contextEvents={bus} client={fixtureClient({

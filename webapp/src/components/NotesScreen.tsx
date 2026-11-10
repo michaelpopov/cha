@@ -836,6 +836,7 @@ export function NotesScreen({
   client,
   notesEpoch,
   noteRequest,
+  autoFocus = true,
   destination,
   importSource,
   imports,
@@ -856,6 +857,7 @@ export function NotesScreen({
   client: ChaClient & NotesClient;
   notesEpoch: number;
   noteRequest: number;
+  autoFocus?: boolean;
   destination?: AnnotationDestination;
   importSource?: NoteImportSource;
   imports: NoteImports;
@@ -887,6 +889,12 @@ export function NotesScreen({
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  function focusLoadedEditor(current: Editor) {
+    // An automatic reload may replace the focused editor, leaving focus on
+    // body. It must not take focus from a chat draft, dialog, or other control.
+    if (autoFocus || document.activeElement === document.body
+      || current.view.dom.contains(document.activeElement)) focusNotesEditor(current);
+  }
   const hostRef = useRef<HTMLDivElement | null>(null);
   const scrollTopRef = useRef(0);
   const activeItem = noteItems.find((item) => item.id === activeNoteId);
@@ -1082,7 +1090,7 @@ export function NotesScreen({
       restore();
       if (pictures.every((picture) => picture.complete)) stopRestoring();
     };
-    focusNotesEditor(editor);
+    focusLoadedEditor(editor);
     if (!restore() && destination) setCommandError('This entry has changed or was removed.');
     if (pictures.some((picture) => !picture.complete)) {
       element.addEventListener('load', pictureLoaded, true);
@@ -1104,7 +1112,7 @@ export function NotesScreen({
     editorLiveRef.current = editor;
     const dom = editor.view.dom as HTMLElement & { chaEditor?: Editor };
     dom.chaEditor = editor;
-    focusNotesEditor(editor);
+    focusLoadedEditor(editor);
     return () => {
       setEditing(false);
       if (dom.chaEditor === editor) delete dom.chaEditor;

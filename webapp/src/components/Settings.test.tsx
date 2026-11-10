@@ -18,6 +18,7 @@ import { NewProviderScreen, ProviderScreen, ProvidersScreen } from './ProviderSe
 import { NewStyleScreen, StyleScreen, StylesScreen } from './StyleSettings';
 import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from './VoiceSettings';
 import { R2StorageScreen } from './R2StorageSettings';
+import { D1SyncScreen } from './D1SyncSettings';
 import { SettingsNavigation } from './Settings';
 import { SessionSettingsScreen } from './SessionSettings';
 import { NotesSettingsScreen } from './NotesSettings';
@@ -968,6 +969,144 @@ describe('Settings screens', () => {
       }),
     });
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
+  });
+
+  it('creates D1 credentials without retaining the token on screen', async () => {
+    const saveD1Storage = vi.fn(async ({ display_name, account_id, database_id }) => ({
+      id: 'api_key_1', display_name, account_id, database_id, has_api_token: true,
+    }));
+    render(
+      <D1SyncScreen
+        client={fixtureClient({ getD1Storage: async () => null, saveD1Storage })}
+        dispatch={vi.fn()} navigate={vi.fn()}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.type(await screen.findByLabelText('Account ID'), 'account-one');
+    await userEvent.type(screen.getByLabelText('Database ID'), 'database-one');
+    await userEvent.type(screen.getByLabelText('API token'), 'private-token');
+    await userEvent.click(screen.getByRole('button', { name: 'Save D1 credentials' }));
+
+    expect(saveD1Storage).toHaveBeenCalledWith({
+      display_name: 'D1',
+      account_id: 'account-one',
+      database_id: 'database-one',
+      api_token: 'private-token',
+    });
+    expect(screen.getByLabelText('API token')).toHaveValue('');
+  });
+
+  it('saves unchanged D1 credentials with a retained token and disconnects', async () => {
+    const detail = {
+      id: 'api_key_1',
+      display_name: 'D1',
+      account_id: 'account-one',
+      database_id: 'database-one',
+      has_api_token: true,
+    };
+    const saveD1Storage = vi.fn(async (request) => ({ ...detail, ...request, has_api_token: true }));
+    const deleteD1Storage = vi.fn(async () => undefined);
+    const dispatch = vi.fn();
+    const navigate = vi.fn();
+    render(
+      <D1SyncScreen
+        client={fixtureClient({
+          getD1Storage: async () => detail,
+          saveD1Storage,
+          deleteD1Storage,
+        })}
+        dispatch={dispatch} navigate={navigate}
+        state={initialAppState}
+      />,
+    );
+
+    // Unchanged valid credentials stay saveable because Save also recovers
+    // a missing remote queue.
+    await screen.findByLabelText('Account ID');
+    expect(screen.getByRole('button', { name: 'Save D1 credentials' })).toBeEnabled();
+    await userEvent.clear(screen.getByLabelText('Account ID'));
+    await userEvent.type(screen.getByLabelText('API token'), 'draft-token');
+    await userEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(screen.getByLabelText('Account ID')).toHaveValue('account-one');
+    expect(screen.getByLabelText('API token')).toHaveValue('');
+    await userEvent.click(screen.getByRole('button', { name: 'Save D1 credentials' }));
+    expect(saveD1Storage).toHaveBeenCalledWith({
+      display_name: 'D1',
+      account_id: 'account-one',
+      database_id: 'database-one',
+      api_token: null,
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Disconnect from D1' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(
+      'Its D1 queue and its unsent changes will be deleted.');
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole(
+      'button', { name: 'Disconnect from D1' },
+    ));
+    expect(deleteD1Storage).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
+  });
+
+  it('cancels D1 disconnect confirmation without removing credentials', async () => {
+    const deleteD1Storage = vi.fn(async () => undefined);
+    const detail = {
+      id: 'api_key_1', display_name: 'D1', account_id: 'a',
+      database_id: 'd', has_api_token: true,
+    };
+    render(
+      <D1SyncScreen
+        client={fixtureClient({ getD1Storage: async () => detail, deleteD1Storage })}
+        dispatch={vi.fn()} navigate={vi.fn()}
+        state={initialAppState}
+      />,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Disconnect from D1' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole(
+      'button', { name: 'Cancel' },
+    ));
+    expect(deleteD1Storage).not.toHaveBeenCalled();
+  });
+
+  it('shows D1 credential load and save failures', async () => {
+    const { unmount } = render(
+      <D1SyncScreen
+        client={fixtureClient({
+          getD1Storage: async () => {
+            throw new ChaError('internal_error', 'The request could not be completed.');
+          },
+        })}
+        dispatch={vi.fn()} navigate={vi.fn()}
+        state={initialAppState}
+      />,
+    );
+    expect(await screen.findByText('D1 credentials could not be loaded.')).toBeInTheDocument();
+    unmount();
+
+    const saveD1Storage = vi.fn<ChaClient['saveD1Storage']>()
+      .mockRejectedValueOnce(new ChaError(
+        'invalid_argument',
+        'D1 could not be reached. Check the account ID, database ID, and API token.'))
+      .mockRejectedValueOnce(new ChaError(
+        'invalid_argument',
+        'This machine has no name. Add machine to app.toml, then save again.'));
+    render(
+      <D1SyncScreen
+        client={fixtureClient({ getD1Storage: async () => null, saveD1Storage })}
+        dispatch={vi.fn()} navigate={vi.fn()}
+        state={initialAppState}
+      />,
+    );
+    await userEvent.type(await screen.findByLabelText('Account ID'), 'a');
+    await userEvent.type(screen.getByLabelText('Database ID'), 'd');
+    await userEvent.type(screen.getByLabelText('API token'), 't');
+    await userEvent.click(screen.getByRole('button', { name: 'Save D1 credentials' }));
+    expect(await screen.findByText(
+      'D1 could not be reached. Check the account ID, database ID, and API token.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Save D1 credentials' }));
+    expect(await screen.findByText(
+      'This machine has no name. Add machine to app.toml, then save again.')).toBeInTheDocument();
   });
 
   it('stores a saved-key reference in a provider', async () => {
@@ -2155,6 +2294,8 @@ describe('Settings screens', () => {
     expect(await screen.findByRole('button', { name: /Google/ })).toHaveTextContent('Used by Gemini');
     await userEvent.click(screen.getByRole('button', { name: /R2 storage/ }));
     expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-r2-storage' });
+    await userEvent.click(screen.getByRole('button', { name: /D1 sync/ }));
+    expect(dispatch).toHaveBeenCalledWith({ type: 'show-settings-d1-sync' });
   });
 
   it('removes a saved API key after an in-page confirmation', async () => {

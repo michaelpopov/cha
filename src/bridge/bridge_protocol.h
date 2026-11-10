@@ -143,6 +143,9 @@ enum class Method {
     r2_storage_get,
     r2_storage_save,
     r2_storage_delete,
+    d1_storage_get,
+    d1_storage_save,
+    d1_storage_delete,
     openai_auth_get,
     openai_auth_start,
     openai_auth_poll,
@@ -242,6 +245,9 @@ struct DeliveryAck {
     std::uint64_t context_epoch,
     std::string_view state,
     std::optional<std::uint64_t> causing_request_id = std::nullopt);
+[[nodiscard]] nlohmann::json notes_changed_event(
+    std::string_view connection_id,
+    std::uint64_t context_epoch);
 [[nodiscard]] nlohmann::json connection_invalidated_event(
     std::string_view connection_id);
 

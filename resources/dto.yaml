@@ -1031,6 +1031,37 @@ components:
           description: Null keeps the existing secret key; creating requires a value.
           type: [string, "null"]
 
+    D1StorageDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, account_id, database_id, has_api_token]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        account_id:
+          type: string
+        database_id:
+          type: string
+        has_api_token:
+          type: boolean
+
+    SaveD1StorageRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, account_id, database_id, api_token]
+      properties:
+        display_name:
+          type: string
+        account_id:
+          type: string
+        database_id:
+          type: string
+        api_token:
+          description: Null keeps the existing API token; creating requires a value.
+          type: [string, "null"]
+
     StyleOption:
       type: object
       additionalProperties: false

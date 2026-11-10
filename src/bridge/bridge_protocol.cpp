@@ -129,6 +129,9 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::r2_storage_get, "r2Storage.get"},
     {Method::r2_storage_save, "r2Storage.save"},
     {Method::r2_storage_delete, "r2Storage.delete"},
+    {Method::d1_storage_get, "d1Storage.get"},
+    {Method::d1_storage_save, "d1Storage.save"},
+    {Method::d1_storage_delete, "d1Storage.delete"},
     {Method::openai_auth_get, "openaiAuth.get"},
     {Method::openai_auth_start, "openaiAuth.start"},
     {Method::openai_auth_poll, "openaiAuth.poll"},
@@ -447,6 +450,16 @@ nlohmann::json context_changed_event(
     };
     if (causing_request_id) event["causing_request_id"] = *causing_request_id;
     return event;
+}
+
+nlohmann::json notes_changed_event(
+    std::string_view connection_id,
+    std::uint64_t context_epoch) {
+    return {
+        {"connection_id", connection_id},
+        {"event", "notes.changed"},
+        {"context_epoch", context_epoch},
+    };
 }
 
 nlohmann::json connection_invalidated_event(

@@ -209,12 +209,11 @@ async function nativeParity() {
     check(box.top >= 0 && box.bottom <= innerHeight + 1, 'Store dialog exceeds height');
     check(!storeDialog.querySelector('h1,h2,h3'), 'Store dialog has a visible panel title');
     await snapshot('store-upload');
-    setValue(field('Provider', storeDialog), 'google');
-    check(field('API key', storeDialog).value === '', 'Provider retained an incompatible key');
+    check(field('API key', storeDialog).value === '', 'Upload selected a missing API key');
     storeDialog.dispatchEvent(new Event('cancel', { cancelable: true }));
     await until('Upload closed', () => !document.querySelector('dialog'), true);
     check(document.activeElement?.getAttribute('aria-label') === 'UI store empty', 'Upload did not restore row focus');
-    completed.push('Folder store root exclusion, no Remove item, provider choices, missing keys, sizing and Escape focus');
+    completed.push('Folder store root exclusion, no Remove item, missing keys, sizing and Escape focus');
 
     step = 'folder delete with an open note';
     const failureRow = Array.from(document.querySelectorAll('.cha-notes-row')).find(row => row.getAttribute('aria-label') === 'UI store failure');
@@ -318,6 +317,26 @@ async function nativeParity() {
       await screen('Settings');
       completed.push(name);
     }
+
+    step = 'D1 sync settings';
+    await click('API Keys', await screen('Settings'));
+    const keys = await screen('API keys settings');
+    await click('D1 sync', keys);
+    check(keys.textContent.includes('Configure synchronization between machines'),
+      'D1 sync row description is missing');
+    const d1 = await screen('D1 sync settings');
+    await until('D1 credential fields', () => d1.querySelector('form'));
+    const account = field('Account ID', d1);
+    check(account.placeholder === 'Paste account ID', 'Unexpected D1 account placeholder');
+    check(field('Database ID', d1).placeholder === 'Paste database ID', 'Unexpected D1 database placeholder');
+    check(field('API token', d1).placeholder === 'Paste API token', 'Unexpected D1 token placeholder');
+    check(button('Save D1 credentials', d1).disabled, 'D1 save should start disabled');
+    setValue(account, 'draft-account');
+    await click('Reset', d1);
+    check(account.value === '', 'D1 Reset did not clear the draft');
+    await click('API Keys', d1);
+    await click('Settings', await screen('API keys settings'));
+    completed.push('D1 sync settings');
 
     step = 'style save and reset';
     await click('Styles', await screen('Settings'));

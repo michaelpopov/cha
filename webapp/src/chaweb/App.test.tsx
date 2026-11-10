@@ -245,6 +245,21 @@ it('loads a direct note without metadata or voice settings and returns to its co
   expect(screen.getByRole('button', { name: 'Folder' })).toHaveTextContent('Reading');
 });
 
+it('reads a synced note again when it is reopened', async () => {
+  window.history.replaceState(null, '', `/${noteHash(1)}`);
+  const item = noteItem({ id: 1, parent_id: 10, name: 'First article' });
+  const getNote = vi.fn<ChaWebClient['getNote']>()
+    .mockResolvedValueOnce({ item, document: noteDocument(paragraph('Original note')) })
+    .mockResolvedValue({ item, document: noteDocument(paragraph('Synced note')) });
+  render(<App client={notesClient({ getNote })} />);
+  await screen.findByText('Original note');
+  await userEvent.click(screen.getByRole('link', { name: 'Notes' }));
+  expect(getNote).toHaveBeenCalledTimes(1);
+  await userEvent.click(await screen.findByRole('link', { name: 'First article' }));
+  expect(await screen.findByText('Synced note')).toBeInTheDocument();
+  expect(getNote).toHaveBeenCalledTimes(2);
+});
+
 it('saves list scroll only on application departure and restores it with existing history state', async () => {
   window.history.replaceState({ other: 'kept' }, '', `/${notesHash(10)}`);
   const api = notesClient();

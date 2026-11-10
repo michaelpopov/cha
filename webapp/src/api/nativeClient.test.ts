@@ -586,6 +586,13 @@ describe('native CHA client', () => {
       access_key_id: 'access',
       has_secret_key: true,
     };
+    const d1 = {
+      id: 'api_key_3',
+      display_name: 'D1',
+      account_id: 'account-one',
+      database_id: 'database-one',
+      has_api_token: true,
+    };
     const bridge = createFakeNativeBridge({
       'provider.list': () => [{
         id: 'test', display_name: 'Test', model: 'fake', host: 'test',
@@ -593,6 +600,9 @@ describe('native CHA client', () => {
       'provider.get': () => provider,
       'apiKey.list': () => [key],
       'r2Storage.get': () => r2,
+      'd1Storage.get': () => d1,
+      'd1Storage.save': () => d1,
+      'd1Storage.delete': () => ({}),
       'openaiAuth.get': () => ({ status: 'signed_out' }),
       'voiceInput.runtime': () => ({
         provider: 'openai',
@@ -610,6 +620,12 @@ describe('native CHA client', () => {
     await expect(client.getProvider('test')).resolves.toMatchObject({ id: 'test' });
     await expect(client.listApiKeys()).resolves.toEqual([key]);
     await expect(client.getR2Storage()).resolves.toEqual(r2);
+    await expect(client.getD1Storage()).resolves.toEqual(d1);
+    await expect(client.saveD1Storage({
+      display_name: 'D1', account_id: 'account-one',
+      database_id: 'database-one', api_token: null,
+    })).resolves.toEqual(d1);
+    await expect(client.deleteD1Storage()).resolves.toBeUndefined();
     await expect(client.getOpenAiAuth()).resolves.toEqual({ status: 'signed_out' });
     await expect(client.getVoiceInputRuntime()).resolves.toEqual({
       provider: 'openai',

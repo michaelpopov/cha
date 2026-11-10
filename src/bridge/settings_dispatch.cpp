@@ -205,6 +205,19 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         application.delete_r2_storage(epoch);
         result = nlohmann::json::object();
         break;
+    case Method::d1_storage_get:
+        require_only_keys(params, {});
+        result = encode_optional(application.get_d1_storage(epoch));
+        break;
+    case Method::d1_storage_save:
+        result = application.save_d1_storage(
+            parse_save_d1_storage_request(params), epoch);
+        break;
+    case Method::d1_storage_delete:
+        require_only_keys(params, {});
+        application.disconnect_d1_storage(epoch);
+        result = nlohmann::json::object();
+        break;
     case Method::openai_auth_get:
         require_only_keys(params, {});
         result = application.openai_auth_status(epoch);

@@ -65,6 +65,7 @@ export type MainView =
   | 'settings-new-api-key'
   | 'settings-api-key'
   | 'settings-r2-storage'
+  | 'settings-d1-sync'
   | 'settings-cloud-stores'
   | 'settings-cloud-store-key'
   | 'settings-cloud-store';
@@ -119,6 +120,7 @@ export interface AppState {
   activeNoteId: number | null;
   notesEpoch: number;
   noteRequest: number;
+  noteAutoFocus: boolean;
   noteDestination?: AnnotationDestination;
   noteImportSource?: NoteImportSource;
   bootstrapStatus: BootstrapStatus;
@@ -172,6 +174,7 @@ export const initialAppState: AppState = {
   activeNoteId: null, noteDestination: undefined, noteImportSource: undefined,
   notesEpoch: 0,
   noteRequest: 0,
+  noteAutoFocus: true,
   bootstrapStatus: 'loading',
   bootstrap: null,
   bootstrapMessage: null,
@@ -222,6 +225,7 @@ export type AppAction =
   | { type: 'show-chat-tab' }
   | { type: 'show-notes-tab' }
   | { type: 'open-note'; noteId: number; destination?: AnnotationDestination; importSource?: NoteImportSource }
+  | { type: 'reload-note' }
   | { type: 'close-note' }
   | { type: 'toggle-picture' }
   | { type: 'toggle-notes-toolbar' }
@@ -299,6 +303,7 @@ export type AppAction =
   | { type: 'api-key-detail-loaded'; apiKeyId: string; apiKeyName: string }
   | { type: 'api-key-updated'; apiKeyId: string; apiKeyName: string }
   | { type: 'show-settings-r2-storage' }
+  | { type: 'show-settings-d1-sync' }
   | { type: 'show-settings-cloud-stores' }
   | { type: 'inspect-cloud-store-key'; apiKeyId: string; apiKeyName: string; notice?: string }
   | { type: 'inspect-cloud-store'; storeId: string; label: string }
@@ -382,6 +387,7 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-settings-new-api-key'
     | 'inspect-api-key'
     | 'show-settings-r2-storage'
+    | 'show-settings-d1-sync'
     | 'show-settings-cloud-stores'
     | 'inspect-cloud-store-key'
     | 'inspect-cloud-store'
@@ -564,9 +570,19 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         noteDestination: action.destination,
         noteImportSource: action.importSource,
         noteRequest: state.noteRequest + 1,
+        noteAutoFocus: true,
         ...(notesVisible && chatVisible ? {} : idleSessionOperation()),
       };
     }
+    case 'reload-note':
+      if (state.activeNoteId === null) return state;
+      return {
+        ...state,
+        noteDestination: undefined,
+        noteImportSource: undefined,
+        noteRequest: state.noteRequest + 1,
+        noteAutoFocus: false,
+      };
     case 'close-note':
       return { ...state, activeNoteId: null, noteDestination: undefined, noteImportSource: undefined };
     case 'show-personas':
@@ -1023,6 +1039,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, inspectedApiKey: { ...state.inspectedApiKey, name: action.apiKeyName } };
     case 'show-settings-r2-storage':
       return { ...state, mainView: 'settings-r2-storage', ...idleSessionOperation() };
+    case 'show-settings-d1-sync':
+      return { ...state, mainView: 'settings-d1-sync', ...idleSessionOperation() };
     case 'show-settings-cloud-stores':
       return { ...state, mainView: 'settings-cloud-stores', ...idleSessionOperation() };
     case 'inspect-cloud-store-key':
@@ -1267,6 +1285,7 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-api-keys': return 'API Keys';
     case 'settings-new-api-key': return 'New API key';
     case 'settings-r2-storage': return 'R2 storage';
+    case 'settings-d1-sync': return 'D1 sync';
     case 'settings-cloud-stores': return 'Cloud stores';
     case 'persona-detail':
     case 'character-detail':

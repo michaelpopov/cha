@@ -63,6 +63,7 @@ function Harness({
   renameNoteItem = async (id: number, name: string) => ({ ...plan, id, name }),
   draft = '',
   after,
+  extraRequest = 0,
 }: {
   initialId?: number | null;
   destination?: AnnotationDestination;
@@ -81,6 +82,7 @@ function Harness({
   renameNoteItem?: (id: number, name: string) => Promise<NoteItem>;
   draft?: string;
   after?: (noteId: number | null) => ReactNode;
+  extraRequest?: number;
 }) {
   const [noteId, setNoteId] = useState(initialId);
   const [request, setRequest] = useState(1);
@@ -142,7 +144,7 @@ function Harness({
         editorLiveRef={editorLiveRef}
         leave={leave}
         noteItems={noteId === 5 ? [plan, essay] : items}
-        noteRequest={request}
+        noteRequest={request + extraRequest}
         notesEpoch={1}
         onDraftChange={setText}
         imports={imports}
@@ -1017,6 +1019,28 @@ describe('Notes screen', () => {
     expect(getNote).toHaveBeenCalledOnce();
     expect(screen.getByText('Alpha beta')).toBeInTheDocument();
     expect((await openedEditor()).can().undo()).toBe(true);
+  });
+
+  it('replaces the open note with incoming content without echoing an unsaved edit', async () => {
+    vi.useFakeTimers();
+    const getNote = vi.fn()
+      .mockResolvedValueOnce({ id: 4, document: documentWith('Alpha') })
+      .mockResolvedValue({ id: 4, document: documentWith('Incoming') });
+    const saveNote = vi.fn(async () => undefined);
+    const view = render(<Harness getNote={getNote} saveNote={saveNote} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const editor = await openedEditor();
+    act(() => insertText(editor, ' local'));
+    expect(editor.can().undo()).toBe(true);
+    view.rerender(<Harness getNote={getNote} saveNote={saveNote} extraRequest={1} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText('Incoming')).toBeInTheDocument();
+    expect(screen.queryByText('Alpha local')).not.toBeInTheDocument();
+    expect(getNote).toHaveBeenCalledTimes(2);
+    // Advance past the debounced save delay to prove the replaced edit
+    // was discarded rather than queued as an outgoing change.
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs + 1000); });
+    expect(saveNote).not.toHaveBeenCalled();
   });
 
   it('formats the retained selection and leaves the draft', async () => {

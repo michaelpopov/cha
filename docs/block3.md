@@ -280,12 +280,56 @@ external blocker prevents completion.
 
 ### Execution record — to be filled by the implementing session
 
-- Status: Not started.
-- Code revision / relevant working-tree files: Pending.
-- Blocks 1–2 prerequisite checks and integration fixes: Pending.
-- Bridge, DTO, Settings, and refresh behavior delivered: Pending.
-- Focused and full regression commands with outcomes: Pending.
-- End-to-end and live D1 results, without secrets: Pending.
-- macOS / Windows / Linux checks actually performed: Pending.
-- Unperformed checks, accepted design risks, and unresolved blockers: Pending.
-- Final feature completion assessment: Pending.
+- Block 3 implementation is complete in the working tree based on HEAD
+  `b2d3ae2b`. The full-capacity D1 probe and cross-platform acceptance
+  remain open.
+- The native bridge exposes D1 credential get, save, and disconnect through
+  the application operations. The DTO and generated client types carry token
+  presence. Save can recreate a missing queue with unchanged credentials.
+  Save and disconnect use D1's transport timeouts and keep their approved
+  labels while disabled.
+- The bridge queues one `notes.changed` event per affected receive group and
+  filters events from earlier vault epochs. The desktop refreshes the note
+  tree and reloads the open note through `noteRequest` without changing the
+  active split panel. The existing save hook discards pending edits when
+  it replaces the editor. ChaWeb reloads notes on reopen.
+- Desktop chat uses its existing `reloading` recovery. ChaWeb uses the same
+  read timer for the 30-second idle delay and 1-second reply delay, pauses
+  while hidden, and reads immediately on return. Tests drive both clients
+  through a failed reservation-time request and recovery.
+- Scripted D1 acceptance includes two independent temporary vaults on
+  different machine names, with a plain run and a protected run. The sender
+  writes and closes, and the receiver opens with the saved note, API and R2
+  keys, and chat turn. The receiver produces no outgoing echo. A loopback
+  R2 test verifies refusal while D1 is unavailable and a successful upload
+  after the pending records are sent. The 11-second shutdown test and the
+  failed-send queue retention test ran at the application layer.
+- Blocks 1–2 tests cover the storage, import/merge, collision, piece handling,
+  chat eligibility and counters, protected vaults, queue recovery, and R2
+  delivery cleanup paths. No production Linux delivery path or second
+  polling scheduler was added.
+- macOS arm64 validation includes schema generation and checks, TypeScript,
+  1,715 frontend tests, 24 local integration tests, and 15 daemon HTTP
+  integration tests. CTest passed 1,782 tests and skipped two opt-in provider
+  tests on a full rerun at `-j4`. The initial `-j8` run had two transient
+  session-test failures that passed individually and on the full rerun.
+- The D1 Settings check passed in the macOS WebKit test host at 1,200 and
+  430 pixels. The broader UI smoke run timed out. The daemon tests on macOS
+  exercise the shared code and nginx flow. Linux and Windows build and
+  package checks remain unperformed.
+- Live REST checks used the operator's disposable `cha-d1` database.
+  One batch stored and returned an exact 1,900,000-byte UTF-8 value in
+  three recipient tables. A batch with an invalid middle statement returned
+  HTTP 400 and left both target tables unchanged. The empty queue query
+  returned zero records and reported one row read.
+- Live application handoffs passed with plain and password-protected vaults.
+  The receiver opened with the note, managed forum folder, ordinary API and
+  R2 keys, and completed chat turn from the sender. The plain run also
+  round-tripped a split note and recovered a missing queue with unchanged
+  credentials. The protected run verified missing-queue recovery in daemon
+  mode and online disconnect. The handoffs used the production curl
+  transport and sync worker on macOS. The probes removed their temporary
+  tables and vaults.
+- Full-capacity eviction remains unverified on Cloudflare. The account plan
+  and a dedicated database for the capacity probe were unconfirmed.
+  Packaged-host refresh and final send past 10 seconds remain unverified.

@@ -751,6 +751,103 @@ it('replaces a Stop failure notice when a fresh snapshot shows the session idle'
   expect(api.stopSession).toHaveBeenCalledTimes(1);
 });
 
+it('polls an idle open chat after thirty seconds and pauses while hidden', async () => {
+  vi.useFakeTimers();
+  let visible = true;
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => (visible ? 'visible' : 'hidden'),
+  });
+  const first = snapshot('planning', { generation: generation(false) });
+  const second = snapshot('planning', {
+    generation: generation(false),
+    transcript: [
+      ...snapshot('planning').transcript,
+      {
+        id: 2,
+        kind: 'human',
+        participant_id: 'reader',
+        display_name: 'Reader',
+        addressed_to: '',
+        addressed_to_name: '',
+        text: 'Synced elsewhere',
+        status: 'complete',
+        created_at: 1_700_000_100,
+      },
+    ],
+  });
+  const api = client({
+    getSession: vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(first)
+      .mockResolvedValue(second),
+  });
+  window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+  render(<App client={api} />);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(api.getSession).toHaveBeenCalledTimes(1);
+  // The one-second active cadence does not apply while the reply is idle.
+  await act(() => vi.advanceTimersByTimeAsync(5_000));
+  expect(api.getSession).toHaveBeenCalledTimes(1);
+  visible = false;
+  fireEvent(document, new Event('visibilitychange'));
+  await act(() => vi.advanceTimersByTimeAsync(60_000));
+  expect(api.getSession).toHaveBeenCalledTimes(1);
+  visible = true;
+  fireEvent(document, new Event('visibilitychange'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  // Returning to the page reads immediately, then the idle cadence resumes.
+  expect(api.getSession).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(29_999));
+  expect(api.getSession).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(api.getSession).toHaveBeenCalledTimes(3);
+  expect(screen.getByText('Synced elsewhere')).toBeInTheDocument();
+});
+
+it('retries a reserved chat read and shows the cancelled reply and incoming entry', async () => {
+  vi.useFakeTimers();
+  const pending = {
+    ...snapshot('planning').transcript[0],
+    id: 2, kind: 'character' as const, participant_id: 'guide', text: 'Partial reply',
+    status: 'streaming' as const, request_id: 1,
+  };
+  const active = snapshot('planning', {
+    generation: generation(true),
+    transcript: [...snapshot('planning').transcript, pending],
+  });
+  const refreshed = snapshot('planning', {
+    transcript: [
+      active.transcript[0],
+      { ...pending, status: 'cancelled' },
+      { ...pending, id: 3, status: 'complete', text: 'Synced reply' },
+    ],
+  });
+  const api = client({
+    getSession: vi.fn()
+      .mockResolvedValueOnce(active)
+      .mockRejectedValueOnce(new ChaWebError(500, 'The session is stopping.', 'session_stopping'))
+      .mockResolvedValue(refreshed),
+  });
+  window.history.replaceState(null, '', '/#/forums/lobby/sessions/planning');
+  render(<App client={api} />);
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(999));
+  expect(api.getSession).toHaveBeenCalledTimes(1);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByRole('alert')).toHaveTextContent('Reconnecting');
+  await act(() => vi.advanceTimersByTimeAsync(1_000));
+  expect(screen.getByText('Synced reply')).toBeInTheDocument();
+  expect(screen.getByText('Stopped')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+  expect(api.getSession).toHaveBeenCalledTimes(4);
+  await act(() => vi.advanceTimersByTimeAsync(29_999));
+  expect(api.getSession).toHaveBeenCalledTimes(4);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(api.getSession).toHaveBeenCalledTimes(5);
+});
+
 it('does not poll a hidden page, the session list, or a new draft', async () => {
   vi.useFakeTimers();
   let visible = true;

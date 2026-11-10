@@ -38,6 +38,7 @@ import {
 import { useChawebNotes } from './useChawebNotes';
 
 const pollDelayMs = 1_000;
+const idlePollDelayMs = 30_000;
 type Screen = 'list' | 'conversation' | 'notes' | 'note';
 
 type ConversationRef =
@@ -311,12 +312,13 @@ export function useChaweb(client: ChaWebClient) {
     }
     if (!pageVisible()) return;
     const selected = selectedSession();
-    if (!selected || !loaded.generation.active) return;
+    if (!selected) return;
     if (loaded.forum.id !== selected.forumId || loaded.session_id !== selected.sessionId) return;
+    const delay = loaded.generation.active ? pollDelayMs : idlePollDelayMs;
     readLoop.current.timer = window.setTimeout(() => {
       readLoop.current.timer = null;
       requestRead();
-    }, pollDelayMs);
+    }, delay);
   }
 
   function refreshWelcome() {

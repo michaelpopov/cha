@@ -463,6 +463,20 @@ export interface components {
             /** @description Null keeps the existing secret key; creating requires a value. */
             secret_key: string | null;
         };
+        D1StorageDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            account_id: string;
+            database_id: string;
+            has_api_token: boolean;
+        };
+        SaveD1StorageRequest: {
+            display_name: string;
+            account_id: string;
+            database_id: string;
+            /** @description Null keeps the existing API token; creating requires a value. */
+            api_token: string | null;
+        };
         StyleOption: {
             id: components["schemas"]["Identifier"];
             label: string;

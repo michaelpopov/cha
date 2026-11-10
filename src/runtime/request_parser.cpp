@@ -686,4 +686,16 @@ SaveR2StorageRequest parse_save_r2_storage_request(const nlohmann::json& json) {
     };
 }
 
+SaveD1StorageRequest parse_save_d1_storage_request(const nlohmann::json& json) {
+    if (!json.is_object() || json.size() != 4) {
+        throw std::invalid_argument("Invalid D1 credentials");
+    }
+    return {
+        .display_name = required_field<std::string>(json, "display_name"),
+        .account_id = required_field<std::string>(json, "account_id"),
+        .database_id = required_field<std::string>(json, "database_id"),
+        .api_token = settings_nullable_string(json, "api_token"),
+    };
+}
+
 } // namespace cha

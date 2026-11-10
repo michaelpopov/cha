@@ -168,6 +168,15 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
             .has_secret_key = true,
         }),
         load_fixture("r2-storage-detail.json"));
+    EXPECT_EQ(
+        nlohmann::json(D1StorageDetail{
+            .id = "api_key_1",
+            .display_name = "Sync",
+            .account_id = "account-one",
+            .database_id = "database-one",
+            .has_api_token = true,
+        }),
+        load_fixture("d1-storage-detail.json"));
 }
 
 TEST(WebWireFixtures, SerializesNotesContract) {

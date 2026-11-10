@@ -1304,6 +1304,40 @@ describe('live chat', () => {
     expect(screen.getByRole('button', { name: 'Return to start' })).toBeInTheDocument();
   });
 
+  it.each([false, true])('reopens a synced chat after its reservation releases (generating: %s)', async (generating) => {
+    const events = drivableEvents();
+    const openSession = vi.fn<ChaClient['openSession']>()
+      .mockResolvedValueOnce({ forum_id: 'entrance', session_id: 'welcome' })
+      .mockRejectedValueOnce(new ChaError('session_stopping', 'The session is stopping.'))
+      .mockImplementation(async (forum_id, session_id) => ({ forum_id, session_id }));
+    const initial = transcriptSnapshot();
+    const idle = {
+      ...initial,
+      generation: snapshotFixture.generation,
+      transcript: [{ ...initial.transcript[0], status: 'complete' as const }],
+    };
+    render(<App client={fixtureClient({ openSession })} connectSessionEvents={events.connect} />);
+    await attachInitial(events, generating ? initial : idle);
+
+    act(() => events.handlers[0].onSnapshot({
+      ...(generating ? initial : idle),
+      lifecycle: 'stopping',
+      shutdown_reason: 'reloading',
+    }));
+    await waitFor(() => expect(openSession).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(events.connections).toHaveLength(2));
+    expect(events.connections[0].close).toHaveBeenCalledOnce();
+    const first = { ...idle.transcript[0], status: generating ? 'cancelled' as const : 'complete' as const };
+    act(() => events.handlers[1].onSnapshot({
+      ...idle,
+      transcript: [first, { ...first, id: 5, status: 'complete', text: 'Synced reply' }],
+    }));
+
+    expect(screen.getByText('Synced reply')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeInTheDocument();
+    if (generating) expect(screen.getByText('Stopped')).toBeInTheDocument();
+  });
+
   it('keeps Stop visible until authoritative generation state becomes inactive', async () => {
     const user = userEvent.setup();
     const events = drivableEvents();
@@ -1625,19 +1659,20 @@ const planningSnapshot: SessionSnapshot = {
 };
 
 function contextChangeSource() {
-  let notify: ((payload: { causing_request_id?: number; state?: string }) => void) | null = null;
+  type Notify = (payload: { causing_request_id?: number; state?: string }) => void;
+  const handlers = new Map<string, Notify>();
   const contextEvents: Pick<NativeBridge, 'on'> = {
-    on(_event, handler) {
-      notify = handler as typeof notify;
+    on(event, handler) {
+      handlers.set(event, handler as Notify);
       return () => {
-        if (notify === handler) notify = null;
+        if (handlers.get(event) === handler) handlers.delete(event);
       };
     },
   };
   return {
     contextEvents,
     emit() {
-      notify?.({ causing_request_id: 1, state: 'running' });
+      handlers.get('app.contextChanged')?.({ causing_request_id: 1, state: 'running' });
     },
   };
 }

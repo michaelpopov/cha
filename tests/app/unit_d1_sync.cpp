@@ -4,6 +4,7 @@
 #include "storage/sync_storage.h"
 #include "storage/note_storage.h"
 #include "storage/workspace_session_database.h"
+#include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "util/path_name.h"
 
@@ -16,6 +17,7 @@
 #include <mutex>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <thread>
 
@@ -31,7 +33,8 @@ using Database = storage::SqliteDatabase;
 ApplicationCommand make_d1_command(
     test::TestWorkspace& workspace,
     const std::filesystem::path& database,
-    std::string machine = "mac") {
+    std::string machine = "mac",
+    bool password_protected = false) {
     const std::filesystem::path config_directory = workspace.root() / "cha-config";
     std::filesystem::create_directories(config_directory);
     {
@@ -44,6 +47,7 @@ ApplicationCommand make_d1_command(
         std::ofstream vault(config_directory / "test.toml");
         vault << "vault_name = \"Test\"\n"
               << "data = " << std::quoted(utf8_path(database)) << "\n";
+        if (password_protected) vault << "protected = true\n";
     }
     const ConfigurationDirectory loaded =
         load_configuration_directory(config_directory);
@@ -81,6 +85,7 @@ struct MockD1 {
     std::atomic_bool fail_drop{};
     std::chrono::milliseconds insert_delay{};
     bool local_queue_exists = true;
+    std::string local_table{"q/Test/mac"};
     std::vector<std::string> other_tables{"q/Test/other"};
     std::mutex mutex;
     std::condition_variable changed;
@@ -88,6 +93,7 @@ struct MockD1 {
     std::vector<std::string> create_headers;
     std::size_t reads{};
     nlohmann::json incoming = nlohmann::json::array();
+    nlohmann::json sent = nlohmann::json::array();
 
     D1Client::Transport transport() {
         return [this](const std::string&, const std::string& body,
@@ -108,12 +114,21 @@ struct MockD1 {
                     rows = incoming;
                 }
                 if (sql.starts_with("DELETE FROM")) incoming.clear();
+                if (sql.starts_with("INSERT") && !fail_insert) {
+                    const auto& params = batch.at(0).at("params");
+                    sent.push_back({
+                        {"rowid", sent.size() + 1},
+                        {"piece", std::stoi(params.at(0).get<std::string>())},
+                        {"pieces", std::stoi(params.at(1).get<std::string>())},
+                        {"record", params.at(2)},
+                    });
+                }
                 have_local = local_queue_exists;
             }
             changed.notify_all();
             if (sql.starts_with("SELECT name FROM sqlite_master")) {
                 auto tables = other_tables;
-                if (have_local) tables.push_back("q/Test/mac");
+                if (have_local) tables.push_back(local_table);
                 return {200, tables_ok(std::move(tables)).dump()};
             }
             if (sql.starts_with("SELECT rowid")) {
@@ -306,15 +321,106 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
     EXPECT_FALSE(sync_has_pending(db));
 }
 
-TEST(D1R2Test, UploadRefusedWhilePendingAndVaultReopens) {
+class D1HandoffTest : public testing::TestWithParam<bool> {};
+
+TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
+    const bool protected_vault = GetParam();
+    const std::string password = protected_vault ? "test-password" : "";
+    test::TestWorkspace source;
+    test::TestWorkspace receiver;
+    const auto source_path = test::import_test_database(source.root());
+    const auto receiver_path = receiver.root() / "workspace.sqlite3";
+    if (protected_vault) protect_workspace_session_database(source_path, password);
+    copy_workspace_session_database(source_path, receiver_path, password, password);
+    const auto source_command = make_d1_command(source, source_path, "mac", protected_vault);
+    const auto receiver_command = make_d1_command(receiver, receiver_path, "linux", protected_vault);
+    MockD1 receive;
+    receive.local_table = "q/Test/linux";
+    receive.other_tables = {"q/Test/mac"};
+    {
+        auto application = Application::open(receiver_command, password, {}, receive.transport());
+        (void)application->save_d1_storage(credentials(), application->context_epoch());
+        ASSERT_TRUE(receive.wait_for_reads());
+        application->request_shutdown();
+        ASSERT_TRUE(application->join_shutdown(5s));
+    }
+
+    MockD1 send;
+    send.other_tables = {"q/Test/linux"};
+    auto application = Application::open(source_command, password, {}, send.transport());
+    const auto epoch = application->context_epoch();
+    (void)application->save_d1_storage(credentials(), epoch);
+    ASSERT_TRUE(send.wait_for_reads());
+    const auto note = application->create_note_item({}, NoteItemKind::note, "Shared note", epoch);
+    const auto document = nlohmann::json::parse(R"({
+        "type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"From A"}]}]
+    })");
+    (void)application->save_note(note.id, document, epoch);
+    const auto key = application->create_api_key(
+        {.display_name = "Shared key", .value = "test-key"}, epoch);
+    (void)application->save_r2_storage(
+        {.display_name = "R2", .url = "http://127.0.0.1:1/backups/",
+         .access_key_id = "k", .secret_key = "s"}, epoch);
+    const auto chat = application->create_session("lobby", "Shared chat", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        application->open_session("lobby", chat.id, epoch)));
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        application->submit("lobby", chat.id, RawCommand{"From A"}, epoch)));
+    SessionSnapshot source_chat;
+    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+         std::chrono::steady_clock::now() < deadline;) {
+        source_chat = std::get<SessionSnapshot>(application->snapshot("lobby", chat.id, epoch));
+        if (!source_chat.generation.active) break;
+        std::this_thread::sleep_for(10ms);
+    }
+    ASSERT_FALSE(source_chat.generation.active);
+    ASSERT_GE(source_chat.transcript.size(), 2u);
+    application->request_shutdown();
+    ASSERT_TRUE(application->join_shutdown(5s));
+    EXPECT_EQ(send.count("INSERT"), 5u);  // Note create and update, two config edits, one turn.
+    {
+        Database db(source_path, Database::Mode::read_only, password);
+        EXPECT_FALSE(sync_has_pending(db));
+    }
+
+    receive.incoming = std::move(send.sent);
+    auto reopened = Application::open(receiver_command, password, {}, receive.transport());
+    const auto new_epoch = reopened->context_epoch();
+    const auto notes = reopened->list_note_items(new_epoch);
+    const auto received = std::ranges::find(notes, "Shared note", &NoteItem::name);
+    ASSERT_NE(received, notes.end());
+    EXPECT_EQ(reopened->get_note(received->id, new_epoch).document, document);
+    const auto keys = reopened->list_api_keys(new_epoch);
+    EXPECT_NE(std::ranges::find(keys, key.id, &ApiKeyDetail::id), keys.end());
+    ASSERT_TRUE(reopened->get_r2_storage(new_epoch));
+    EXPECT_EQ(reopened->get_r2_storage(new_epoch)->url, "http://127.0.0.1:1/backups/");
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        reopened->open_session("lobby", chat.id, new_epoch)));
+    const auto received_chat = std::get<SessionSnapshot>(
+        reopened->snapshot("lobby", chat.id, new_epoch));
+    EXPECT_EQ(received_chat.session_label, "Shared chat");
+    ASSERT_EQ(received_chat.transcript.size(), 2u);
+    EXPECT_EQ(received_chat.transcript[0].text, "From A");
+    EXPECT_EQ(received_chat.transcript[1].status, EntryStatus::complete);
+    reopened->request_shutdown();
+    ASSERT_TRUE(reopened->join_shutdown(5s));
+    EXPECT_EQ(receive.count("DELETE FROM"), 1u);
+    EXPECT_EQ(receive.count("INSERT"), 0u);
+}
+
+INSTANTIATE_TEST_SUITE_P(VaultProtection, D1HandoffTest, testing::Bool());
+
+TEST(D1R2Test, UploadRefusedWhilePendingAndSucceedsAfterD1Recovers) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     auto command = make_d1_command(workspace, database);
     MockD1 mock;
+    const std::string etag = "HTTP/1.1 200 OK\r\nETag: \"saved\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer backup({http_response("text/plain", ""), etag, etag});
     auto application = Application::open(command, {}, {}, mock.transport());
     const auto epoch = application->context_epoch();
     (void)application->save_r2_storage(
-        {.display_name = "R2", .url = "http://127.0.0.1:1/cha-backups/",
+        {.display_name = "R2", .url = "http://127.0.0.1:" + std::to_string(backup.port()) + "/cha-backups/",
          .access_key_id = "k", .secret_key = "s"}, epoch);
     (void)application->save_d1_storage(credentials(), epoch);
     ASSERT_TRUE(mock.wait_for_reads());
@@ -328,8 +434,29 @@ TEST(D1R2Test, UploadRefusedWhilePendingAndVaultReopens) {
     }
     EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_EQ(mock.count("INSERT"), 1u);
-    Database db(database, Database::Mode::read_only);
-    EXPECT_TRUE(sync_has_pending(db));
+    {
+        Database db(database, Database::Mode::read_only);
+        EXPECT_TRUE(sync_has_pending(db));
+    }
+    EXPECT_FALSE(backup.wait_for_requests(1, 0ms));
+
+    mock.fail_insert = false;
+    backup.start();
+    const auto upload = application->start_database_upload(
+        std::nullopt, application->context_epoch());
+    const auto done = std::make_shared<std::promise<void>>();
+    auto ready = done->get_future();
+    upload->set_ready_callback([done] { done->set_value(); });
+    ASSERT_EQ(ready.wait_for(5s), std::future_status::ready);
+    const auto result = upload->peek();
+    ASSERT_TRUE(result && std::holds_alternative<nlohmann::json>(*result));
+    backup.join();
+    EXPECT_EQ(backup.requests().size(), 3u);
+    EXPECT_EQ(mock.count("INSERT"), 2u);
+    {
+        Database db(database, Database::Mode::read_only);
+        EXPECT_FALSE(sync_has_pending(db));
+    }
     application->request_shutdown();
     EXPECT_TRUE(application->join_shutdown(5s));
 }

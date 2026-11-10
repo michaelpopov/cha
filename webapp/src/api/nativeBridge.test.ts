@@ -298,4 +298,18 @@ describe('native bridge', () => {
     await pending;
     expect(contextChanged).toHaveBeenCalledWith(event);
   });
+
+  it('delivers current notes.changed events and drops old-epoch ones', () => {
+    const bridge = createEnvelopeNativeBridge({ connectionId: 'current', post: () => {} });
+    bridge.setContextEpoch(7);
+    const onNotesChanged = vi.fn();
+    bridge.on('notes.changed', onNotesChanged);
+    bridge.receive({ connection_id: 'current', delivery_id: 1, messages: [
+      { connection_id: 'current', event: 'notes.changed', context_epoch: 7 },
+      { connection_id: 'current', event: 'notes.changed', context_epoch: 6 },
+    ] });
+    expect(onNotesChanged).toHaveBeenCalledTimes(1);
+    expect(onNotesChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ context_epoch: 7 }));
+  });
 });

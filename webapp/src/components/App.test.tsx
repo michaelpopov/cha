@@ -9,6 +9,7 @@ import {
   type Bootstrap,
   type CharacterAppearance,
   type CharacterDetail,
+  type NotesClient,
   type SessionSnapshot,
 } from '../api/client';
 import type { SessionEventHandlers } from '../api/events';
@@ -26,6 +27,7 @@ import {
   serifItalicVoice,
   snapshotFixture,
 } from '../test/fixtures';
+import { noteItem } from '../test/notes';
 import { App } from './App';
 import { CharacterFileScreen, NewCharacterFileScreen } from './FileScreens';
 import { welcomeSessionId } from '../state/route';
@@ -102,6 +104,39 @@ async function openSettingsNavigation() {
   fireEvent.click(settings);
 }
 
+it('refreshes the notes tree once on notes.changed and ignores old-epoch events', async () => {
+  const listNoteItems = vi.fn<NotesClient['listNoteItems']>().mockResolvedValue([]);
+  const handlers = new Map<string, (event: never) => void>();
+  const contextEvents = {
+    on: vi.fn((name: string, handler: (event: never) => void) => {
+      handlers.set(name, handler);
+      return () => { handlers.delete(name); };
+    }),
+  };
+  render(
+    <App
+      client={fixtureClient({ listNoteItems })}
+      contextEvents={contextEvents}
+      connectSessionEvents={inertSessionEvents}
+    />,
+  );
+  await screen.findByLabelText('Vault');
+  fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+  await waitFor(() => expect(listNoteItems).toHaveBeenCalled());
+  const before = listNoteItems.mock.calls.length;
+  const notesChanged = handlers.get('notes.changed');
+  expect(notesChanged).toBeDefined();
+  listNoteItems.mockResolvedValue([
+    noteItem({ id: 42, name: 'Synced forum', kind: 'folder', forum_id: 'synced' }),
+  ]);
+  act(() => notesChanged!({ context_epoch: 1 } as never));
+  expect(await screen.findByRole('treeitem', { name: /Synced forum/ })).toBeInTheDocument();
+  expect(listNoteItems).toHaveBeenCalledTimes(before + 1);
+  act(() => notesChanged!({ context_epoch: 0 } as never));
+  await act(async () => { await Promise.resolve(); });
+  expect(listNoteItems).toHaveBeenCalledTimes(before + 1);
+});
+
 it('opens Events from Settings and clears rows on same-vault context resets', async () => {
   const first = [{ id: 1, recorded_at: 10, severity: 'info' as const, message: 'Original history' }];
   const stale = deferred();
@@ -111,7 +146,10 @@ it('opens Events from Settings and clears rows on same-vault context resets', as
     .mockImplementationOnce(async () => { await stale.promise; return [{ ...first[0], message: 'Late history' }]; })
     .mockImplementationOnce(async () => { await newest.promise; return [{ ...first[0], message: 'Current history' }]; });
   let contextChanged!: (event: { state: string; causing_request_id: number }) => void;
-  const contextEvents = { on: vi.fn((_name, handler) => { contextChanged = handler; return () => {}; }) };
+  const contextEvents = { on: vi.fn((name: string, handler: (event: never) => void) => {
+    if (name === 'app.contextChanged') contextChanged = handler as never;
+    return () => {};
+  }) };
   render(<App client={fixtureClient({ listEvents })} contextEvents={contextEvents} connectSessionEvents={inertSessionEvents} />);
   await screen.findByLabelText('Vault');
   await openSettingsNavigation();
