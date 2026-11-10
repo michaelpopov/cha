@@ -439,9 +439,9 @@ auto Application::Impl::VaultMaintenance::maintain_database(
                     result.emplace(operation(database, repository));
                 } catch (...) {
                     error = std::current_exception();
-                    reopen_after_failure(database, repository);
                 }
-                if (!error) reopen(database, repository);
+                // A failed reopen needs a restart, also after a successful operation.
+                reopen_after_failure(database, repository);
             }
             end_maintenance_locked(true, notice, error ? SyncStart::resume : sync_start);
         } catch (const WorkspaceRestartRequiredError&) {

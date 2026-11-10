@@ -92,11 +92,6 @@ void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid) {
     database.prepare("DELETE FROM sync_queue WHERE rowid=?1", rowid).run();
 }
 
-void sync_queue_delete_through(storage::SqliteDatabase& database, std::int64_t last_rowid) {
-    if (!has_table(database, "sync_queue")) return;
-    database.prepare("DELETE FROM sync_queue WHERE rowid<=?1", last_rowid).run();
-}
-
 void sync_clear_outgoing(storage::SqliteDatabase& database) {
     ensure_sync_schema(database);
     database.prepare("DELETE FROM sync_queue").run();

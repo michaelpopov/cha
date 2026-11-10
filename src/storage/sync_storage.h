@@ -43,8 +43,6 @@ struct QueuedRecord {
 [[nodiscard]] std::vector<QueuedRecord> sync_queue_list(storage::SqliteDatabase& database);
 // Caller owns the transaction.
 void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid);
-// Caller owns the transaction. Deletes every record at or below last_rowid.
-void sync_queue_delete_through(storage::SqliteDatabase& database, std::int64_t last_rowid);
 // Caller owns the transaction. Empties the queue and clears all note flags.
 void sync_clear_outgoing(storage::SqliteDatabase& database);
 // True when unsent records or flagged notes exist. False on databases that

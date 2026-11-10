@@ -132,6 +132,9 @@ struct MockD1 {
                 return {200, tables_ok(std::move(tables)).dump()};
             }
             if (sql.starts_with("SELECT rowid")) {
+                if (!have_local) {
+                    return {400, R"({"success":false,"errors":[{"message":"no such table: q"}]})"};
+                }
                 auto response = batch_ok(1);
                 response["result"][0]["results"] = std::move(rows);
                 return {200, response.dump()};
@@ -319,6 +322,27 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
     EXPECT_EQ(mock.count("DELETE FROM"), 1u);
     Database db(database, Database::Mode::read_only);
     EXPECT_FALSE(sync_has_pending(db));
+}
+
+TEST(D1AppWiringTest, IncomingChatIsWrittenToTheSessionMirror) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    seed_d1(database);
+    auto command = make_d1_command(workspace, database);
+    const auto mirror = workspace.root() / "mirror";
+    command.vault.mirror = mirror;
+    command.vaults.front() = command.vault;
+    MockD1 mock;
+    mock.incoming = {
+        {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
+            "chat.rename", {{"chat", {"lobby", "session-from-d1"}}, {"label", "Incoming chat"}})}},
+    };
+    auto application = Application::open(command, {}, {}, mock.transport());
+    bool found = false;
+    for (const auto& item : std::filesystem::recursive_directory_iterator(mirror)) {
+        if (item.path().filename().string().find("Incoming chat") != std::string::npos) found = true;
+    }
+    EXPECT_TRUE(found);
 }
 
 class D1HandoffTest : public testing::TestWithParam<bool> {};

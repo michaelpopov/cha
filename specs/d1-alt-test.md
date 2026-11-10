@@ -6,7 +6,7 @@ Status: test design only. This document does not report executed tests and does
 not request their execution.
 
 Source of expected behavior: [d1-alt-design.md](d1-alt-design.md), including
-R1–R57 and the approved points in section 16. The
+R1–R58 and the approved points in section 16. The
 [implementation plan](d1-alt-plan.md) and current code locate execution paths;
 they do not replace the design as the acceptance standard.
 
@@ -77,9 +77,9 @@ working-tree changes:
 | Role | Environment | Initial state |
 |---|---|---|
 | A | Packaged macOS app, machine `test-mac` | Source of the initial snapshot. |
-| B | Packaged Windows app, machine `test-win` | Independent copy of the same vault. |
+| B | Packaged Windows app, machine `test-win` | Independent copy of the same vault, received through R2 download (a supported clean route), not a raw file copy. |
 | C | Linux daemon and supported ChaWeb browser, machine `test-linux` | Independent copy installed through the existing manual setup. |
-| D | A fresh desktop profile, reused as needed | No local vault or D1 queue; used for bootstrap and replacement. |
+| D | A fresh desktop profile, machine `test-new`, reused as needed | No local vault or D1 queue; used for bootstrap and replacement. At the end of each case, disconnect D or drop its queue, so that its queue does not change the recipient counts of later cases. |
 
 Use a unique campaign prefix in vault names and resource names. Use two vaults
 in the same D1 database, plus a second D1 database for credential replacement.
@@ -107,10 +107,23 @@ is preferable to filling a paid database. If a suitable resource is not
 available, mark the probe blocked; a simulated full response does not pass it.
 Use disposable R2 objects, not the user's existing backup object.
 
-For initial manual installation on C, prepare a clean delivered snapshot
-before copying it. Separately test daemon restart with pending local work.
-Do not clear that work as part of startup. The raw-copy ambiguity in section
-17 must be recorded if testing a manually delivered *dirty* snapshot.
+Budget the LIVE requests. The Cloudflare limit of 1,200 API requests in 5
+minutes applies per user, so the three machines and the test scripts share it
+(C4). Above it, all API requests of the account fail for 5 minutes. Keep LIVE
+cases below that rate, record the request count of each LIVE case, and do not
+cause a LIVE lockout; S16 tests the lockout with CONTROLLED responses. On a
+free-plan account, also count rows written against the daily limit of 100,000
+(C5): each record writes one row in each recipient queue, and each
+acknowledgement counts too. Put the large and capacity cases on separate days,
+or use an account whose limits permit them. When a case meets a quota or
+lockout error that it did not intend, mark it `BLOCKED`, not `FAIL`, and run
+it again after the limit resets.
+
+For initial manual installation on C, follow the clean-copy steps of design
+section 5.5 (R58): a successful R2 upload on the source, no edits after it,
+close CHA, then copy. Separately test daemon restart with pending local work.
+Do not clear that work as part of startup. T19 tests a manually delivered
+*dirty* copy as an accepted risk.
 
 ### 2.3 Fixture contents
 
@@ -144,7 +157,9 @@ and logical entry order.
    bytes**, not character count or source-note size. Hash before splitting
    and after reassembly. Include a record with more than 50 pieces.
 
-Reset to a known checkpoint between independent cases. Do not let deliberate
+Reset to a known checkpoint between independent cases. A checkpoint includes
+the local databases, the `app.toml` files, and the D1 state: the list of queue
+tables and their rows for each campaign vault. Do not let deliberate
 duplicate, collision, eviction, or invalid-record cases contaminate a later
 success case. Keep paused receiver Workers from consuming evidence queues
 until the required inspection is complete.
@@ -225,12 +240,12 @@ exists. Do not count controlled substitutes as LIVE passes.
 
 | ID | Procedure | Expected result |
 |---|---|---|
-| M01 | Start with `machine` absent, empty, integer, boolean, array, and containing `/`, separately. Open a normal vault and perform ordinary local operations. | Start and unrelated operations work. Invalid supplied values warn and act as no name. No Worker, new records, or new flags. Saving D1 credentials uses the approved missing-name error. |
+| M01 | Start with `machine` absent, empty, integer, boolean, array, and containing `/`, separately. Open a normal vault and perform ordinary local operations. | Start and unrelated operations work. Invalid supplied values warn and act as no name. No Worker, new records, or new flags. Saving D1 credentials uses the approved missing-name error, sends no D1 request, and saves nothing. |
 | M02 | Use valid machine names containing spaces, Unicode, `%`, `_`, and a double quote. Use valid vault names with spaces, Unicode, `%`, and `_`. | Names survive app configuration and table quoting. Each quote in an SQL identifier is doubled. Data cannot change the SQL structure. Do not invent stricter name validation than the design or existing host validation. |
 | M03 | Use vault/machine names differing only in ASCII letter case; use similar names with different non-case characters. Include `Vault`, `Vault2`, `V_ult`, and `V%ult`. | ASCII case variants refer to the same identity; exact comparison prevents wildcard matches. Other vaults and this machine's own queues are not recipients. Non-ASCII names do not acquire an undocumented Unicode case-folding rule. |
 | M04 | Enumerate normal tables, views, `q` names with missing/extra/empty components, and valid queues for multiple vaults/machines. | Only actual, correctly parsed queue tables participate. No registry table is required. Recipient lookup cannot treat an unrelated object as a destination or eviction candidate. |
 | M05 | Cross machine present/absent with complete credentials present/absent. Repeat with incomplete credentials. | Only a valid name plus usable stored D1 credentials connects. Disconnected operations add no records/flags. Incomplete optional setup does not stop unrelated local operations. |
-| M06 | Open a pre-sync plain database containing all fixture content, then a protected one. Reopen each twice. | `sync_queue` exists with whole-record text storage; `changed` is non-null, initially 0, and restricted to 0/1. Existing content remains. Migration is repeatable and does not create duplicate schema or records. |
+| M06 | Open a pre-sync plain database containing all fixture content, then a protected one. Reopen each twice. Also open copies of the existing local plain vaults on the test Mac, including the largest. Copy them while CHA is closed, with their WAL sidecars, to a place outside the user's vault directory. Never connect such a copy to D1 or R2, and keep only counts and verdicts as evidence. Delete the copies after the check. | `sync_queue` exists with whole-record text storage; `changed` is non-null, initially 0, and restricted to 0/1. Existing content remains. Migration is repeatable and does not create duplicate schema or records. Each real-vault copy opens, migrates, saves and reopens a note, and keeps its note, chat, and configuration counts. |
 | M07 | Open current-schema vaults containing queued records and flags. Exercise ordinary open, close/reopen, restart, and password unlock. | Pending work survives until the normal send/collection path handles it. No delivery cleanup occurs on ordinary open. Wrong password cannot modify the database or start its Worker. |
 | M08 | Force a schema migration or transactional queue insertion to fail, including SQLite busy and write failure. Reopen after removing the fault. | No partly committed migration/user transaction; existing data remains usable. A failed local transaction does not leave a record for a change that did not commit. |
 | M09 | Inspect schema and requests after successful and failed sync. | Only the planned local queue/flag and remote piece columns are needed. No per-record versions, registry, receiver progress table, shared-chat flag, or receipt tracking. |
@@ -249,11 +264,11 @@ adds the exact screen checks.
 | C04 | Fail CREATE through DNS/connection/TLS error, timeout, HTTP authentication failure, server failure, and unsuccessful API result. Try new connection and replacement. | Approved D1-unreachable error; nothing new saved. Previous settings and pending work are retained on failed replacement. No Worker starts for an uncommitted connection. |
 | C05 | Let CREATE succeed, then fail local credential commit. | Approved local-save error; local state/connection stays at its previous committed value. A newly created remote table may remain; do not require a compensating delete absent from the design. |
 | C06 | Fail credential loading; then recover and reopen Settings. | Approved load error. Recovery shows stored IDs and token presence, without returning the token value in the detail response. |
-| C07 | Disconnect with pending records, flags, and incoming rows. Test online and offline D1. | Local credentials, outgoing queue, and flags clear together; Worker stops. One own-table drop is attempted. Offline drop warns but does not undo local disconnect. Other machines/tables stay intact. |
+| C07 | Disconnect with pending records, flags, and incoming rows. Test online and offline D1. Where Disconnect is offered for saved credentials with no valid machine name (Q04), disconnect in that state too. | Local credentials, outgoing queue, and flags clear together; Worker stops. One own-table drop is attempted. Offline drop warns but does not undo local disconnect. Other machines/tables stay intact. With no valid machine name, the local part completes, and no table drop is attempted, because no queue table name exists. |
 | C08 | Cancel the Disconnect dialog, then separately fail its local transaction after confirmation. | Cancel has no effect. Local failure shows the approved remove error and preserves credentials, queue, and flags; no remote drop can discard the queue while local disconnect failed. |
 | C09 | Hold a send/receive request during disconnect and during successful credential replacement. Release it as the action completes. | No old Worker resumes against a cleared queue, different connection, or replaced database. No late callback changes another vault's screen. Already accepted remote writes may remain. |
 | C10 | Reconnect after a successful disconnect. Make new edits. | Explicit Save creates the table and starts synchronization. Previously cleared outgoing work does not reappear; new operations synchronize. |
-| C11 | Change or add `machine` after local work was queued. Open on desktop, recover with Save, and inspect the old queue. | Missing new-name table stops the Worker before sending. Save recovers the new identity without clearing pending work. Old-name table remains and can still receive records until explicitly removed/evicted. |
+| C11 | Change `machine` after local work was queued. Separately add `machine` to a vault that has credentials but no name, and therefore no pending work. Separately change only the letter case of the name. Open on desktop, recover with Save where needed, and inspect the old queue. | Missing new-name table stops the Worker: before sending when work exists, otherwise at the receive step. Save recovers the new identity without clearing pending work. Old-name table remains and can still receive records until explicitly removed/evicted. A change of letter case only keeps the same queue table (O8): the Worker does not stop, and no second table is made. |
 
 ## 6. Sending, REST responses, and full-database handling
 
@@ -277,6 +292,7 @@ run. Seed a later sentinel record to show where a send pass stops.
 | S13 | Repeat full handling with tied maximum counts, only own tables, zero-row eligible tables, failed table listing, failed count, failed DROP, and a candidate disappearing before DROP. | At most one eligible table is selected/dropped per loop. Either maximum is acceptable on a tie. With no candidate or a failed prerequisite, retain work and warn where a request failed. Never fall back to dropping own/non-queue tables. A zero-row candidate may not free enough space; retry only next loop. |
 | S14 | Require two evictions before sufficient space exists. Count writes/drop attempts over three loops. | First failing loop drops at most one and stops sending; next loop retries from the record's first piece and may drop one more. Successful send occurs on a later loop. No recursive eviction or same-loop retry. |
 | S15 | Observe real curl with a controlled connection/handshake stall and with a loopback server that stalls body transfer; also return a slow but progressing response. | Existing 10-second connection and 30-second low-speed policies apply. A slow, successful full send pass can exceed 10 seconds. Do not add a total pass deadline. Capture actual cancellation and timeout behavior without relying only on mocked status codes. |
+| S16 | CONTROLLED: queue more than 1,200 single-piece records, for example from a book import. Let the transport accept 1,200 requests in a 5-minute window, then return HTTP 429 to every request for 5 minutes, then accept again. Run the loops through the lockout and after it. | Each loop stops sending at the first 429, with a warning, and keeps the failed and later records. No record is lost, skipped, or reordered. Receive requests during the lockout fail like other read failures (V05). After the lockout, later loops send the rest in rowid order. No back-off timer, retry ceiling, or request budget is added (C4, design section 14). |
 
 ## 7. Receiving, ordering, and acknowledgement
 
@@ -295,7 +311,7 @@ assembled records. Use non-consecutive rowids in addition to ordinary ones.
 | V08 | Force result-size errors at successive limits, down to one row; recover at an intermediate limit in another variant. Run the next loop. | Halve the integer row count until usable, never below one. Preserve order and assembly state during retry. At one, continued failure warns and ends the attempt without a hot loop or row loss. A fresh loop starts at 50. |
 | V09 | Cause a chat reservation failure at the first, middle, and last row of a group; repeat for an assembled multi-piece chat record. | Stop receiving at that record. Previously handled prefix can be acknowledged; the blocked record's **entire** piece set and every later row remain. Next loop retries and applies after release. |
 | V10 | Remove the own table before a read, between read groups, and before acknowledgement. | Worker stops and logs the recovery error. It does not silently create a new desktop queue, switch to another queue, or erase local outgoing work. Already applied data stays. |
-| V11 | Queue only malformed JSON; then scalar/array JSON, missing/unknown/non-string `kind`, missing fields, and wrong field types. Follow each with a valid sentinel. | Each invalid complete record warns, leaves no partial change, and is acknowledged under R41. Sentinel still applies. Logs remain useful without dumping tokens or large payloads. |
+| V11 | Queue only malformed JSON; then scalar/array JSON, missing/unknown/non-string `kind`, missing fields, and wrong field types. Follow each with a valid sentinel. | Each invalid complete record warns, leaves no partial change, and is acknowledged under R41. Sentinel still applies. Warnings contain no API token. |
 | V12 | Supply malformed HTTP row structures, nonnumeric/invalid rowids, missing record text, and response shapes inconsistent with a query. | Treat an untrustworthy response as a read/protocol failure; do not acknowledge an invented prefix. Recovery with a valid response can proceed. Invalid *piece metadata in otherwise identifiable rows* is covered by F08. |
 | V13 | Apply a mixed group containing note, chat, and config changes with clean outgoing state, then with unrelated pending local work. | No echoed record/new flag; existing pending work is not cleared. One notes event per read group that actually changes notes, including managed-folder effects, after committed changes. No event for a group with no note change. |
 
@@ -398,8 +414,10 @@ pressure. Add explicit `delete` entries targeting the local D1 paths.
 ### 11.1 Eligibility table
 
 Inspect outgoing state before and after each transition. Exercise a real label
-and **each temporary label recognized by the existing application**, including
-`New session`. Do not substitute “has any stored response” for the specified
+and **each temporary label recognized by the existing application**
+(`is_temporary_session_label` in `src/storage/session_label.h`): `New session`
+and the older form `temp-ts-cha-` followed by digits. Also use near-miss labels
+that are real: `new session`, `temp-ts-cha-`, and `temp-ts-cha-12a`. Do not substitute “has any stored response” for the specified
 `next_request_id` and first-turn-running rule.
 
 | Label | First-turn state | Expected recording eligibility |
@@ -415,9 +433,9 @@ and **each temporary label recognized by the existing application**, including
 | ID | Procedure | Expected result |
 |---|---|---|
 | H01 | In every unshared state above, add `@-` entries, note/file/folder attachments, character overrides, and any supported rename/clear/delete actions. Delete an unshared chat. | No chat content records until eligibility is reached. Deletion of an unshared chat emits no record. Welcome and notices remain local. |
-| H02 | Let naming complete before the first response; then let the first response finish before naming. Repeat with complete, stopped, and failed first turns. | The transition to shared emits all then-existing transferable content once, in entry order. The triggering turn/action is not also emitted a second time. Current label/identity accompany every chat record. |
+| H02 | Let naming complete before the first response; then let the first response finish before naming. Repeat with complete, stopped, and failed first turns. | The transition to shared emits all then-existing transferable content once. Finished turns and `@-` messages follow the sender's entry order. Attachments and character settings are not entries (F6), so the design sets no order for them relative to the entries; check only that each one is present once. The triggering turn/action is not also emitted a second time (R29). Current label/identity accompany every chat record. |
 | H03 | Make title completion and terminal-turn commit adjacent/concurrent in one application. Repeat rename from temporary after several finished turns. | Exactly one initial publication for a single transition. Include all finished turns, `@-` content, attachments, and effective character settings; no half turn or omitted earlier content. |
-| H04 | Stop or fail the first and a later turn before any response bytes; repeat after partial response bytes. | O2 eligibility uses terminal state, even without response text. Preserve actual terminal state and any actual content; never fabricate a reply. Verify the no-response payload/turn-position question in section 17 rather than silently omitting the eligibility case. |
+| H04 | Stop or fail the first and a later turn before any response bytes; repeat after partial response bytes. | O2 eligibility uses terminal state, even without response text. Preserve actual terminal state and any actual content; never fabricate a reply. Verify the no-response payload/turn-position question (Q02) rather than silently omitting the eligibility case. |
 | H05 | Open a chat with an interrupted running turn; repair it as failed. Use both temporary and real labels. | Journal repair has the same transactional recording rules as a normal failure. If it makes the chat shared, initial records are produced; otherwise they wait for a real label. Reopening an already repaired chat does not publish again without another transition. |
 | H06 | In a shared chat start/stream a later turn, then complete, cancel, or fail it. Pause before and after terminal commit. | No partial prompt/response publication while running. One `chat.entries` for the finished turn with its actual entries and state. Terminal mutation and record share a transaction. |
 | H07 | Add `@-`, configuration notice, no-turn error, and Welcome content before and after sharing. | `@-` moves, including in initial publication. No-turn notices/errors and Welcome do not. A chat with only `@-` messages never becomes shared just because it has a real name. |
@@ -425,18 +443,18 @@ and **each temporary label recognized by the existing application**, including
 | H09 | Rename shared chat to temporary, change it, then rename to real again. | Temporary state suppresses later recording as designed. Returning to real emits all current content again; duplicate turns on receivers are accepted. No extra shared-state flag or automatic deduplication. |
 | H10 | Clear history; delete the only turn; delete first/middle/last turn of several. Restart and add another turn or attachment. | Immediate `chat.clear`/`chat.delete_turn` for an eligible chat. Eligibility survives lost turns because the counter is not reset. Later operation is incremental, not a repeat initial snapshot. |
 | H11 | Delete an open, closed, and generating shared chat through their normal routes. | `chat.delete` uses eligibility before deletion. Ordinary local stop/delete rules still work; record is committed with the durable action where transactional. Receiver deletes the addressed chat. |
-| H12 | Add a note with a live source; rename/change the source; attach two notes with equal leaf names from different folders. Deliver to a receiver with different local IDs. | `chat.add_note` contains source path plus the saved copy's name/text. Receiver resolves source path but preserves the transmitted copy, not the receiver's latest source text. No source numeric-ID dependency. |
+| H12 | Add a note with a live source; rename/change the source; attach two notes with equal leaf names from different folders. Deliver to a receiver with different local IDs. Deliver once more to a receiver that does not have the source path. | `chat.add_note` contains source path plus the saved copy's name/text. Receiver resolves source path but preserves the transmitted copy, not the receiver's latest source text. No source numeric-ID dependency. When the source path is missing on the receiver, the record is skipped with a warning and acknowledged (design section 10.3, R41); the chat gets no copy, and a chat that the record would create is not left behind. |
 | H13 | Attach a note before first share, delete its source, then finish/naming the chat. Repeat with another surviving attachment alongside it. | Deleted-source copy stays locally but has no outgoing `chat.add_note`; surviving attachments move. No conversion into a file, source resurrection, or substitute path. |
 | H14 | Add empty/nonempty files, Unicode names/text, maximum allowed file text, and multiple files. | `chat.add_file` retains name/text through initial and incremental recording. Existing attachment limit still applies. No filesystem access on receiver is needed to reconstruct transmitted text. |
 | H15 | Attach and detach a folder, including before first publication and after sharing. Receive with folder present/missing and with different local IDs. | Correct `chat.add_folder`/`chat.detach_folder`, resolved by path. Missing folder warns/skips. Initial publication reflects what is actually attached, not already detached items. |
 | H16 | Set/change/reset supported character, provider, and reasoning-effort overrides. Include initial publication and shared incremental changes. | `chat.character` carries the intended stored IDs/values; no ID translation. Subsequent receiver reply uses the resulting valid settings. Unsupported/malformed values follow ordinary validation/R41. |
 | H17 | For every chat kind, receive with its forum present and absent; receive with chat present and absent. | Missing forum skips with warning. Otherwise create missing chat when needed using exact session ID and label; schema defaults `recent_pending=0`, `discardable=0`. Apply the operation afterwards: a delete of a missing chat ends absent, and a clear can end empty. No orphan/partial chat from a failed record. |
 | H18 | Receive a finished turn and `@-` into a chat with non-contiguous, higher local entry numbers and local request IDs. Then submit a local reply. | Append with next free strictly increasing entry numbers, correct prompt/response association and terminal state. Do not import sender entry numbers. New local reply uses refreshed counters without collision. |
-| H19 | Receive turn deletion at positions 1, middle, and last; invalid 0, negative, past-end, and wrong type; include no-turn entries and gaps from earlier deletions. | Position is among applicable turns, from 1, not request ID or entry number. Correct response entry is resolved locally. Missing/invalid target warns/skips without deleting another turn. Cover cancelled-without-response ambiguity in section 17. |
+| H19 | Receive turn deletion at positions 1, middle, and last; invalid 0, negative, past-end, and wrong type; include no-turn entries and gaps from earlier deletions. | Position is among applicable turns, from 1, not request ID or entry number. Correct response entry is resolved locally. Missing/invalid target warns/skips without deleting another turn. Cover cancelled-without-response ambiguity (Q02). |
 | H20 | Deliver valid chat records to idle, generating, and closed chats. Hold the live controller while the Worker reserves it; attempt a local submission/reconnect during the hold. | Reservation stops and waits before database write; shutdown reason is `reloading`. Running reply is saved cancelled. No stale entry number or concurrent write crosses the reservation. Release permits reopen with current data. |
 | H21 | Make reservation fail, then succeed next loop. Put a valid earlier note record and later chat record around it. | Earlier committed prefix may be acknowledged; blocked and later records stay. No cancellation/applied half-record is treated as success. Retry eventually applies and releases all reservations. |
 | H22 | Inject apply/commit exception after reservation; delete/clear the open chat; switch vault while callback is pending. | Reservation/lease is released on every exit. No permanent “busy” chat, reconnect loop tied to a removed chat, stale callback into a new vault, or stale database handle. |
-| H23 | Let incoming chat/config maintenance cancel a running local reply; inspect the outgoing queue before and after cancellation and apply. | Distinguish any legitimate local terminal-turn record from an echo of received content. Applying the incoming operation itself emits nothing (R38). Resolve the reservation-triggered cancellation ambiguity in section 17; do not hide it by clearing the queue. |
+| H23 | Let incoming chat/config maintenance cancel a running local reply; inspect the outgoing queue before and after cancellation and apply. | The induced cancellation ends a local turn, so design section 8.3 applies: in a shared chat, `cancel_turn` adds one `chat.entries` record for the cancelled turn, in the transaction of the turn change, before the Worker applies the incoming record (F27, design section 13). A cancelled turn with no response entry follows Q02. Applying the incoming operation itself emits nothing (R38), and the cancellation record does not repeat the received content. Do not hide the result by clearing the queue. |
 | H24 | Replay identical entries; create the same forum/session ID independently on two offline machines; deliver in both orders. | Duplicate append and same-ID merging are accepted. No session-ID remapping or label-based second chat. Later operations still run without corrupting unrelated chats. |
 
 ## 12. Worker lifetime, isolation, and shutdown
@@ -455,7 +473,7 @@ and **each temporary label recognized by the existing application**, including
 | L10 | Enter maintenance for R2 upload/download and other existing database maintenance; hold its lock, then complete or fail it. | Worker is stopped/excluded while handles/database can be replaced. Recovery restarts the correct Worker only when appropriate. No stale password, old database handle, or temporary-file write. Failed maintenance leaves the original usable state. |
 | L11 | On daemon start, cross own-table present/missing with pending local work absent/present. Repeat with plain/protected vault and D1 unavailable. | Connected daemon alone may create its missing table at startup. Creation retains pending work/flags; normal loop handles them. Offline errors do not silently discard content. No Settings/R2 workflow is added to ChaWeb. |
 | L12 | Drop daemon's table while it runs, then wait a loop and restart. Perform the same test on desktop. | Both running Workers halt and log. Only daemon restart recreates automatically. Desktop ordinary restart/open does not; explicit Save or qualifying R2 replacement is needed. Recreated table restores future sync, not lost contents. |
-| L13 | Make credentials unavailable or invalid while another unrelated local feature is used; close/reopen the disconnected vault. | Optional sync state does not block unrelated valid work. No new records/flags without connection; preserve already pending work unless explicit disconnect/delivery clears it. Record the upload edge case in section 17. |
+| L13 | Make credentials unavailable or invalid while another unrelated local feature is used; close/reopen the disconnected vault. | Optional sync state does not block unrelated valid work. No new records/flags without connection; preserve already pending work unless explicit disconnect/delivery clears it. T18 tests R2 upload in this state. |
 | L14 | Hold a network request while making an unrelated local save/read. Hold a local transaction briefly while a Worker needs it. | No network wait inside a local SQLite transaction; normal local work does not wait for remote timeouts merely because sync is in progress. Busy/lock outcomes follow existing local handling, without partial commits or deadlock. |
 
 ## 13. Screens, bridge contracts, and ChaWeb
@@ -466,8 +484,8 @@ existing error placement as the visual reference. Test both native hosts.
 
 | ID | Procedure | Expected result |
 |---|---|---|
-| U01 | Open Settings → API Keys → D1 sync, with no saved setup and with saved setup. | Row `D1 sync`; description `Configure synchronization between machines`; fields Account ID, Database ID, API token; buttons Reset and `Save D1 credentials`; `Disconnect from D1` when connected. No extra title/legend or nonessential explanatory copy. |
-| U02 | Inspect empty/saved placeholders; edit each field, Reset, navigate away/back, save with blank current token, and save with a replacement token. | Placeholders match design: `Paste account ID`, `Paste database ID`, `Paste API token`, or `Leave blank to keep the current token`. Reset restores saved form state without remote mutation. Detail/loading never exposes saved token value. |
+| U01 | Open Settings → API Keys → D1 sync, with no saved setup and with saved setup. Repeat with saved credentials while `machine` is absent, then invalid. | Row `D1 sync`; description `Configure synchronization between machines`; fields Account ID, Database ID, API token; buttons Reset and `Save D1 credentials`; `Disconnect from D1` when connected. No extra title/legend or nonessential explanatory copy. For saved credentials with no valid machine name, record whether `Disconnect from D1` is shown, and judge it by the answer to Q04. |
+| U02 | Inspect empty/saved placeholders; edit each field, Reset, navigate away/back, save with blank current token, and save with a replacement token. Leave Account ID or Database ID empty or only spaces, and leave the token empty when none is saved. Open a saved form and change nothing. | Placeholders match design: `Paste account ID`, `Paste database ID`, `Paste API token`, or `Leave blank to keep the current token`. Reset restores saved form state without remote mutation. Detail/loading never exposes saved token value. Save stays disabled while a required value is empty, as on the R2 storage screen (F22). Unlike the R2 screen, Save stays enabled for saved values with no edit, because design section 12.3 uses it to make a missing table. |
 | U03 | Open Disconnect and inspect/cancel/confirm using mouse and keyboard. | Title `Disconnect from D1?`; message `Disconnect this vault from D1 on this machine? Its D1 queue and its unsent changes will be deleted.`; buttons `Cancel` and `Disconnect from D1`. Cancel does nothing; confirmed behavior matches C07–C08. |
 | U04 | Trigger each error in the text table below, then fix the condition and retry. | Exact approved text appears at the existing R2-style error location; successful recovery works. No generic success display after failure. Loading/busy wording must have separate approval if added; tests do not invent it. |
 | U05 | Delay loading/save/disconnect; double-click the action; navigate or switch vault before reply. | One committed action/Worker, appropriate existing busy behavior, no credential leak, and no late reply modifying the new vault/screen. Form remains usable after failure. |
@@ -501,7 +519,7 @@ Approved error text checks:
 | T02 | Repeat the pending variants with D1 unreachable, partial write, own queue missing, and flag-collection transaction failure. | Refuse R2 upload while any outgoing work remains, using approved text. Do not replace the remote snapshot, clear pending work, or misreport success. Vault returns to usable state; restore access and retry successfully. |
 | T03 | Queue has work but no other registered machines; separately there is incoming remote backlog but no local pending work. | No-recipient send can clear local work and allow upload. Incoming backlog alone is not the upload-block condition; this preparation is collection/send, not a receive drain. |
 | T04 | Attempt a local save between final flush/check and snapshot creation. | Existing maintenance serializes/excludes the writer, so a successful snapshot cannot capture unchecked new outgoing work. A later edit remains for the next normal loop. |
-| T05 | Upload a normally disconnected, clean vault; then exercise R2 authentication failure and existing overwrite/ETag conflict. | D1 never blocks the disconnected clean upload. Existing R2 failure/overwrite behavior remains; no sync-specific change discards local data. The disconnected-but-dirty case is tracked in section 17. |
+| T05 | Upload a normally disconnected, clean vault; then exercise R2 authentication failure and existing overwrite/ETag conflict. | D1 never blocks the disconnected clean upload. Existing R2 failure/overwrite behavior remains; no sync-specific change discards local data. T18 covers a vault that has pending work but is no longer connected. |
 
 ### 14.2 Delivery matrix
 
@@ -519,7 +537,7 @@ For protected variants, follow the route's existing password support.
 | New empty vault | No inherited connection unless the existing creation route supplies one. | Starts with empty outgoing queue and zero flags. |
 | Configuration import/merge into existing vault | Preserve destination values/absence under R56. | Keep destination pending work; not delivery cleanup. |
 | Ordinary open/restart/reconnect; daemon missing-table startup | Preserve local values. | Keep pending work; not delivery cleanup. |
-| Manual whole-file delivery | Carries source D1 values. | R57 says clean before use, but no new manual-installation workflow is specified. Execute the dirty-copy question in section 17; do not claim startup can infer provenance. |
+| Manual whole-file delivery (Linux installation) | Carries source D1 values. | Not a CHA delivery route, so CHA does not clean it (R58). Copy only after a successful R2 upload with no later edits; a dirty copy is an accepted risk (T19). Do not claim startup can infer provenance. |
 
 | ID | Procedure | Expected result |
 |---|---|---|
@@ -531,10 +549,12 @@ For protected variants, follow the route's existing password support.
 | T11 | Fail R2 download, validation, wrong-password access, and final install/rename, separately. Retry after removing the fault. | Existing vault remains usable; Worker resumes only against a valid installed/original database. A failed route cannot expose an unclean half-installed delivery. |
 | T12 | Download a protected database as a new vault without a password, then replace an existing protected vault using its valid password. | New-vault route retains its existing rejection. Supported replacement cleans successfully. No new deferred-cleanup marker or unlock workflow is invented. |
 | T13 | Seed incoming D1 records for destination before replacing its local vault. Keep another machine's queues populated. | Cleanup touches only delivered local outgoing state. Incoming D1 records survive table creation and are applied by the opening loop. Other queues are untouched. |
-| T14 | New machine bootstrap: set machine name, download source snapshot, establish own queue through the applicable route, then open. Inspect ordering. | `app.toml` name stays local; source D1 credentials arrive; outgoing cleanup precedes use. Once own queue exists, subsequent changes arrive. No premature sends of source work. |
+| T14 | New machine bootstrap, in two variants. (a) Set the machine name, then download the snapshot to replace the open vault. (b) Set the machine name, download the snapshot as a new vault, open it, then select `Save D1 credentials`. Inspect ordering. | `app.toml` name stays local; source D1 credentials arrive; outgoing cleanup precedes use. In (a) the download makes the own queue before the first loop (design section 12.2). In (b) the first open stops the Worker with the missing-table error, and Save makes the queue (design section 12.3). Once own queue exists, subsequent changes arrive. No premature sends of source work. |
 | T15 | Make a source edit after R2 snapshot upload but before new recipient registration. Then edit again after registration. | First change may be absent on the new machine (R24); second arrives. No historical backfill from other machines' queues is expected. |
 | T16 | Remove desktop's own table, open with pending work, then recover once through Save and once through fresh R2 replacement. | Missing table halts before send. Save resumes future synchronization and retains local work; it does not recover lost incoming content. Fresh snapshot supplies its captured content and clears delivered outgoing work. |
 | T17 | Let D1 queue creation fail after an otherwise valid R2 delivery, then restore access and use supported recovery. | No source outgoing work is replayed. Installation/open behavior follows the route's existing error handling; no claim of active synchronization while own table is absent. Preserve a usable installed/original vault and log the remote failure. |
+| T18 | Queue records and set note flags while connected. Then make the vault unconnected without Disconnect: remove `machine` from `app.toml`, and separately make it invalid. Request R2 upload. Restore the machine name, allow a loop, and request upload again. | R26 decides: upload is refused with the approved text while the queue has records or a note has a flag. Design section 12.1 says that an unconnected vault is never refused, but that sentence assumes no pending work, which is false here. While unconnected, no records or flags are added, and pending work is not deleted. After the name is restored, the loop sends the work, and the upload succeeds. Where Disconnect is offered in this state (Q04), it also clears the block. |
+| T19 | Linux manual installation (R58). (a) Clean copy: give the source desktop vault pending records and flagged notes, upload it to R2, let incoming records arrive, close CHA without edits, copy the vault to C, and start the daemon. (b) Dirty copy: copy a source vault that has pending records and flagged notes, with no upload. Then edit the same note and a setting on the source and let them synchronize. Start the daemon. Repeat (b) with the daemon started before the source edits. | (a) The upload succeeds only after the queue and flags are clear. The copy has an empty queue and no flags, and the daemon's first loop sends no record that came from the source. (b) Accepted risk: the daemon sends the copied records again to all other machines, including the source. Record the duplicates, such as `Name (1)` and repeated chat turns, and each old version that replaces a newer one. These are not defects. Daemon restart still retains its own pending work (L11). |
 
 ## 15. Complete cross-machine scenarios
 
@@ -585,7 +605,7 @@ where the operation's own valid fields cannot reach B.
 | Kind | Outgoing cases | Incoming cases |
 |---|---|---|
 | `note.create` | N01, N06, N07 | N01, N07, N10–N13 |
-| `note.update` | N04–N05, N15–N16 | N08–N13, N18, N20 |
+| `note.update` | N04–N05, N07, N15–N16 | N08–N13, N18, N20 |
 | `note.rename` | N02, N15 | N02, N10–N13, N20 |
 | `note.delete` | N02, N15 | N02, N11, N13, N20 |
 | `note.read_only` | N03 | N03, N08, N11 |
@@ -619,7 +639,7 @@ where the operation's own valid fields cannot reach B.
 | R11 — successful write is enough | S01, S06–S07 |
 | R12 — changed config rows only | K01–K03, K13 |
 | R13 — updated note loses audio | N08 |
-| R14 — invalid config skips/warns | K05–K07, V03 |
+| R14 — invalid config skips/warns | K06–K07, V03 |
 | R15 — name suffix | N10, N19, S06 |
 | R16 — absent parent/forum skips | N11, H15, H17 |
 | R17 — all application platforms | E02 and platform execution matrix |
@@ -627,11 +647,11 @@ where the operation's own valid fields cannot reach B.
 | R19 — in-process threaded Worker | L02–L04, L14 |
 | R20 — open vault only, closed queues wait | L03, L10, T13 |
 | R21 — bootstrap, amended ordering | T06, T13–T15, L11 |
-| R22 — durable local queue and failures | M07–M08, S04–S09, L04–L08 |
-| R23 — retries/duplicates/partial writes | P03, S05–S09, F07, V06–V07, H24 |
+| R22 — durable local queue and failures | M07–M08, S04–S09, S16, L04–L08, T18 |
+| R23 — retries/duplicates/partial writes | P03, S05–S09, S16, F07, V06–V07, H24 |
 | R24 — registration timing risk | S11, T15 |
 | R25 — identity, superseded in part by R48/R54 | M02–M04, N12, H08, H17–H19, K08 |
-| R26 — R2 upload block/download cleanup | T01–T13 |
+| R26 — R2 upload block/download cleanup | T01–T13, T18 |
 | R27 — terminal prompt/response pair | H02–H06 |
 | R28 — append using next free entry numbers | H18, H20–H22 |
 | R29 — initial/incremental sharing and receiver creation | Eligibility table; H01–H11, H17 |
@@ -649,10 +669,10 @@ where the operation's own valid fields cannot reach B.
 | R41 — skip/warn/delete, reservation exception | V03, V09–V12, F08–F11, N11, N18, K06, H19–H22 |
 | R42 — immediate structural note records | N01–N03, N15 |
 | R43 — D1 Settings and explicit actions | C01–C11, U01–U06 |
-| R44 — disconnected/D1 edits produce no records | M01, M05, C01–C03, K03, L13 |
+| R44 — disconnected/D1 edits produce no records | M01, M05, C01–C03, K03, L13, T18 |
 | R45 — disconnect clears local state and drops own queue | C07–C10 |
 | R46 — full D1, missing table, explicit recovery | P02, S10, S12–S14, L12, T16 |
-| R47 — note flag, content load, scroll and upload | N04–N05, N07, N15–N16, T01–T04 |
+| R47 — note flag, content load, scroll and upload | N04–N05, N07, N15–N16, T01–T04, T18 |
 | R48 — stored ordinary IDs | K01, K08, K11–K15, H16, H24 |
 | R49 — update creates absent note | N09–N10 |
 | R50 — one atomic config delta | K01–K06, K13 |
@@ -661,12 +681,13 @@ where the operation's own valid fields cannot reach B.
 | R53 — no D1 save cap; pieces for all kinds | P01, F01–F12, N17, S02–S03 |
 | R54 — IDs except note paths, chat composite identity | N12–N13, H08, H12, H15–H19, H24 |
 | R55 — omit deleted-source chat note | H13 |
-| R56 — preserve destination D1 on import/merge/receive | Full section 10.2 matrix; T07, T16 |
-| R57 — clear delivered outgoing work on every route | Full section 14.2 matrix; section 17 dirty-copy question |
+| R56 — preserve destination D1 on import/merge/receive | Full section 10.2 matrix (K10–K16); T06–T07 |
+| R57 — clear delivered outgoing work on every route | Full section 14.2 matrix |
+| R58 — manual copy is not a delivery route; clean-copy steps | T19, L11 |
 
 Approved-point audit: O2 → H02, H04–H05; O3 → M05, C07;
-O5 → N14, K04; O6 → U01–U06 and error text table;
-O8 → M03, M10; O10 → H07, K09, H23.
+O5 → N14, K04; O6 → U01–U06, T18, and error text table;
+O8 → M03, M10, C11; O10 → H07, K09, H23.
 O4/O7 are replaced by R53 and must not reintroduce a size refusal.
 
 ### 16.3 Accepted-risk audit
@@ -678,6 +699,7 @@ Each risk in design section 13 has an explicit execution, not just a waiver:
 | Duplicate delivery | S05–S06, V06–V07, H24 |
 | Partial recipient writes | P03, S05, F07 |
 | Change missed at registration | S11, T15 |
+| Dirty manual copy sends old records again | T19 |
 | Two configured items with same ID merge/overwrite | K08 |
 | Two chats with same composite ID merge | H24 |
 | Unsaved note text replaced | N20, E06 |
@@ -700,11 +722,10 @@ assertion `BLOCKED`; existing code alone is not the authority.
 
 | ID | Exact case | Specified part and unresolved part |
 |---|---|---|
-| Q01 | A copied database with pending records/flags is installed manually on Linux, or copied as raw files to an existing desktop path, then opened. | R57 requires every newly delivered vault to start clean; ordinary startup must retain local work, and no manual-installation workflow/provenance marker is specified. Determine the supported cleanup step for that raw-delivery route. Do not implement startup clearing or claim an ordinary file copy was cleaned by CHA. A clean prepared manual snapshot is separately testable. |
-| Q02 | A connected vault accumulates work; its machine name is then removed/invalidated, without Disconnect; R2 upload is requested. | R22/section 12.4 retain ordinary pending work, while section 12.1 says an unconnected vault has no pending work and upload is never refused. This state violates that premise. Verify no new recording and no silent deletion; record whether upload should remain blocked or have another explicit policy. |
-| Q03 | First turn is cancelled/failed before any response entry exists; later a turn is deleted by position. | O2 makes any terminal first turn eligible, but “prompt and response together” and “position among turns” do not explicitly define an absent-response payload or whether such local-only turns count in positional deletion. Assert eligibility and preservation of real content; resolve emission and position mapping before assigning those assertions a pass. |
-| Q04 | Incoming reservation cancels a user's running reply, invoking the terminal journal path. | R38 suppresses records for applied incoming changes; section 8.3 records terminal cancellation, and the design does not explicitly classify this induced local cancellation. Determine whether it is transmitted as local terminal work. In either interpretation, received entries/config must not echo and no cancellation record may recursively replay the incoming operation. |
-| Q05 | Incoming config produces a local no-turn notice in an open chat. | O10 explicitly leaves whether the receiver creates that local notice unverified. Observe it; do not require cross-machine notice equality. Transmission remains forbidden. This observation does not block other config acceptance. |
+| Q01 | Answered on November 9, 2026: a manual copy is not a CHA delivery route (design R58). T19 tests it. | — |
+| Q02 | First turn is cancelled/failed before any response entry exists; later a turn is deleted by position. | O2 makes any terminal first turn eligible, but “prompt and response together” and “position among turns” do not explicitly define an absent-response payload or whether such local-only turns count in positional deletion. Assert eligibility and preservation of real content; resolve emission and position mapping before assigning those assertions a pass. |
+| Q03 | Incoming config produces a local no-turn notice in an open chat. | O10 explicitly leaves whether the receiver creates that local notice unverified. Observe it; do not require cross-machine notice equality. Transmission remains forbidden. This observation does not block other config acceptance. |
+| Q04 | A vault has saved D1 credentials, but `machine` is absent or invalid, so the vault is not connected (design section 5.3). The user opens the D1 sync screen. | Design section 5.4 shows `Disconnect from D1` “when connected”, and design section 5.3 defines connected as credentials plus a machine name. Read literally, the button is hidden, and the only way to clear the credentials and the pending work of T18 is to restore the name. Record whether the button must be shown whenever credentials are saved. C07 and T18 state the outcome where it is shown. |
 
 Also record any newly discovered contradiction with its exact design section
 and minimal reproducer. Do not silently add an expiry, retry policy, mapping,
@@ -717,7 +738,8 @@ executing it.
 ### 18.1 Suggested one-time run order
 
 1. Freeze the build/revision and fixture manifest. Expand matrices into named
-   variants; identify available hosts/resources and unresolved Q cases.
+   variants; identify available hosts/resources, the LIVE request and quota
+   budget (section 2.2), and unresolved Q cases.
 2. Run P01–P06 early gates. A blocked live prerequisite is recorded, not
    replaced with a simulated pass. Continue independent controlled work.
 3. Run schema/connection and outgoing note/config/chat tests, then client,

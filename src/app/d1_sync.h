@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/d1_client.h"
+#include "chat/session_identity.h"
 #include "storage/sync_storage.h"
 
 #include <atomic>
@@ -36,6 +37,8 @@ public:
         std::function<bool()> application_stopping;
         // Called once after a receive group changes notes.
         std::function<void()> on_notes_changed;
+        // Called once for each chat that a receive group changed and did not delete.
+        std::function<void(const FullSessionId&, const std::string& label)> on_chat_changed;
     };
 
     explicit D1SyncWorker(Config config);

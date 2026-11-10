@@ -206,7 +206,7 @@ TEST_F(SyncDatabaseTest, QueueRoundTripAndClear) {
     EXPECT_LT(rows[0].rowid, rows[1].rowid);
     {
         storage::SqliteTransaction transaction(*database_);
-        sync_queue_delete_through(*database_, rows[0].rowid);
+        sync_queue_delete(*database_, rows[0].rowid);
         transaction.commit();
     }
     rows = sync_queue_list(*database_);
@@ -467,9 +467,9 @@ TEST(D1Client, ReadsRowsAndCounts) {
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_EQ(rows.front().rowid, 4294967299LL);
     EXPECT_EQ(rows.front().record, "r");
-    const auto [count, count_error] = client.count_rows("q/V/a");
+    const auto [counts, count_error] = client.count_rows({"q/V/a"});
     EXPECT_FALSE(count_error);
-    EXPECT_EQ(count, 7);
+    EXPECT_EQ(counts, std::vector<std::int64_t>{7});
     EXPECT_FALSE(client.delete_through("q/V/a", 3));
     EXPECT_FALSE(client.drop_table("q/V/a"));
 }

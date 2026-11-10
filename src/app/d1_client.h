@@ -52,12 +52,10 @@ public:
         const std::string& body,
         const std::vector<std::string>& headers)>;
 
-    explicit D1Client(Credentials credentials, Transport transport = {},
-        std::function<bool()> cancelled = {});
+    explicit D1Client(Credentials credentials, Transport transport = {});
     // Test-only endpoint replacement so loopback servers can exercise the
     // real curl path. Production always uses the Cloudflare endpoint.
     void set_endpoint_for_tests(std::string url) { endpoint_override_ = std::move(url); }
-    [[nodiscard]] const Credentials& credentials() const noexcept { return credentials_; }
 
     // Creates one queue table when absent.
     [[nodiscard]] std::optional<Error> create_queue_table(std::string_view table);
@@ -78,15 +76,10 @@ public:
     // Deletes the handled prefix of one queue.
     [[nodiscard]] std::optional<Error> delete_through(
         std::string_view table, std::int64_t last_rowid);
-    [[nodiscard]] std::pair<std::int64_t, std::optional<Error>> count_rows(
-        std::string_view table);
     [[nodiscard]] std::pair<std::vector<std::int64_t>, std::optional<Error>> count_rows(
         const std::vector<std::string>& tables);
     [[nodiscard]] std::optional<Error> drop_table(std::string_view table);
     [[nodiscard]] std::string query_url() const;
-
-    [[nodiscard]] static bool is_full_database_message(std::string_view message);
-    [[nodiscard]] static bool is_result_too_large_message(std::string_view message);
 
 private:
     Credentials credentials_;

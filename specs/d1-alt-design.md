@@ -100,7 +100,8 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | R54 | Records use IDs, except for notes. Notes are named by path. A chat is named by forum ID and session ID. | User decision, review answer 2 |
 | R55 | A chat note copy whose source note no longer exists does not move. | User decision |
 | R56 | Configuration import, vault merge, and received configuration records preserve the destination vault's D1 credential values, including their absence. If another key takes their storage ID, move only the local D1 key to a free ID. Full vault copies and R2 downloads still carry the source credentials. | User decision, November 9, 2026 |
-| R57 | A newly delivered vault starts with an empty local send queue, whatever the delivery route. Clear its note "changed" flags too, so they cannot recreate the source's pending records. This applies to a new vault and to replacement of an existing vault. | User decision, November 9, 2026 |
+| R57 | A newly delivered vault starts with an empty local send queue, whatever the delivery route. Clear its note "changed" flags too, so they cannot recreate the source's pending records. This applies to a new vault and to replacement of an existing vault. R58 excludes manual file copies. | User decision, November 9, 2026 |
+| R58 | A manual copy of vault files, such as the Linux installation (F3), is not a delivery route of CHA, so CHA does not clean it. Copy a vault only after a successful R2 upload on the source machine, with no edits after the upload. The effects of a copy that still has unsent work are accepted. | User decision, November 9, 2026 |
 
 ## 3. Facts
 
@@ -290,6 +291,12 @@ Its startup follows R17 and R51:
   table again.
 - Startup and creation of a missing D1 table retain this machine's unsent
   records and note flags (R22).
+- The manual installation (F3) is not a CHA delivery route, so the R57
+  cleanup does not apply to it (R58). Copy the vault after a successful R2
+  upload on the source machine, and close CHA there with no edits after the
+  upload. The upload works only when the local queue is empty and no note has
+  a flag (section 12.1), so the copy is clean. Records that the source applies
+  after the upload do not make it dirty again (R38).
 
 ## 6. Data
 
@@ -751,6 +758,10 @@ vault. Clear the destination's queue and note flags before returning that
 new vault. Keep the source unchanged. This is local vault creation, separate
 from downloading a vault to another machine.
 
+A copy of vault files by hand is not one of these routes (R58). On Linux,
+section 5.5 gives the clean-copy steps. On a desktop, use R2 download instead
+of a manual copy over a vault.
+
 Ordinary open, restart, and reconnection retain local outgoing work (R22).
 Configuration import and vault merge retain the destination's pending work
 and follow R56. Applying incoming change records never adds outgoing records
@@ -763,6 +774,7 @@ or sets note flags (R38).
 | A record arrives two times. | D1 writes the record, but the response does not arrive. The Worker sends it again. A `chat.entries` record adds the turn again, and a `note.create` record makes a second note `Name (1)`. | R23 |
 | A partial write. | Only some queue tables get the record. The next try sends it again to all. | R23, C2 |
 | A change misses a new machine. | You edit a note between the R2 upload and the first open on the new machine. | R24 |
+| A manual copy sends old records again. | The operator copies a vault that still has unsent records or flagged notes to the Linux server. The daemon sends them to all other machines, including the source machine. They get duplicates, such as a note `Name (1)`. If the source changed the same note or setting after the copy, the old version can replace the new one. | R58 |
 | Two configured items become one. | The Mac makes `forum_3` "One two three", and Windows makes `forum_3` "Five six seven", before they synchronize. Their records overwrite each other, and the chats of both forums go into one forum. | R48 |
 | Two chats become one. | Two machines make a chat in the same forum in the same second, before they synchronize. Both get the same session ID. | R54 |
 | Local editing is overridden. | An incoming update replaces unsaved text in the open note. | R32 |

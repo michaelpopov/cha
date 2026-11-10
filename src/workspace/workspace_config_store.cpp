@@ -1893,8 +1893,7 @@ struct WorkspaceConfigStore::Impl {
         const WorkspaceConfigCancelCheck& check,
         std::string_view action,
         UndoUpdate undo_update,
-        std::optional<UndoRecord> new_undo = {},
-        bool record_sync = true) {
+        std::optional<UndoRecord> new_undo = {}) {
         std::set<std::string> changed_paths;
         for (const auto& item : changed) changed_paths.insert(item.path);
         std::vector<LoadWarning> warnings;
@@ -1908,7 +1907,7 @@ struct WorkspaceConfigStore::Impl {
         }
         commit_and_publish(
             committed_rows, candidate.rows, std::move(candidate.workspace), {},
-            undo_update, std::move(new_undo), record_sync);
+            undo_update, std::move(new_undo));
         return {
             .committed = true,
             .revision = revision,

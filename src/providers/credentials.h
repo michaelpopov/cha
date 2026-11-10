@@ -49,6 +49,6 @@ struct D1StorageInfo {
     std::string account_id;
     std::string database_id;
     bool has_api_token{};
-};;
+};
 
 } // namespace cha

@@ -170,7 +170,7 @@ TEST_F(ChatSyncTest, TerminalStatesArePreserved) {
     records = queued_records(*database_);
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(records[1]["state"], 3);
-    // Cancelled with no response never sends the prompt alone.
+    // A turn cancelled with no response sends its prompt alone.
     make_chat_session(*database_, "f1", "s-empty-cancel", "Chat");
     key = session_key_for(*database_, "f1", "s-empty-cancel");
     {
@@ -178,8 +178,35 @@ TEST_F(ChatSyncTest, TerminalStatesArePreserved) {
         journal.set_sync_machine(std::string(sync_machine));
         journal.start_turn(1, human_entry(1, "Hi", 1));
         journal.cancel_turn(1, std::nullopt);
+        journal.start_turn(2, human_entry(2, "Again", 2));
+        journal.cancel_turn(2, std::nullopt);
     }
-    EXPECT_EQ(queued_records(*database_).size(), 2u);
+    records = queued_records(*database_);
+    ASSERT_EQ(records.size(), 4u);
+    for (const std::size_t i : {2u, 3u}) {
+        EXPECT_EQ(records[i]["state"], 2);
+        EXPECT_EQ(records[i]["entries"].size(), 1u);
+    }
+    EXPECT_EQ(records[3]["entries"][0]["text"], "Again");
+
+    // The receiver stores the prompt in a cancelled turn.
+    for (const std::size_t i : {2u, 3u}) {
+        records[i]["chat"][1] = "s-empty-cancel-receiver";
+        sync_apply_chat_record(*database_, records[i]);
+    }
+    auto received = database_->prepare(
+        "SELECT t.state, e.text FROM turns t JOIN entries e USING(session_key, request_id) "
+        "WHERE t.session_key=?1 ORDER BY t.request_id",
+        session_key_for(*database_, "f1", "s-empty-cancel-receiver"));
+    ASSERT_TRUE(received.step());
+    EXPECT_EQ(received.integer(0), 2);
+    EXPECT_EQ(received.text(1), "Hi");
+    ASSERT_TRUE(received.step());
+    EXPECT_EQ(received.text(1), "Again");
+    EXPECT_FALSE(received.step());
+    // A prompt alone is not valid for a completed turn.
+    records[2]["state"] = 1;
+    EXPECT_THROW(sync_apply_chat_record(*database_, records[2]), std::runtime_error);
 }
 
 TEST_F(ChatSyncTest, RenameFromTemporaryPublishesInitialNotRename) {
@@ -450,8 +477,8 @@ TEST_F(ChatSyncTest, TurnPositionIgnoresLocalCancellationWithoutReply) {
     journal.complete_turn(2, reply_entry(3, "First shared reply", 2));
     journal.delete_turn(3);
     const auto records = queued_records(*database_);
-    ASSERT_EQ(records.size(), 2u);
-    EXPECT_EQ(records[1]["turn"], 1);
+    ASSERT_EQ(records.size(), 3u);
+    EXPECT_EQ(records[2]["turn"], 1);
 
     make_chat_session(*database_, "f1", "s-receiver", "Chat");
     const auto receiver = session_key_for(*database_, "f1", "s-receiver");
@@ -462,10 +489,13 @@ TEST_F(ChatSyncTest, TurnPositionIgnoresLocalCancellationWithoutReply) {
         record["chat"][1] = "s-receiver";
         sync_apply_chat_record(*database_, record);
     }
+    // Both turns without a reply stay; the turn with the reply is deleted.
     auto remaining = database_->prepare(
-        "SELECT request_id FROM turns WHERE session_key=?1", receiver);
+        "SELECT request_id FROM turns WHERE session_key=?1 ORDER BY request_id", receiver);
     ASSERT_TRUE(remaining.step());
     EXPECT_EQ(remaining.integer(0), 1);
+    ASSERT_TRUE(remaining.step());
+    EXPECT_EQ(remaining.integer(0), 2);
     EXPECT_FALSE(remaining.step());
 }
 
@@ -656,16 +686,14 @@ TEST(D1WorkerTest, SendFailureRetainsAndRetries) {
         sync_queue_append(database, sync_make_record("note.create", {{"path", {"A"}}}));
     }
     auto scripted = std::make_shared<ScriptedTransport>();
-    // Run1 send discovery, send fail, receive discovery, receive empty.
-    // Run2 send discovery, send success, receive discovery, receive empty.
+    // Run1 send discovery, send fail, receive empty.
+    // Run2 send discovery, send success, receive empty.
     scripted->responses = {
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, error_response("transport down").dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, queue_rows_success({}).dump()},
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, batch_success(1).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, queue_rows_success({}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
@@ -695,14 +723,13 @@ TEST(D1WorkerTest, NoRecipientsDeletesWithoutRequests) {
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
         {200, table_list_success({"q/Test/mac"}).dump()},
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success({}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
     Database database(path, Database::Mode::read_only);
     EXPECT_TRUE(sync_queue_list(database).empty());
-    // Send discovery + receive discovery/read; no insert bodies for recipients.
+    // Send discovery + receive read; no insert bodies for recipients.
     EXPECT_GE(scripted->bodies.size(), 2u);
     for (const auto& body : scripted->bodies) {
         EXPECT_EQ(body.find("INSERT"), std::string::npos);
@@ -753,7 +780,6 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
     page.push_back({50, 1, 2, first});
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success(page).dump()},
         {200, batch_success(1).dump()}, // Acknowledge through 49, then read after 50.
         {200, queue_rows_success({
@@ -763,7 +789,6 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
             {54, 1, 2, first},
         }).dump()},
         {200, batch_success(1).dump()}, // Leave 54 for the next loop.
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success({
             {54, 1, 2, first}, {55, 2, 2, second},
         }).dump()},
@@ -777,10 +802,10 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
     config.on_notes_changed = [&] { ++notices; };
     D1SyncWorker worker(std::move(config));
     worker.run_once();
-    ASSERT_EQ(scripted->bodies.size(), 5u);
-    EXPECT_EQ(params(2), nlohmann::json::array({"49"}));
-    EXPECT_EQ(params(3), nlohmann::json::array({"50", "50"}));
-    EXPECT_EQ(params(4), nlohmann::json::array({"53"}));
+    ASSERT_EQ(scripted->bodies.size(), 4u);
+    EXPECT_EQ(params(1), nlohmann::json::array({"49"}));
+    EXPECT_EQ(params(2), nlohmann::json::array({"50", "50"}));
+    EXPECT_EQ(params(3), nlohmann::json::array({"53"}));
     EXPECT_EQ(notices, 2);
     {
         Database database(path, Database::Mode::read_only);
@@ -788,9 +813,9 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
             EXPECT_TRUE(sync_note_find(database, {name})) << name;
     }
     worker.run_once();
-    ASSERT_EQ(scripted->bodies.size(), 8u);
-    EXPECT_EQ(params(6), nlohmann::json::array({"0", "50"}));
-    EXPECT_EQ(params(7), nlohmann::json::array({"55"}));
+    ASSERT_EQ(scripted->bodies.size(), 6u);
+    EXPECT_EQ(params(4), nlohmann::json::array({"0", "50"}));
+    EXPECT_EQ(params(5), nlohmann::json::array({"55"}));
     EXPECT_EQ(notices, 3);
 }
 
@@ -804,14 +829,13 @@ TEST(D1WorkerTest, MissingOwnTableDuringReadHalts) {
     }
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, error_response("no such table: q/Test/mac").dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
     EXPECT_TRUE(worker.stopped());
     worker.run_once();
-    EXPECT_EQ(scripted->bodies.size(), 2u);
+    EXPECT_EQ(scripted->bodies.size(), 1u);
 }
 
 TEST(D1WorkerTest, OversizedResultHalvesLimitAndResets) {
@@ -826,22 +850,20 @@ TEST(D1WorkerTest, OversizedResultHalvesLimitAndResets) {
     }
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, error_response("D1 query result exceeded the maximum response size limit of 50 MB").dump()},
         {200, queue_rows_success({}).dump()},
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success({}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
     worker.run_once();
-    ASSERT_EQ(scripted->bodies.size(), 5u);
+    ASSERT_EQ(scripted->bodies.size(), 3u);
     const auto limit = [&](std::size_t i) {
         return nlohmann::json::parse(scripted->bodies.at(i))["batch"][0]["params"][1];
     };
-    EXPECT_EQ(limit(1), "50");
-    EXPECT_EQ(limit(2), "25");
-    EXPECT_EQ(limit(4), "50");
+    EXPECT_EQ(limit(0), "50");
+    EXPECT_EQ(limit(1), "25");
+    EXPECT_EQ(limit(2), "50");
 }
 
 TEST(D1WorkerTest, SplitSendRetriesFromFirstPiece) {
@@ -862,12 +884,10 @@ TEST(D1WorkerTest, SplitSendRetriesFromFirstPiece) {
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, batch_success(1).dump()}, // piece 1 succeeds
         {200, error_response("down").dump()}, // piece 2 fails
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, queue_rows_success({}).dump()},
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, batch_success(1).dump()},
         {200, batch_success(1).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, queue_rows_success({}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
@@ -895,7 +915,6 @@ TEST(D1WorkerTest, InvalidRecordsSkippedAndAcked) {
     }
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success({
             {1, 1, 1, "not-json"},
             {2, 1, 1, sync_make_record("unknown.kind", {})},
@@ -926,7 +945,6 @@ TEST(D1WorkerTest, AckFailureEndsPassAndRetainsForReplay) {
     }
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success({
             {1, 1, 1, sync_make_record("note.create",
                 {{"path", {"A"}}, {"item", "note"}})},
@@ -977,7 +995,6 @@ TEST(D1WorkerTest, ReservationFailurePausesAndRetainsRows) {
     };
     const std::string record = sync_make_record("chat.entries", chat);
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
         {200, queue_rows_success({{1, 1, 1, record}}).dump()},
         // No delete expected: reservation failure retains rows.
     };
@@ -1021,11 +1038,9 @@ TEST(D1WorkerTest, EvictionDropsAtMostOneEligibleTable) {
             {"result", {count_success(10)["result"][0], count_success(20)["result"][0]}}
         }.dump()},
         {200, batch_success(1).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, queue_rows_success({}).dump()},
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, batch_success(1).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
         {200, queue_rows_success({}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));

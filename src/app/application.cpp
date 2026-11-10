@@ -336,7 +336,6 @@ Application::Impl::Impl(
       d1_test_transport(std::move(d1_transport)) {
     store->set_sync_machine(command.machine);
     vault_maintenance.publish_vault_names();
-    vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         {std::string(entrance_id), std::string(welcome_id)},
         std::string(welcome_name)};
@@ -423,6 +422,10 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
             }
             if (callback && state.load() == ApplicationState::running && !stopping_flag)
                 callback(published_epoch.load());
+        };
+        // Live chats update the mirror themselves; incoming records need this.
+        config.on_chat_changed = [this](const FullSessionId& identity, const std::string& label) {
+            mirror->update(identity, label, sessions->history(identity));
         };
         sync_worker = std::make_unique<D1SyncWorker>(std::move(config));
         if (mode == SyncStart::recover) sync_worker->ensure_local_queue();

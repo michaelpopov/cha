@@ -846,6 +846,21 @@ TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
     EXPECT_TRUE(boot.presentation.forums.empty());
 }
 
+TEST(ApplicationVault, ReopenFailureAfterDatabaseMaintenanceMarksApplicationUnavailable) {
+    TwoVaults pair;
+    pair.command.vault.modify = pair.workspace_a.root() / "export";
+    pair.command.vaults.front() = pair.command.vault;
+    auto application = Application::open(pair.command);
+    (void)application->export_configuration(application->context_epoch());
+    force_next_forum_sync_failure();
+
+    EXPECT_THROW(
+        (void)application->import_configuration(application->context_epoch()),
+        WorkspaceRestartRequiredError);
+
+    EXPECT_EQ(application->state(), ApplicationState::unavailable);
+}
+
 TEST(ApplicationVault, MergeChecksSourcePasswordBeforeMaintenance) {
     TwoVaults pair;
     auto application = Application::open(pair.command);

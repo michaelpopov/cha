@@ -44,7 +44,7 @@ void sync_record_chat_initial(
     std::int64_t session_key,
     const SyncChatIdentity& identity);
 
-// One finished turn (prompt + response + state) or one @- entry.
+// One finished turn (prompt, response if any, and state) or one @- entry.
 [[nodiscard]] nlohmann::json sync_chat_entries_fields(
     const std::vector<TranscriptEntry>& entries,
     std::optional<int> turn_state);

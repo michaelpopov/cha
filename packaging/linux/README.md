@@ -139,6 +139,14 @@ For a protected vault, put its password in
 `$CHA_DATA_PATH/<user>/config/password`. The file must be
 a regular file owned by the installing user with mode `0600`.
 
+If the vault uses D1 synchronization, copy it only when it has no unsent
+changes. On the source machine, upload the vault to R2 first: the upload
+succeeds only when no changes wait to be sent to D1. Then close CHA without
+other edits and copy the vault. A copy with unsent changes sends them again
+from the server. The other machines then get duplicate notes and chat turns,
+and an old version can replace a change that you made on the source after the
+copy.
+
 ChaWeb and the daemon have no settings editor. To change the configuration
 with the native CHA application, the daemon must release the vault. Stop both
 units first, because the socket starts a stopped service again:

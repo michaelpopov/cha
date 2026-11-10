@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <vector>
 
@@ -139,10 +140,6 @@ bool D1SyncWorker::send_pass(std::stop_token stop) {
         {creds->account_id, creds->database_id, creds->api_token}, config_.transport);
     auto [queues, list_error] = client.list_vault_queues(config_.vault, config_.machine);
     if (list_error) {
-        if (list_error->failure == D1Client::Failure::missing_table) {
-            halt_with_missing_table();
-            return false;
-        }
         log_warn("D1 sync send discovery failed: " + list_error->message);
         return true;
     }
@@ -228,9 +225,12 @@ struct PendingSet {
 
 enum class ApplyOutcome { applied, skipped, reservation_failed };
 
+// Changed chats and their current labels.
+using ChangedChats = std::map<FullSessionId, std::string>;
+
 ApplyOutcome apply_complete_record(
     const std::string& record_text,
-    const D1SyncWorker::Config& config, bool& notes_changed) {
+    const D1SyncWorker::Config& config, bool& notes_changed, ChangedChats& chats_changed) {
     nlohmann::json envelope;
     try {
         envelope = nlohmann::json::parse(record_text);
@@ -305,6 +305,8 @@ ApplyOutcome apply_complete_record(
             const auto lease = config.sessions
                 ? config.sessions->reserve_for_sync(identity) : nullptr;
             sync_apply_chat_record(database, envelope);
+            if (kind == "chat.delete") chats_changed.erase(identity);
+            else chats_changed[identity] = chat.label;
             return ApplyOutcome::applied;
         }
         log_warn("Skipped incoming sync record with unknown kind.");
@@ -325,16 +327,8 @@ void D1SyncWorker::receive_pass(std::stop_token stop, bool notify_notes) {
     if (!creds) return;
     D1Client client(
         {creds->account_id, creds->database_id, creds->api_token}, config_.transport);
-    auto [queues, list_error] = client.list_vault_queues(config_.vault, config_.machine);
-    if (list_error) {
-        log_warn("D1 sync receive discovery failed: " + list_error->message);
-        return;
-    }
-    if (!queues.local) {
-        halt_with_missing_table();
-        return;
-    }
-    const std::string& local_table = *queues.local;
+    // No table list here: a read of a missing table gives the missing-table error.
+    const std::string local_table = sync_queue_table(config_.vault, config_.machine);
     int limit = initial_read_limit;
     std::int64_t read_through = 0;
     std::int64_t acknowledged = 0;
@@ -355,6 +349,7 @@ void D1SyncWorker::receive_pass(std::stop_token stop, bool notify_notes) {
         }
         if (rows.empty()) break;
         bool notes_changed = false;
+        ChangedChats chats_changed;
         bool paused = false;
         for (const auto& row : rows) {
             if (interrupted(stop)) break;
@@ -379,7 +374,7 @@ void D1SyncWorker::receive_pass(std::stop_token stop, bool notify_notes) {
             }
             if (pending || (row.piece == 1 && row.pieces == 1)) {
                 const auto outcome = apply_complete_record(
-                    *complete, config_, notes_changed);
+                    *complete, config_, notes_changed, chats_changed);
                 if (outcome == ApplyOutcome::reservation_failed) {
                     paused = true;
                     break;
@@ -395,6 +390,15 @@ void D1SyncWorker::receive_pass(std::stop_token stop, bool notify_notes) {
                 config_.on_notes_changed();
             } catch (...) {
                 log_warn("Could not deliver the D1 notes change notification.");
+            }
+        }
+        if (config_.on_chat_changed) {
+            for (const auto& [identity, label] : chats_changed) {
+                try {
+                    config_.on_chat_changed(identity, label);
+                } catch (const std::exception& error) {
+                    log_warn(std::string("Could not update the session mirror: ") + error.what());
+                }
             }
         }
         if (handled > acknowledged) {

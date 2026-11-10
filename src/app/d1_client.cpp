@@ -30,8 +30,7 @@ void require_curl(CURLcode result, std::string_view operation) {
 std::pair<long, std::string> curl_post(
     const std::string& url,
     const std::string& body,
-    const std::vector<std::string>& headers,
-    const std::function<bool()>& cancelled) {
+    const std::vector<std::string>& headers) {
     CurlHandle curl;
     CurlHeaders curl_headers;
     curl_headers.append("Content-Type: application/json");
@@ -60,18 +59,6 @@ std::pair<long, std::string> curl_post(
         "Failed to configure D1 writer");
     require_curl(curl_easy_setopt(curl.get(), CURLOPT_WRITEDATA, &response),
         "Failed to configure D1 destination");
-    if (cancelled) {
-        if (cancelled()) throw std::runtime_error("D1 request cancelled.");
-        require_curl(curl_easy_setopt(curl.get(), CURLOPT_NOPROGRESS, 0L),
-            "Failed to enable D1 progress callback");
-        require_curl(curl_easy_setopt(curl.get(), CURLOPT_XFERINFODATA, &cancelled),
-            "Failed to configure D1 progress data");
-        const auto progress = +[](void* data, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
-            return (*static_cast<const std::function<bool()>*>(data))() ? 1 : 0;
-        };
-        require_curl(curl_easy_setopt(curl.get(), CURLOPT_XFERINFOFUNCTION, progress),
-            "Failed to configure D1 progress callback");
-    }
     require_curl(curl_easy_perform(curl.get()), "D1 request failed");
     long status = 0;
     require_curl(curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status),
@@ -86,17 +73,9 @@ std::string endpoint(const D1Client::Credentials& credentials) {
 
 } // namespace
 
-D1Client::D1Client(Credentials credentials, Transport transport,
-    std::function<bool()> cancelled)
+D1Client::D1Client(Credentials credentials, Transport transport)
     : credentials_(std::move(credentials)), transport_(std::move(transport)) {
-    if (!transport_) {
-        transport_ = [cancelled = std::move(cancelled)](
-                const std::string& url,
-                const std::string& body,
-                const std::vector<std::string>& headers) {
-            return curl_post(url, body, headers, cancelled);
-        };
-    }
+    if (!transport_) transport_ = curl_post;
 }
 
 std::string D1Client::query_url() const {
@@ -104,18 +83,18 @@ std::string D1Client::query_url() const {
     return endpoint(credentials_);
 }
 
-bool D1Client::is_full_database_message(std::string_view message) {
+namespace {
+
+bool is_full_database_message(std::string_view message) {
     constexpr std::string_view prefix = "D1_ERROR: ";
     if (message.starts_with(prefix)) message.remove_prefix(prefix.size());
     return message == "Exceeded maximum DB size."
         || message == "Exceeded maximum DB size.: SQLITE_FULL";
 }
 
-bool D1Client::is_result_too_large_message(std::string_view message) {
+bool is_result_too_large_message(std::string_view message) {
     return message.find("D1 query result exceeded") != std::string_view::npos;
 }
-
-namespace {
 
 using Json = nlohmann::json;
 using Failure = D1Client::Failure;
@@ -142,9 +121,9 @@ std::optional<Error> classify_error(const Json& error) {
     }
 
     // Return fixed diagnostics because API errors can include request data.
-    if (D1Client::is_full_database_message(message))
+    if (is_full_database_message(message))
         return Error{Failure::full_database, "Exceeded maximum DB size."};
-    if (D1Client::is_result_too_large_message(message))
+    if (is_result_too_large_message(message))
         return Error{Failure::result_too_large, "D1 query result is too large."};
     if (message.find("no such table:") != std::string_view::npos)
         return Error{Failure::missing_table, "The D1 table does not exist."};
@@ -310,12 +289,6 @@ std::optional<D1Client::Error> D1Client::delete_through(
     BatchResult result = run_batch(query_url(), transport_, credentials_,
         nlohmann::json::array({statement(sql, {std::to_string(last_rowid)})}));
     return result.error;
-}
-
-std::pair<std::int64_t, std::optional<D1Client::Error>> D1Client::count_rows(
-    std::string_view table) {
-    auto [counts, error] = count_rows(std::vector<std::string>{std::string(table)});
-    return {error ? 0 : counts.front(), std::move(error)};
 }
 
 std::pair<std::vector<std::int64_t>, std::optional<D1Client::Error>> D1Client::count_rows(

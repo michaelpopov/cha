@@ -230,7 +230,7 @@ void sync_record_chat_initial(
     auto heads = database.prepare(
         "SELECT min(e.entry_id), e.request_id, t.state FROM entries e "
         "JOIN turns t USING(session_key, request_id) "
-        "WHERE e.session_key=?1 AND t.state<>0 GROUP BY e.request_id HAVING count(*)=2 "
+        "WHERE e.session_key=?1 AND t.state<>0 GROUP BY e.request_id HAVING count(*)<=2 "
         "UNION ALL SELECT entry_id, NULL, NULL FROM entries "
         "WHERE session_key=?1 AND request_id IS NULL AND kind=0 AND addressed_to=?2 "
         "ORDER BY 1", session_key, null_agent_handle);
@@ -403,16 +403,18 @@ void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
         for (const auto& item : list) entries.push_back(parse_entry_strict(item));
         const bool has_state = record.contains("state") && !record.at("state").is_null();
         if (has_state) {
-            if (entries.size() != 2)
-                throw std::runtime_error("Incoming chat record is invalid.");
             const int state = record.at("state").get<int>();
             if (state < 1 || state > 3)
+                throw std::runtime_error("Incoming chat record is invalid.");
+            // A turn that was stopped before any response has only its prompt.
+            if (entries.size() > 2 || (entries.size() == 1 && state != 2))
                 throw std::runtime_error("Incoming chat record is invalid.");
             const auto expected_kind = state == 3 ? EntryKind::error : EntryKind::character;
             const auto expected_status = state == 3 ? EntryStatus::failed
                 : state == 2 ? EntryStatus::cancelled : EntryStatus::complete;
-            if (entries[0].kind != EntryKind::human || entries[1].kind != expected_kind
-                || entries[1].status != expected_status) {
+            if (entries[0].kind != EntryKind::human
+                || (entries.size() == 2 && (entries[1].kind != expected_kind
+                    || entries[1].status != expected_status))) {
                 throw std::runtime_error("Incoming chat turn has invalid entries.");
             }
             const std::int64_t request_id = allocate_request(database, session_key);
@@ -467,12 +469,17 @@ void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
         const auto note = require_attachment(database, record.at("path"), NoteItemKind::note);
         const std::string name = record.at("name").get<std::string>();
         const std::string text = record.at("text").get<std::string>();
+        // The notices use the same text as SessionJournal.
+        const bool refresh = database.prepare(
+            "SELECT 1 FROM session_notes WHERE session_key=?1 AND note_id=?2",
+            session_key, note).step();
         database.prepare(
             "INSERT INTO session_notes (session_key, note_id, name, text) VALUES (?1, ?2, ?3, ?4) "
             "ON CONFLICT(session_key, note_id) DO UPDATE SET name=excluded.name, text=excluded.text",
             session_key, note, name, text).run();
-        TranscriptEntry notice = make_notice_entry(
-            1, "Added note \u201c" + name + "\u201d to this chat.");
+        TranscriptEntry notice = make_notice_entry(1, refresh
+            ? "Updated this chat\u2019s copy of note \u201c" + name + "\u201d."
+            : "Added note \u201c" + name + "\u201d to this chat.");
         const std::int64_t entry_id = allocate_entry(database, session_key);
         notice.id = static_cast<std::uint64_t>(entry_id);
         insert_entry_row(database, session_key, entry_id, std::nullopt, notice);
@@ -481,12 +488,16 @@ void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
         const std::string name = record.at("name").get<std::string>();
         const std::string text = record.at("text").get<std::string>();
         if (name.empty()) throw std::runtime_error("Incoming chat record is invalid.");
+        const bool refresh = database.prepare(
+            "SELECT 1 FROM session_files WHERE session_key=?1 AND name=?2",
+            session_key, name).step();
         database.prepare(
             "INSERT INTO session_files (session_key, name, text) VALUES (?1, ?2, ?3) "
             "ON CONFLICT(session_key, name) DO UPDATE SET text=excluded.text",
             session_key, name, text).run();
-        TranscriptEntry notice = make_notice_entry(
-            1, "Added file \u201c" + name + "\u201d to this chat.");
+        TranscriptEntry notice = make_notice_entry(1, refresh
+            ? "Updated this chat\u2019s copy of file \u201c" + name + "\u201d."
+            : "Added file \u201c" + name + "\u201d to this chat.");
         const std::int64_t entry_id = allocate_entry(database, session_key);
         notice.id = static_cast<std::uint64_t>(entry_id);
         insert_entry_row(database, session_key, entry_id, std::nullopt, notice);
@@ -499,7 +510,7 @@ void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
             "ON CONFLICT DO NOTHING",
             session_key, folder).run();
         TranscriptEntry notice = make_notice_entry(
-            1, "Added folder " + path.back() + " to this chat.");
+            1, "Added folder \u201c" + path.back() + "\u201d to this chat.");
         const std::int64_t entry_id = allocate_entry(database, session_key);
         notice.id = static_cast<std::uint64_t>(entry_id);
         insert_entry_row(database, session_key, entry_id, std::nullopt, notice);
@@ -511,7 +522,7 @@ void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
             "DELETE FROM session_folders WHERE session_key=?1 AND folder_id=?2",
             session_key, folder).run();
         TranscriptEntry notice = make_notice_entry(
-            1, "Removed folder " + path.back() + " from this chat.");
+            1, "Removed folder \u201c" + path.back() + "\u201d from this chat.");
         const std::int64_t entry_id = allocate_entry(database, session_key);
         notice.id = static_cast<std::uint64_t>(entry_id);
         insert_entry_row(database, session_key, entry_id, std::nullopt, notice);
