@@ -401,8 +401,9 @@ Application::Impl::Impl(
 void Application::Impl::start_sync_worker(SyncStart mode) {
     if (mode == SyncStart::resume && sync_worker && sync_worker->stopped()) return;
     sync_worker.reset();
-    if (command.machine.empty() || stopping_flag || !store->is_main() || !api_keys->d1())
-        return;
+    if (command.machine.empty() || stopping_flag || !store->is_main()) return;
+    const auto saved = api_keys->d1();
+    if (!saved || !saved->usable()) return;
     try {
         D1SyncWorker::Config config;
         config.database_path = store->database_path();
@@ -1573,8 +1574,9 @@ D1StorageDetail Application::save_d1_storage(
     }
     const auto saved = impl_->api_keys->d1();
     if (!request.api_token && saved) request.api_token = saved->api_token;
-    if (request.account_id.empty() || request.database_id.empty()
-        || !request.api_token || request.api_token->empty()) {
+    if (!valid_d1_credential_field(request.account_id)
+        || !valid_d1_credential_field(request.database_id)
+        || !request.api_token || !valid_d1_credential_field(*request.api_token, false)) {
         throw ApplicationError(ErrorCode::invalid_argument, "Invalid D1 credentials.");
     }
 
@@ -1631,7 +1633,7 @@ void Application::disconnect_d1_storage(std::uint64_t epoch) {
     impl_->sync_worker.reset();
 
     const auto& machine = impl_->command.machine;
-    if (machine.empty()) return;
+    if (machine.empty() || !old->usable()) return;
     try {
         D1Client client({old->account_id, old->database_id, old->api_token},
             impl_->d1_test_transport);

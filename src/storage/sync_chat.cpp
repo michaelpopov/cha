@@ -31,8 +31,9 @@ void append_record(
 
 // A fractional number is invalid; it is not cut to an integer.
 std::int64_t integer_field(const nlohmann::json& value) {
-    if (!value.is_number_integer())
-        throw std::runtime_error("Incoming chat record has a number that is not an integer.");
+    if (!value.is_number_integer()
+        || (value.is_number_unsigned() && value.get<std::uint64_t>() > INT64_MAX))
+        throw std::runtime_error("Incoming chat record has an invalid integer.");
     return value.get<std::int64_t>();
 }
 
@@ -46,11 +47,17 @@ TranscriptEntry parse_entry_strict(const nlohmann::json& value) {
     entry.addressed_to_name = value.value("addressed_to_name", std::string{});
     entry.text = value.at("text").get<std::string>();
     entry.status = static_cast<EntryStatus>(integer_field(value.at("status")));
-    entry.created_at = value.value("created_at", std::int64_t{0});
-    if (value.contains("input_tokens") && !value.at("input_tokens").is_null())
-        entry.input_tokens = value.at("input_tokens").get<std::uint64_t>();
-    if (value.contains("output_tokens") && !value.at("output_tokens").is_null())
-        entry.output_tokens = value.at("output_tokens").get<std::uint64_t>();
+    if (const auto created_at = value.find("created_at"); created_at != value.end())
+        entry.created_at = integer_field(*created_at);
+    const auto tokens = [&](const char* name) -> std::optional<std::uint64_t> {
+        const auto field = value.find(name);
+        if (field == value.end() || field->is_null()) return std::nullopt;
+        const auto count = integer_field(*field);
+        if (count < 0) throw std::runtime_error("Incoming chat record has a negative token count.");
+        return static_cast<std::uint64_t>(count);
+    };
+    entry.input_tokens = tokens("input_tokens");
+    entry.output_tokens = tokens("output_tokens");
     entry.web_search_used = value.value("web_search_used", false);
     require_storable_transcript_entry(entry);
     return entry;

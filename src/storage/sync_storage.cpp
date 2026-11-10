@@ -1,6 +1,7 @@
 #include "storage/sync_storage.h"
 
 #include "app/application_config.h"
+#include "providers/credentials.h"
 #include "storage/note_storage.h"
 #include "util/base64.h"
 #include "util/text.h"
@@ -134,8 +135,10 @@ std::optional<SyncD1Credentials> sync_read_d1(storage::SqliteDatabase& database)
             credentials.account_id = table["account_id"].value_or(std::string{});
             credentials.database_id = table["database_id"].value_or(std::string{});
             credentials.api_token = table["api_token"].value_or(std::string{});
-            if (credentials.account_id.empty() || credentials.database_id.empty()
-                || credentials.api_token.empty()) return std::nullopt;
+            if (!valid_d1_credential_field(credentials.account_id)
+                || !valid_d1_credential_field(credentials.database_id)
+                || !valid_d1_credential_field(credentials.api_token, false))
+                return std::nullopt;
             return credentials;
         } catch (const toml::parse_error&) {
             continue;

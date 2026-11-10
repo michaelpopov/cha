@@ -625,18 +625,20 @@ LoadedKey load_saved_key(
         static constexpr std::string_view fields[]{
             "display_name", "type", "account_id", "database_id", "api_token"};
         warn_unknown_fields(table, path, fields, "Key config", warnings);
+        const auto credential = [&](const char* name, bool reject_only_space = true) {
+            auto value = table[name].value_or(std::string{});
+            if (!valid_d1_credential_field(value, reject_only_space)) value.clear();
+            return value;
+        };
         D1StorageKey key{
             .id = id,
             .display_name = display_name,
-            .account_id = required_string(table, path, "account_id"),
-            .database_id = required_string(table, path, "database_id"),
-            .api_token = table["api_token"].value_or(std::string{}),
+            .account_id = credential("account_id"),
+            .database_id = credential("database_id"),
+            .api_token = credential("api_token", false),
         };
-        validate_saved_key_text(key.account_id, 16 * 1024, "account_id", path);
-        validate_saved_key_text(
-            key.database_id, 16 * 1024, "database_id", path);
-        validate_saved_key_text(
-            key.api_token, 16 * 1024, "api_token", path, false);
+        if (!key.usable())
+            warnings.emit(path, "D1 sync is disabled because saved credentials are incomplete or invalid.");
         return key;
     }
     throw std::runtime_error(

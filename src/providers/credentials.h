@@ -1,6 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
 #include <string>
+#include <string_view>
 
 namespace cha {
 
@@ -34,6 +37,15 @@ struct R2StorageInfo {
     bool has_secret_key{};
 };
 
+inline bool valid_d1_credential_field(
+    std::string_view value, bool reject_only_space = true) {
+    return !value.empty() && value.size() <= 16 * 1024
+        && value.find_first_of("\r\n") == std::string_view::npos
+        && (!reject_only_space || std::ranges::any_of(value, [](unsigned char c) {
+            return std::isspace(c) == 0;
+        }));
+}
+
 // D1 sync credentials share the saved-key namespace (system/keys/<id>/).
 struct D1StorageKey {
     std::string id;
@@ -41,6 +53,11 @@ struct D1StorageKey {
     std::string account_id;
     std::string database_id;
     std::string api_token;
+
+    // The loader represents unusable connection fields as empty strings.
+    [[nodiscard]] bool usable() const {
+        return !account_id.empty() && !database_id.empty() && !api_token.empty();
+    }
 };
 
 struct D1StorageInfo {

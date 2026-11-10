@@ -39,9 +39,9 @@ ApplicationCommand make_d1_command(
     std::filesystem::create_directories(config_directory);
     {
         std::ofstream app(config_directory / "app.toml");
-        app << "vault = \"Test\"\n"
-            << "machine = \"" << machine << "\"\n"
-            << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
+        app << "vault = \"Test\"\n";
+        if (!machine.empty()) app << "machine = \"" << machine << "\"\n";
+        app << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
     }
     {
         std::ofstream vault(config_directory / "test.toml");
@@ -183,6 +183,141 @@ void flag_note(const std::filesystem::path& path) {
     Database db(path, Database::Mode::read_write);
     const auto note = note_create(db, std::nullopt, NoteItemKind::note, "Flagged");
     db.prepare("UPDATE note_items SET changed=1 WHERE id=?1", note.id).run();
+}
+
+TEST(D1CredentialsTest, IncompleteSavedKeyAllowsLocalWorkAndReopen) {
+    for (const std::string machine : {"mac", ""}) {
+        SCOPED_TRACE(machine);
+        test::TestWorkspace workspace;
+        const auto path = test::import_test_database(workspace.root());
+        seed_d1(path);
+        queue_work(path);
+        flag_note(path);
+        {
+            Database db(path, Database::Mode::read_write);
+            db.execute("UPDATE config SET content=replace(content, 'api_token = \"t\"', "
+                "'api_token = \"\"') WHERE name='system/keys/api_key_1/config.toml'");
+        }
+        auto command = make_d1_command(workspace, path, machine);
+        MockD1 mock;
+        auto application = Application::open(command, {}, {}, mock.transport());
+        const auto epoch = application->context_epoch();
+        const auto saved = application->get_d1_storage(epoch);
+        ASSERT_TRUE(saved);
+        EXPECT_FALSE(saved->has_api_token);
+        const auto note = application->create_note_item({}, NoteItemKind::note, "Local", epoch);
+        (void)application->save_note(note.id, nlohmann::json::parse(
+            R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Local edit"}]}]})"), epoch);
+        application->request_shutdown();
+        ASSERT_TRUE(application->join_shutdown(5s));
+        application.reset();
+        application = Application::open(command, {}, {}, mock.transport());
+        EXPECT_EQ(application->bootstrap().state, ApplicationState::running);
+        {
+            Database db(path, Database::Mode::read_only);
+            EXPECT_EQ(note_get_text(db, note.id).text, "Local edit");
+            EXPECT_FALSE(sync_read_d1(db));
+            EXPECT_EQ(sync_queue_list(db).size(), 1u);
+            auto flags = db.prepare("SELECT name FROM note_items WHERE changed<>0");
+            ASSERT_TRUE(flags.step());
+            EXPECT_EQ(flags.text(0), "Flagged");
+            EXPECT_FALSE(flags.step());
+        }
+        EXPECT_EQ(mock.count(""), 0u);
+        if (!machine.empty()) {
+            const auto repaired = application->save_d1_storage(
+                credentials(), application->context_epoch());
+            EXPECT_EQ(repaired.id, saved->id);
+            EXPECT_TRUE(repaired.has_api_token);
+        }
+    }
+}
+
+TEST(D1AppWiringTest, MalformedPieceMetadataSkipsOnlyTheBadRows) {
+    test::TestWorkspace workspace;
+    const auto path = test::import_test_database(workspace.root());
+    seed_d1(path);
+    auto command = make_d1_command(workspace, path);
+    MockD1 mock;
+    const auto folder = [](std::string_view name) {
+        return sync_make_record("note.create", {{"path", {name}}, {"item", "folder"}});
+    };
+    mock.incoming = nlohmann::json::array({
+        {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", folder("Before")}},
+        {{"rowid", 2}, {"piece", 1}, {"pieces", 2}, {"record", folder("Incomplete")}},
+        {{"rowid", 3}, {"piece", "garbage"}, {"pieces", 1}, {"record", folder("Invalid")}},
+        {{"rowid", 4}, {"piece", 1.5}, {"pieces", 1}, {"record", folder("Invalid")}},
+        {{"rowid", 5}, {"piece", nullptr}, {"pieces", 1}, {"record", folder("Invalid")}},
+        {{"rowid", 6}, {"piece", 1}, {"record", folder("Invalid")}},
+        {{"rowid", 7}, {"piece", 1}, {"pieces", 1}, {"record", nlohmann::json::array({0})}},
+        {{"rowid", 8}, {"piece", 1}, {"pieces", 1}, {"record", folder("After")}},
+    });
+    auto application = Application::open(command, {}, {}, mock.transport());
+    Database db(path, Database::Mode::read_only);
+    EXPECT_TRUE(sync_note_find(db, {"Before"}));
+    EXPECT_TRUE(sync_note_find(db, {"After"}));
+    EXPECT_FALSE(sync_note_find(db, {"Incomplete"}));
+    EXPECT_FALSE(sync_note_find(db, {"Invalid"}));
+    EXPECT_EQ(mock.count("DELETE FROM"), 1u);
+}
+
+TEST(D1AppWiringTest, FractionalChatMetadataIsSkippedAndAcknowledged) {
+    test::TestWorkspace workspace;
+    const auto path = test::import_test_database(workspace.root());
+    seed_d1(path);
+    auto command = make_d1_command(workspace, path);
+    MockD1 mock;
+    const nlohmann::json turn = {
+        {"kind", "chat.entries"}, {"chat", {"lobby", "sync-chat"}}, {"label", "Synced"},
+        {"state", 1},
+        {"entries", {
+            {{"kind", 0}, {"status", 0}, {"participant_id", "u"}, {"display_name", "U"},
+             {"addressed_to", "guide"}, {"addressed_to_name", "Guide"}, {"text", "Prompt"}},
+            {{"kind", 1}, {"status", 0}, {"participant_id", "guide"}, {"display_name", "Guide"},
+             {"text", "Reply"}, {"input_tokens", nullptr}, {"output_tokens", 0}},
+        }},
+    };
+    const auto push = [&](const nlohmann::json& record) {
+        mock.incoming.push_back({{"rowid", mock.incoming.size() + 1}, {"piece", 1},
+            {"pieces", 1}, {"record", record.dump()}});
+    };
+    push(turn);
+    for (const auto* field : {"created_at", "input_tokens", "output_tokens"}) {
+        auto malformed = turn;
+        malformed["entries"][1][field] = 1.5;
+        push(malformed);
+    }
+    push({{"kind", "note.create"}, {"path", {"Sentinel"}}, {"item", "folder"}});
+    auto application = Application::open(command, {}, {}, mock.transport());
+    Database db(path, Database::Mode::read_only);
+    auto turns = db.prepare("SELECT count(*) FROM turns");
+    ASSERT_TRUE(turns.step());
+    EXPECT_EQ(turns.integer(0), 1);
+    EXPECT_TRUE(sync_note_find(db, {"Sentinel"}));
+    EXPECT_EQ(mock.count("DELETE FROM"), 1u);
+}
+
+TEST(D1AppWiringTest, OversizedPageNeverAppliesOrAcknowledges) {
+    for (const bool omit_row : {false, true}) {
+        SCOPED_TRACE(omit_row);
+        test::TestWorkspace workspace;
+        const auto path = test::import_test_database(workspace.root());
+        seed_d1(path);
+        auto command = make_d1_command(workspace, path);
+        MockD1 mock;
+        for (int id = 1; id <= (omit_row ? 52 : 51); ++id) {
+            if (omit_row && id == 4) continue;
+            mock.incoming.push_back({{"rowid", id}, {"piece", 1}, {"pieces", 1},
+                {"record", sync_make_record("note.create",
+                    {{"path", {"Incoming " + std::to_string(id)}}, {"item", "folder"}})}});
+        }
+        auto application = Application::open(command, {}, {}, mock.transport());
+        Database db(path, Database::Mode::read_only);
+        auto count = db.prepare("SELECT count(*) FROM note_items WHERE name LIKE 'Incoming %'");
+        ASSERT_TRUE(count.step());
+        EXPECT_EQ(count.integer(0), 0);
+        EXPECT_EQ(mock.count("DELETE FROM"), 0u);
+    }
 }
 
 TEST(D1CredentialsTest, SaveCreatesTableFirstAndStartsWorker) {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { publicErrorMessage, type D1StorageDetail } from '../api/client';
 import { StaleNotice, useFormReload } from '../detailRefresh';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -20,6 +20,11 @@ function d1Draft(detail: D1StorageDetail | null): D1Draft {
 }
 
 export function D1SyncScreen({ client, navigate }: SettingsScreenProps) {
+  const mounted = useRef(true);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [detail, setDetail] = useState<D1StorageDetail | null | undefined>(undefined);
   const [draft, setDraft] = useState<D1Draft>(() => d1Draft(null));
   const [busy, setBusy] = useState(false);
@@ -104,6 +109,7 @@ export function D1SyncScreen({ client, navigate }: SettingsScreenProps) {
     setError(null);
     try {
       await client.deleteD1Storage();
+      if (!mounted.current) return;
       applyD1(null);
       reload.remember(null);
       navigate({ type: 'show-settings-api-keys' });

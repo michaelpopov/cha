@@ -199,12 +199,12 @@ const Json& result_rows(const BatchResult& result) {
     return rows;
 }
 
-std::int64_t integer_field(const Json& row, std::string_view name) {
-    const auto& value = row.at(std::string(name));
-    if (!value.is_number_integer()
-        || (value.is_number_unsigned() && value.get<std::uint64_t>() > INT64_MAX))
-        throw std::runtime_error("D1 result field is not a signed 64-bit integer.");
-    return value.get<std::int64_t>();
+std::optional<std::int64_t> integer_field(const Json& row, std::string_view name) {
+    const auto value = row.find(name);
+    if (value == row.end() || !value->is_number_integer()
+        || (value->is_number_unsigned() && value->get<std::uint64_t>() > INT64_MAX))
+        return std::nullopt;
+    return value->get<std::int64_t>();
 }
 
 } // namespace
@@ -248,22 +248,31 @@ std::pair<D1Client::VaultQueues, std::optional<D1Client::Error>> D1Client::list_
 
 std::pair<std::vector<D1Client::Row>, std::optional<D1Client::Error>> D1Client::read_queue(
     std::string_view table, int limit, std::int64_t after_rowid) {
+    const int read_limit = std::max(1, limit);
     const std::string sql = "SELECT rowid, piece, pieces, record FROM "
         + sync_escape_identifier(table) + " WHERE rowid>?1 ORDER BY rowid LIMIT ?2";
     BatchResult result = run_batch(query_url(), transport_, credentials_,
         nlohmann::json::array({statement(sql,
-            {std::to_string(after_rowid), std::to_string(std::max(1, limit))})}));
+            {std::to_string(after_rowid), std::to_string(read_limit)})}));
     if (result.error) return {{}, result.error};
     std::vector<Row> rows;
     try {
-        for (const auto& row : result_rows(result)) {
-            rows.push_back({integer_field(row, "rowid"), integer_field(row, "piece"),
-                integer_field(row, "pieces"), row.at("record").get<std::string>()});
-            // The query returns rows after after_rowid in increasing order.
-            const std::int64_t previous =
-                rows.size() > 1 ? rows[rows.size() - 2].rowid : after_rowid;
-            if (rows.back().rowid <= previous)
-                throw std::runtime_error("D1 queue rows are out of order.");
+        const auto& result_page = result_rows(result);
+        if (result_page.size() > static_cast<std::size_t>(read_limit))
+            return {{}, Error{Failure::protocol, "D1 queue returned more rows than requested."}};
+        std::int64_t previous = after_rowid;
+        for (const auto& row : result_page) {
+            const auto rowid = integer_field(row, "rowid");
+            if (!rowid || *rowid <= previous)
+                return {{}, Error{Failure::protocol, "Invalid D1 queue rows."}};
+            // Zero makes a malformed row skippable by the Worker.
+            const auto record = row.find("record");
+            if (record == row.end() || !record->is_string())
+                rows.push_back({*rowid, 0, 0, {}});
+            else
+                rows.push_back({*rowid, integer_field(row, "piece").value_or(0),
+                    integer_field(row, "pieces").value_or(0), record->get<std::string>()});
+            previous = *rowid;
         }
     } catch (const std::exception&) {
         return {{}, Error{Failure::protocol, "Invalid D1 queue rows."}};
@@ -310,7 +319,7 @@ std::pair<std::vector<std::int64_t>, std::optional<D1Client::Error>> D1Client::c
     std::vector<std::int64_t> counts;
     try {
         for (const auto& entry : result.results)
-            counts.push_back(integer_field(entry.at("results").at(0), "count"));
+            counts.push_back(integer_field(entry.at("results").at(0), "count").value());
     } catch (const std::exception&) {
         return {{}, Error{Failure::protocol, "Invalid D1 row count."}};
     }

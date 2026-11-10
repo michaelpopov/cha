@@ -1048,6 +1048,35 @@ describe('Settings screens', () => {
     expect(navigate).toHaveBeenCalledWith({ type: 'show-settings-api-keys' });
   });
 
+  it('keeps navigation when a D1 disconnect completes after leaving the form', async () => {
+    let finishDisconnect!: () => void;
+    const deleteD1Storage = vi.fn(() => new Promise<void>((resolve) => {
+      finishDisconnect = resolve;
+    }));
+    const navigate = vi.fn();
+    const { unmount } = render(
+      <D1SyncScreen
+        client={fixtureClient({
+          getD1Storage: async () => ({
+            id: 'api_key_1', display_name: 'D1', account_id: 'a',
+            database_id: 'd', has_api_token: true,
+          }),
+          deleteD1Storage,
+        })}
+        dispatch={vi.fn()} navigate={navigate}
+        state={initialAppState}
+      />,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Disconnect from D1' }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole(
+      'button', { name: 'Disconnect from D1' },
+    ));
+    expect(deleteD1Storage).toHaveBeenCalledOnce();
+    unmount();
+    await act(async () => finishDisconnect());
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it('cancels D1 disconnect confirmation without removing credentials', async () => {
     const deleteD1Storage = vi.fn(async () => undefined);
     const detail = {
