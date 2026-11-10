@@ -102,6 +102,8 @@ that the user's answer is recorded in `specs/d1-alt-review.md`, section 8.
 | R56 | Configuration import, vault merge, and received configuration records preserve the destination vault's D1 credential values, including their absence. If another key takes their storage ID, move only the local D1 key to a free ID. Full vault copies and R2 downloads still carry the source credentials. | User decision, November 9, 2026 |
 | R57 | A newly delivered vault starts with an empty local send queue, whatever the delivery route. Clear its note "changed" flags too, so they cannot recreate the source's pending records. This applies to a new vault and to replacement of an existing vault. R58 excludes manual file copies. | User decision, November 9, 2026 |
 | R58 | A manual copy of vault files, such as the Linux installation (F3), is not a delivery route of CHA, so CHA does not clean it. Copy a vault only after a successful R2 upload on the source machine, with no edits after the upload. The effects of a copy that still has unsent work are accepted. | User decision, November 9, 2026 |
+| R59 | A turn that ends with only its prompt, with no response or error entry, does not move. It still counts as a finished turn for the shared rule (O2). A turn position in `chat.delete_turn` counts only turns that have a response or error entry, on the sender and on the receiver. | User delegated the choice to Claude, November 9, 2026 |
+| R60 | "Disconnect from D1" shows when D1 credentials are saved, also when the machine name is missing or invalid. Without a valid machine name, Disconnect does the local part and does not try to delete a queue table. | User delegated the choice to Claude, November 9, 2026 |
 
 ## 3. Facts
 
@@ -190,6 +192,9 @@ machine = "mac"
 - Each machine must have a different name, and letter case does not make a
   name different (O8).
 - `app.toml` is outside the vault, so an R2 copy does not bring it (R36).
+  The Linux manual installation copies the whole configuration directory,
+  which includes `app.toml`, so the operator sets a new machine name there
+  (section 5.5).
 
 ### 5.2 D1 credentials
 
@@ -240,8 +245,8 @@ The screen is as approved (R43). It uses the R2 storage screen as its model
 
 - Settings, API Keys: a new row "D1 sync".
 - Fields: Account ID, Database ID, API token.
-- Buttons: Reset, "Save D1 credentials", and "Disconnect from D1" when
-  connected.
+- Buttons: Reset, "Save D1 credentials", and "Disconnect from D1" when D1
+  credentials are saved, also without a valid machine name (R60).
 - A confirmation before Disconnect.
 
 The approved mockup copy, supplied in the review, is:
@@ -277,7 +282,8 @@ states without asking for approval again.
    clears all "changed" flags (O3). This part does not need D1.
 2. The application tries once to delete the queue table of this machine. If
    the request fails, it writes a warning. A table that stays in D1 is deleted
-   later by the steps in section 11 when D1 is full.
+   later by the steps in section 11 when D1 is full. With no valid machine
+   name, the vault has no queue table name, so this step is skipped (R60).
 
 ### 5.5 Linux
 
@@ -296,7 +302,9 @@ Its startup follows R17 and R51:
   upload on the source machine, and close CHA there with no edits after the
   upload. The upload works only when the local queue is empty and no note has
   a flag (section 12.1), so the copy is clean. Records that the source applies
-  after the upload do not make it dirty again (R38).
+  after the upload do not make it dirty again (R38). Before the daemon starts,
+  the operator sets `machine` in the copied `app.toml` to a name that no other
+  machine uses (O8).
 
 ## 6. Data
 
@@ -381,7 +389,7 @@ Note content is the compressed note (F8), as base64 text (R53).
 | `chat.rename` | `chat`, `label` | R18 |
 | `chat.delete` | `chat`, `label` | R18 |
 | `chat.clear` | `chat`, `label` | R18 |
-| `chat.delete_turn` | `chat`, `label`, `turn` (its position among the turns of the chat, from 1) | R52 |
+| `chat.delete_turn` | `chat`, `label`, `turn` (its position, from 1, among the turns of the chat that have a response or error entry) | R52, R59 |
 | `chat.add_note` | `chat`, `label`, `path`, `name`, `text` | R18 |
 | `chat.add_file` | `chat`, `label`, `name`, `text` | R18 |
 | `chat.add_folder` | `chat`, `label`, `path` | R18 |
@@ -471,6 +479,10 @@ If repair makes the chat shared, it writes the initial records too.
     response, and the turn state (R27).
   - A message to `@-` adds one `chat.entries` record with that entry (R18,
     F13).
+  - A turn that ends with only its prompt, with no response or error entry,
+    adds no record, also in the initial records. It still counts as a
+    finished turn for the shared rule (O2, R59). The local turn delete needs a
+    response entry (F24), so such a turn never needs a position.
 - Otherwise the operation adds no record (R29).
 - A chat note copy keeps its name and text after its source note is deleted,
   but it has no path ([note_storage.cpp:1038](../src/storage/note_storage.cpp)).
@@ -632,8 +644,9 @@ The Worker builds a record from its pieces before it applies it (R53):
   `discardable`, both 0.
 - `chat.entries` appends the entries with the next free numbers, and for a
   turn it stores the state of the record (R28, F14).
-- `chat.delete_turn` deletes the turn at that position (R52, F24). If there is
-  no such turn, skip with a warning (R41).
+- `chat.delete_turn` deletes the turn at that position (R52, F24). The
+  position counts only turns with a response or error entry (R59). If there
+  is no such turn, skip with a warning (R41).
 - A `chat.add_note`, `chat.add_folder`, or `chat.detach_folder` record finds
   the note or folder by its path. If it is missing, skip with a warning (R41).
 - When the screen reconnects, the chat opens again from the database, with
@@ -780,6 +793,7 @@ or sets note flags (R38).
 | Local editing is overridden. | An incoming update replaces unsaved text in the open note. | R32 |
 | A deleted note comes back. | You delete X on Windows while the Mac is offline, and you edit X on the Mac. The Mac update creates X again on Windows. | R49 |
 | A chat with only `@-` messages never moves. | It has a name but no finished turn, so it is never shared. | R29 |
+| A prompt with no reply does not move. | You stop a reply before any text arrives. The prompt stays only on this machine, so the chat and the model context differ between the machines. | R59 |
 | Synchronization stops until recovery. | The desktop machine whose queue table was deleted needs a new R2 download. On Linux, the records in the deleted table are lost. | R46, R51 |
 | The last changes wait on a sleeping machine. | You close the laptop lid. The application does not close, so the changes of the last 30 seconds stay on the machine until it wakes. | R37 |
 | A chat note copy is missing on the other machines. | You attach note X to a new chat and delete X before the first response. The copy stays in the chat on this machine, but it does not move, so the model context differs between the machines. | R55 |

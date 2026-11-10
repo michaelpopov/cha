@@ -147,6 +147,13 @@ from the server. The other machines then get duplicate notes and chat turns,
 and an old version can replace a change that you made on the source after the
 copy.
 
+Before you run `add_user.sh`, set `machine` in
+`$CHA_DATA_PATH/<user>/config/app.toml` to a name that no other machine uses,
+for example `machine = "linux"`. Letter case does not make a name different.
+A copied configuration directory has the name of the source machine. If the
+server keeps that name, the server and the source machine use one D1 queue and
+take each other's changes.
+
 ChaWeb and the daemon have no settings editor. To change the configuration
 with the native CHA application, the daemon must release the vault. Stop both
 units first, because the socket starts a stopped service again:
