@@ -15,6 +15,7 @@
 #include "util/path_name.h"
 
 #include <gtest/gtest.h>
+#include <array>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -238,6 +239,41 @@ protected:
     std::uint64_t epoch_{1};
     std::uint64_t next_id_{1};
 };
+
+TEST_F(BridgeRouterTest, PromptMethodsUseExactParametersAndVaultEpoch) {
+    bootstrap_epoch();
+    std::ifstream input(std::filesystem::path(CHA_WIRE_FIXTURE_DIRECTORY) / "prompt-contract.json");
+    const auto fixture = nlohmann::json::parse(input);
+    EXPECT_EQ(call("prompt.list")["result"], fixture["list"]);
+    const auto original = call("prompt.get", fixture["get"])["result"];
+    EXPECT_FALSE(original["text"].get<std::string>().empty());
+    EXPECT_EQ(call("prompt.update", fixture["update"])["result"], fixture["detail"]);
+    EXPECT_EQ(call("prompt.get", fixture["get"])["result"], fixture["detail"]);
+    for (const auto method : {"prompt.get", "prompt.update"}) {
+        nlohmann::json params{{"prompt_id", "unknown-prompt"}};
+        if (std::string_view(method) == "prompt.update") params["text"] = "";
+        const auto reply = call(method, params);
+        EXPECT_EQ(reply["error"]["code"], "not_found");
+        EXPECT_EQ(reply["error"]["message"], "That prompt was not found.");
+    }
+    EXPECT_EQ(call("prompt.list", {{"text", ""}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("prompt.get", {{"prompt_id", "../a"}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("prompt.update", fixture["get"])["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("prompt.update", {{"prompt_id", "note-compression"}, {"text", nullptr}})["error"]["code"], "invalid_argument");
+    auto extra = fixture["update"];
+    extra["display_name"] = "Renamed";
+    EXPECT_EQ(call("prompt.update", extra)["error"]["code"], "invalid_argument");
+    extra = fixture["update"];
+    extra["text"] = std::string(1, '\0');
+    EXPECT_EQ(call("prompt.update", extra)["error"]["message"], "Choose a UTF-8 text file.");
+    EXPECT_EQ(call("prompt.get", fixture["get"])["result"], fixture["detail"]);
+
+    ++epoch_;
+    for (const auto method : {"prompt.list", "prompt.get", "prompt.update"}) {
+        const auto reply = call(method);
+        EXPECT_EQ(reply["error"]["code"], "vault_changed");
+    }
+}
 
 TEST_F(BridgeRouterTest, EventsListUsesEmptyParametersAndReturnsOnlyStoredRecords) {
     bootstrap_epoch();
@@ -2909,6 +2945,9 @@ TEST_F(BridgeRouterTest, NotePageProgressReportsFormattingOnlyToItsRequestingCon
     bootstrap_epoch();
     for (const bool youtube : {false, true}) {
         SCOPED_TRACE(youtube);
+        const auto id = youtube ? "youtube-transcript" : "page-formatting";
+        const auto prompt = youtube ? "Custom transcript instructions" : "Custom article instructions";
+        (void)application_->update_prompt(id, {prompt}, epoch_);
         const std::string url = youtube ? "https://youtu.be/video" : "https://example.org/article";
         const nlohmann::json page{{"url", url}, {"title", "Title"},
             {"markdown", youtube ? "Raw transcript" : std::string(5001, 'a')}};
@@ -2928,6 +2967,7 @@ TEST_F(BridgeRouterTest, NotePageProgressReportsFormattingOnlyToItsRequestingCon
         router_->run_ordinary_tasks();
         ASSERT_TRUE(reader.wait_for_requests(1, 2s));
         EXPECT_FALSE(router_->take_delivery(connection_));
+        (void)application_->update_prompt(id, {"Saved during download"}, epoch_);
         reader.resume_responses();
         ASSERT_TRUE(provider.wait_for_requests(1, 2s));
         EXPECT_TRUE(router_->wait_for_work(10ms));
@@ -2947,6 +2987,9 @@ TEST_F(BridgeRouterTest, NotePageProgressReportsFormattingOnlyToItsRequestingCon
         EXPECT_TRUE(replies.at(read)["ok"]) << replies.at(read);
         reader.join();
         provider.join();
+        ASSERT_EQ(provider.requests().size(), 1U);
+        const auto body = nlohmann::json::parse(request_body(provider.requests().front()));
+        EXPECT_EQ(body["messages"][0]["content"], prompt);
         EXPECT_FALSE(router_->take_delivery(connection_));
         router_->close_connection(other);
     }
@@ -3440,14 +3483,19 @@ nlohmann::json summary_document(std::string text) {
 TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneReadOnlyNote) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
+    (void)application_->update_prompt("session-short-summary", {"Short instructions"}, epoch_);
+    (void)application_->update_prompt("session-long-summary", {"Long instructions"}, epoch_);
     for (const auto api : {"chat_completions", "responses"}) {
-        MockHttpServer server({compression_response(api, false, "# Useful summary"),
-            compression_response(api, false, "Replacement summary")});
+        MockHttpServer server({compression_response(api, false, "Overview. **Keywords:** topic"),
+            compression_response(api, false, "Useful summary"),
+            compression_response(api, false, "New overview. **Keywords:** topic"),
+            compression_response(api, false, "## Details\n\nReplacement summary")});
         server.start();
         configure_compression(*application_, server.port(), api, false, epoch_);
         auto generated = call("sessionSummary.generate", summary_identity(source));
         ASSERT_TRUE(generated["ok"]) << generated;
-        EXPECT_EQ(generated["result"]["markdown"], "# Useful summary");
+        EXPECT_EQ(generated["result"]["markdown"],
+            "# Short summary\n\nOverview. **Keywords:** topic\n\n# Long summary\n\nUseful summary");
         ASSERT_TRUE(call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
             {"document", summary_document("Useful summary")}})["ok"]);
         ASSERT_TRUE(call("session.open", summary_identity(source))["ok"]);
@@ -3464,6 +3512,8 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
         generated = call("sessionSummary.generate", summary_identity(source));
         ASSERT_TRUE(generated["ok"]) << generated;
         EXPECT_EQ(generated["result"]["target_note_id"], saved.id);
+        EXPECT_EQ(generated["result"]["markdown"],
+            "# Short summary\n\nNew overview. **Keywords:** topic\n\n# Long summary\n\n## Details\n\nReplacement summary");
         // Replacing a summary keeps its name even if the session was renamed.
         ASSERT_TRUE(call("session.rename", {{"forum_id", source.forum_id}, {"session_id", source.session_id}, {"label", "Latest title"}})["ok"]);
         const auto committed = call("sessionSummary.commit", {{"run_id", generated["result"]["run_id"]},
@@ -3480,25 +3530,86 @@ TEST_F(BridgeRouterTest, SummaryUsesSavedSourceAndNotesProviderAndReplacesOneRea
         EXPECT_NE(events.front().message.find("Summary saved"), std::string::npos);
         EXPECT_EQ(events.front().severity, EventSeverity::success);
         server.join();
-        ASSERT_EQ(server.requests().size(), 2U);
-        for (const auto& raw : server.requests()) {
-            const auto body = nlohmann::json::parse(request_body(raw));
+        ASSERT_EQ(server.requests().size(), 4U);
+        std::string transcript;
+        for (std::size_t i = 0; i < server.requests().size(); ++i) {
+            const auto body = nlohmann::json::parse(request_body(server.requests()[i]));
             const auto text = body.dump();
             EXPECT_FALSE(body.contains("tools"));
             EXPECT_NE(text.find("Full saved goal"), std::string::npos);
             EXPECT_NE(text.find("Completed answer"), std::string::npos);
             EXPECT_NE(text.find("Unanswered goal"), std::string::npos);
-            EXPECT_NE(text.find("Generate a short summary and a long summary"), std::string::npos);
+            const auto expected_prompt = i % 2 == 0 ? "Short instructions" : "Long instructions";
+            const bool responses = std::string_view(api) == "responses";
+            EXPECT_EQ(responses ? body["instructions"] : body["messages"][0]["content"], expected_prompt);
+            const auto input = responses ? body["input"].dump() : body["messages"][1].dump();
+            if (i % 2 == 0) transcript = input;
+            else EXPECT_EQ(input, transcript);
+            EXPECT_EQ(text.find("Overview."), std::string::npos);
             for (const auto excluded : {"Cancelled answer", "Failed answer", "Hidden notice", "Hidden error", "User edits must not", "is stored in Notes"})
                 EXPECT_EQ(text.find(excluded), std::string::npos);
         }
     }
 }
 
+TEST_F(BridgeRouterTest, SummaryRetainsCapturedLongPromptAndRetriesOnlyTheLongRequest) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    const auto success = [](std::string text) { return compression_response("chat_completions", false, text); };
+    MockHttpServer server({success("First short"),
+        "HTTP/1.1 429 Limited\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        success("First long"), success("Next short"), success("Next long")});
+    server.pause_before_response(1);
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    (void)application_->update_prompt("session-short-summary", {"Short"}, epoch_);
+    (void)application_->update_prompt("session-long-summary", {"Before edit"}, epoch_);
+    const auto run = queue_request(*router_, connection_, next_id_, epoch_, "sessionSummary.generate", summary_identity(source));
+    router_->run_ordinary_tasks();
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    (void)application_->update_prompt("session-long-summary", {"After edit"}, epoch_);
+    server.resume_responses();
+    const auto first = wait_replies(*router_, connection_, {run}).at(run);
+    ASSERT_TRUE(first["ok"]) << first;
+    ASSERT_TRUE(call("sessionSummary.abandon", {{"run_id", first["result"]["run_id"]},
+        {"reason", "conversion_failed"}})["ok"]);
+    const auto second = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(second["ok"]) << second;
+    EXPECT_EQ(second["result"]["markdown"], "# Short summary\n\nNext short\n\n# Long summary\n\nNext long");
+    server.join();
+    const std::array expected{"Short", "Before edit", "Before edit", "Short", "After edit"};
+    ASSERT_EQ(server.requests().size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        const auto request = nlohmann::json::parse(request_body(server.requests()[i]));
+        EXPECT_EQ(request["messages"][0]["content"], expected[i]);
+    }
+}
+
+TEST_F(BridgeRouterTest, SummaryLongFailureLeavesTheExistingNoteIntact) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    const auto success = [](std::string text) { return compression_response("chat_completions", false, text); };
+    MockHttpServer server({success("Short"), success("Long"), success("New short"),
+        compression_refusal("chat_completions", false, false)});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const auto first = call("sessionSummary.generate", summary_identity(source));
+    ASSERT_TRUE(first["ok"]) << first;
+    const auto document = summary_document("Existing long body");
+    const auto committed = call("sessionSummary.commit", {{"run_id", first["result"]["run_id"]}, {"document", document}});
+    ASSERT_TRUE(committed["ok"]) << committed;
+    const auto failed = call("sessionSummary.generate", summary_identity(source));
+    EXPECT_EQ(failed["error"]["code"], "internal_error");
+    EXPECT_EQ(application_->get_note(committed["result"]["item"]["id"], epoch_).document, document);
+    server.join();
+}
+
 TEST_F(BridgeRouterTest, SummaryReservationSurvivesDeliveryAndChecksOwnerAndAbandonBarrier) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
-    MockHttpServer server({compression_response("chat_completions", false, "Summary"),
+    MockHttpServer server({compression_response("chat_completions", false, "Short"),
+        compression_response("chat_completions", false, "Summary"),
+        compression_response("chat_completions", false, "Next short"),
         compression_response("chat_completions", false, "Next summary")});
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
@@ -3534,6 +3645,7 @@ TEST_F(BridgeRouterTest, SummaryRejectsIncompleteRefusedAndEmptyAnswersWithoutCr
     const auto source = summary_source(*application_, database_, epoch_);
     MockHttpServer server({compression_response("chat_completions", false, "Partial", true),
         compression_refusal("chat_completions", false, false), compression_response("chat_completions", false, " \n "),
+        compression_response("chat_completions", false, "Short"),
         compression_response("chat_completions", false, "Good summary")});
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
@@ -3556,6 +3668,20 @@ TEST_F(BridgeRouterTest, SummaryRejectsIncompleteRefusedAndEmptyAnswersWithoutCr
     server.join();
 }
 
+TEST_F(BridgeRouterTest, SummaryRejectsCombinedBodiesLargerThanTheNoteLimit) {
+    bootstrap_epoch();
+    const auto source = summary_source(*application_, database_, epoch_);
+    const std::string body(note_document_byte_limit / 2, 'x');
+    const auto response = compression_response("chat_completions", false, body);
+    MockHttpServer server({response, response});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    expect_note_error(call("sessionSummary.generate", summary_identity(source)), "body_too_large",
+        "The generated summary exceeds 12 MiB.");
+    EXPECT_EQ(application_->list_note_items(epoch_).size(), 2U);
+    server.join();
+}
+
 TEST_F(BridgeRouterTest, SummaryReportsContextWindowWithNotesSettings) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
@@ -3572,7 +3698,9 @@ TEST_F(BridgeRouterTest, SummaryReportsContextWindowWithNotesSettings) {
 TEST_F(BridgeRouterTest, SummaryDisconnectAfterMarkdownDeliveryReleasesReservation) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
-    MockHttpServer server({compression_response("chat_completions", false, "Summary"),
+    MockHttpServer server({compression_response("chat_completions", false, "Short"),
+        compression_response("chat_completions", false, "Summary"),
+        compression_response("chat_completions", false, "Next short"),
         compression_response("chat_completions", false, "Next summary")});
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
@@ -3591,7 +3719,9 @@ TEST_F(BridgeRouterTest, SummaryDisconnectAfterMarkdownDeliveryReleasesReservati
 TEST_F(BridgeRouterTest, SummaryDeletionDuringConversionAndCompressionAdmissionKeepIdentity) {
     bootstrap_epoch();
     const auto source = summary_source(*application_, database_, epoch_);
-    MockHttpServer server({compression_response("chat_completions", false, "Summary"),
+    MockHttpServer server({compression_response("chat_completions", false, "Short"),
+        compression_response("chat_completions", false, "Summary"),
+        compression_response("chat_completions", false, "Next short"),
         compression_response("chat_completions", false, "Replacement")});
     server.start();
     configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
@@ -3728,7 +3858,8 @@ TEST_F(BridgeRouterTest, SummaryCanGenerateWhileBulkCompressionWaitsAndRejectsIn
     configure_compression(*application_, blocked.port(), "chat_completions", false, epoch_);
     ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
     ASSERT_TRUE(blocked.wait_for_requests(1, 2s));
-    MockHttpServer summary({compression_response("chat_completions", false, "Summary")});
+    MockHttpServer summary({compression_response("chat_completions", false, "Short"),
+        compression_response("chat_completions", false, "Summary")});
     summary.start();
     configure_compression(*application_, summary.port(), "chat_completions", false, epoch_);
     const auto generated = call("sessionSummary.generate", summary_identity(source));
@@ -3749,6 +3880,26 @@ TEST_F(BridgeRouterTest, SummaryCanGenerateWhileBulkCompressionWaitsAndRejectsIn
     ASSERT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
     summary.join();
     blocked.join();
+}
+
+TEST_F(BridgeRouterTest, CompressionUsesSavedTextAndOmitsEmptyResponsesInstructions) {
+    bootstrap_epoch();
+    MockHttpServer server({compression_response("responses", false, "First"),
+        compression_response("responses", false, "Second")});
+    server.start();
+    configure_compression(*application_, server.port(), "responses", false, epoch_);
+    const auto note = compression_source(*application_, epoch_);
+    for (const auto text : {" # Literal $$(file.md) \n", ""}) {
+        (void)application_->update_prompt("note-compression", {text}, epoch_);
+        ASSERT_TRUE(compress_and_wait({{"id", note.id}})["ok"]);
+    }
+    server.join();
+    ASSERT_EQ(server.requests().size(), 2U);
+    const auto first = nlohmann::json::parse(request_body(server.requests()[0]));
+    const auto second = nlohmann::json::parse(request_body(server.requests()[1]));
+    EXPECT_EQ(first["instructions"], " # Literal $$(file.md) \n");
+    EXPECT_FALSE(second.contains("instructions"));
+    EXPECT_EQ(first["input"], second["input"]);
 }
 
 TEST_F(BridgeRouterTest, CompressionSkipsShortMarkdownBeforeProviderValidation) {

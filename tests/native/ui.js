@@ -367,6 +367,52 @@ async function nativeParity() {
     check(button('Save style', page).disabled, 'Reset left unsaved style changes');
     completed.push('Style create, cancel, save, reopen and reset');
 
+    {
+      step = 'prompt settings';
+      await click('Styles', page);
+      await click('Settings', await screen('Styles settings'));
+      const settingsPage = await screen('Settings');
+      check(settingsPage.querySelector('.cha-settings-row:last-child .cha-primary-line')?.textContent === 'Prompts',
+        'Prompts is not the last Settings row');
+      await click('Prompts', settingsPage);
+      const prompts = await screen('Prompts');
+      await until('prompt list', () => button('Note compression', prompts));
+      check(prompts.querySelectorAll('.cha-settings-row').length === 5, 'Expected five predefined prompts');
+      await click('Note compression', prompts);
+      const promptPage = await screen('Note compression');
+      const promptText = await until('literal prompt', () => promptPage.querySelector('.cha-prompt-text'));
+      const original = promptText.textContent;
+      check(original.includes('COMPRESSION RULES'), 'The bundled compression prompt is missing');
+      check(promptPage.scrollHeight > promptPage.clientHeight, 'Long prompt does not scroll');
+      check(promptPage.scrollWidth <= promptPage.clientWidth + 1, 'Prompt exceeds the window width');
+      await click('Edit text', promptPage);
+      const promptDialog = await until('edit dialog', () => document.querySelector('dialog[open]'));
+      const editor = promptDialog.querySelector('textarea');
+      await until('prompt editor focus', () => document.activeElement === editor);
+      check(editor.value === original && !editor.hasAttribute('placeholder'), 'Prompt editor initial text or placeholder is wrong');
+      setValue(editor, 'Cancelled edit');
+      promptDialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+      await until('cancelled edit', () => !document.querySelector('dialog[open]'));
+      check(promptText.textContent === original, 'Cancelling changed the prompt');
+      const files = new DataTransfer();
+      const replacement = '# Literal\n\n<img src=invalid>\n  indented  ';
+      files.items.add(new File([replacement], 'example.MD'));
+      const upload = promptPage.querySelector('input[type=file]');
+      upload.files = files.files;
+      upload.dispatchEvent(new Event('change', { bubbles: true }));
+      const review = await until('upload review', () => document.querySelector('dialog[open]'));
+      check(review.querySelector('textarea').value === replacement, 'Upload did not populate the draft');
+      check(promptText.textContent === original, 'Upload saved before review');
+      await click('Save', review);
+      await until('saved prompt', () => promptText.textContent === replacement);
+      check(!promptText.querySelector('img'), 'Prompt HTML was rendered');
+      await click('Prompts', promptPage);
+      await click('Note compression', await screen('Prompts'));
+      const reopenedPrompt = await screen('Note compression');
+      await until('saved prompt after reopening', () => reopenedPrompt.querySelector('.cha-prompt-text')?.textContent === replacement);
+      completed.push('Prompt list, literal text, edit cancel, upload review, save and reopen');
+    }
+
     step = 'note persistence';
     const row = Array.from(document.querySelectorAll('.cha-notes-row')).find((node) => (
       node.querySelector('.cha-notes-label')?.textContent === 'UI smoke note'

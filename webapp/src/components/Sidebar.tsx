@@ -92,6 +92,8 @@ const settingsViews: MainView[] = [
   'settings-providers',
   'settings-new-provider',
   'settings-provider',
+  'settings-prompts',
+  'settings-prompt',
   'settings-styles',
   'settings-new-style',
   'settings-style',

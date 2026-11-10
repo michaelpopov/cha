@@ -222,7 +222,8 @@ public:
 
     static std::unique_ptr<WorkspaceConfigStore> open(
         const std::filesystem::path& database_path,
-        std::string database_password = {});
+        std::string database_password = {},
+        std::string sync_machine = {});
 
     ~WorkspaceConfigStore();
     WorkspaceConfigStore(const WorkspaceConfigStore&) = delete;
@@ -327,6 +328,7 @@ public:
         std::string_view copy_from = {});
     WorkspaceConfigEditResult apply_provider_delete(
         std::string_view provider_id);
+    void apply_prompt_text(std::string_view id, std::string_view text);
     WorkspaceConfigEditResult apply_style_update(
         std::string_view style_id,
         std::string_view display_name,

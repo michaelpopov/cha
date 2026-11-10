@@ -12,6 +12,7 @@
 #include "util/toml_file.h"
 #include "app/current_vault.h"
 #include "workspace/builtins.h"
+#include "workspace/prompt_catalog.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
@@ -296,6 +297,42 @@ TEST(ApplicationVault, NotesFollowWholeCopiesProtectionAndEmptyNewVaults) {
         EXPECT_EQ(stored_notes(pair.database_a, protected_source ? "secret" : ""), before);
         EXPECT_EQ(application->get_note(note, application->context_epoch()).id, note);
     }
+}
+
+TEST(ApplicationVault, FreshVaultsUseBundledPromptsAndCopiesPreserveStoredRows) {
+    TwoVaults pair;
+    auto application = Application::open(pair.command);
+    const auto epoch = application->context_epoch();
+    const auto read_config = [](const std::filesystem::path& path) {
+        storage::SqliteDatabase db(path, storage::SqliteDatabase::Mode::read_only);
+        return read_workspace_config_files(db);
+    };
+    (void)application->update_prompt("note-compression", {"Vault A"}, epoch);
+    (void)application->update_prompt("page-formatting", {""}, epoch);
+    {
+        storage::SqliteDatabase db(pair.database_a, storage::SqliteDatabase::Mode::read_write);
+        db.execute("DELETE FROM config WHERE name = 'system/prompts/session-long-summary.md'");
+    }
+    const auto fresh = application->create_vault({.display_name = "Fresh"}, epoch);
+    const auto copy = application->create_vault({.display_name = "Copy", .copy_from = "A"}, epoch);
+    const auto defaults = default_prompt_config_files();
+    const auto fresh_config = read_config(fresh.data);
+    const auto copied_config = read_config(copy.data);
+    for (const auto& row : defaults) {
+        const auto new_row = std::ranges::find(fresh_config, row.name, &ConfigFile::name);
+        const auto copied_row = std::ranges::find(copied_config, row.name, &ConfigFile::name);
+        ASSERT_NE(new_row, fresh_config.end());
+        ASSERT_NE(copied_row, copied_config.end());
+        EXPECT_EQ(new_row->content, row.content);
+        if (row.name == "system/prompts/note-compression.md") EXPECT_EQ(copied_row->content, "Vault A");
+        else if (row.name == "system/prompts/page-formatting.md") EXPECT_EQ(copied_row->content, "");
+        else EXPECT_EQ(copied_row->content, row.content);
+    }
+    const auto switched = application->switch_vault(fresh.name, {}, epoch);
+    EXPECT_EQ(application->get_prompt("note-compression", switched.context_epoch).text, defaults.front().content);
+    const auto switched_copy = application->switch_vault(copy.name, {}, switched.context_epoch);
+    EXPECT_EQ(application->get_prompt("note-compression", switched_copy.context_epoch).text, "Vault A");
+    EXPECT_EQ(application->get_prompt("page-formatting", switched_copy.context_epoch).text, "");
 }
 
 // A live compression request lets maintenance tests verify cancellation before

@@ -265,6 +265,19 @@ export interface components {
         CreateStyleRequest: {
             display_name: string;
         };
+        PromptSummary: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+        };
+        PromptDetail: {
+            id: components["schemas"]["Identifier"];
+            display_name: string;
+            text: string;
+            writable: boolean;
+        };
+        PromptUpdate: {
+            text: string;
+        };
         StyleDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

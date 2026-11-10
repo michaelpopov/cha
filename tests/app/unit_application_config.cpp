@@ -4,6 +4,7 @@
 #include "storage/workspace_session_database.h"
 #include "util/path_name.h"
 #include "workspace/workspace_config_store.h"
+#include "workspace/prompt_catalog.h"
 
 #include <gtest/gtest.h>
 
@@ -181,11 +182,14 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
         EXPECT_NO_THROW(validate_workspace_session_contents(database));
         const std::vector<ConfigFile> configuration =
             read_workspace_config_files(database);
-        ASSERT_EQ(configuration.size(), 2U);
+        ASSERT_EQ(configuration.size(), 7U);
         EXPECT_EQ(configuration[0].name, "system/assistant/character.toml");
         EXPECT_EQ(
-            configuration[1].name,
+            configuration.back().name,
             "system/providers/chatgpt/config.toml");
+        for (const auto& row : default_prompt_config_files()) {
+            EXPECT_NE(std::ranges::find(configuration, row), configuration.end()) << row.name;
+        }
         storage::SqliteStatement sessions =
             database.prepare("SELECT COUNT(*) FROM sessions");
         ASSERT_TRUE(sessions.step());

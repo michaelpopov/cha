@@ -12,6 +12,7 @@
 #include "util/text.h"
 #include "util/toml_file.h"
 #include "workspace/builtins.h"
+#include "workspace/prompt_catalog.h"
 #include "workspace/workspace.h"
 
 #include <algorithm>
@@ -545,10 +546,15 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                     create.password);
                 storage::SqliteTransaction transaction(fresh);
                 sync_clear_outgoing(fresh);
+                for (const auto& [name, content] : default_prompt_config_files()) {
+                    fresh.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)"
+                                  " ON CONFLICT(name) DO NOTHING",
+                                  std::string_view(name), std::string_view(content)).run();
+                }
                 transaction.commit();
             } catch (const std::exception& error) {
                 log_warn(
-                    std::string("New vault sync cleanup failed: ") + error.what());
+                    std::string("New vault initialization failed: ") + error.what());
                 throw;
             }
         } else {
@@ -556,7 +562,8 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                 app.current_vault_.get().data,
                 candidate.data,
                 app.active_password,
-                create.password);
+                create.password,
+                default_prompt_config_files());
         }
     } catch (...) {
         remove_unpublished();

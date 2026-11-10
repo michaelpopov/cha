@@ -16,6 +16,8 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_editor.h"
+#include "workspace/prompt_catalog.h"
+#include "util/text_file.h"
 #include "workspace/workspace_internal.h"
 
 #include <toml++/toml.hpp>
@@ -976,7 +978,12 @@ void record_config_edit(
     const std::vector<ConfigFile>& committed_rows,
     const std::vector<ConfigFile>& rows) {
     if (!sync_connected(database, machine)) return;
-    const ConfigDelta delta = sync_config_delta(committed_rows, rows);
+    ConfigDelta delta = sync_config_delta(committed_rows, rows);
+    std::erase_if(delta.set, [](const ConfigFile& row) {
+        if (!row.name.starts_with(prompt_config_prefix) || is_valid_utf8(row.content)) return false;
+        log_warn("Skipping sync for prompt '" + row.name + "': malformed UTF-8.");
+        return true;
+    });
     if (std::ranges::all_of(delta.set, [](const ConfigFile& row) {
             return row.name == key_collection_path;
         }) && std::ranges::all_of(delta.names, [](const std::string& name) {
@@ -1522,12 +1529,6 @@ struct WorkspaceConfigStore::Impl {
         return published_workspace;
     }
 
-    void publish(Workspace workspace) {
-        auto published = std::make_shared<const Workspace>(std::move(workspace));
-        const std::lock_guard lock(snapshot_mutex);
-        published_workspace = std::move(published);
-    }
-
     void open_database() {
         secure_workspace_session_database_files(database_path);
         const WorkspaceDatabaseState state =
@@ -1564,10 +1565,40 @@ struct WorkspaceConfigStore::Impl {
         validate_config_rows(rows);
         TextFiles files;
         for (const auto& row : rows) files.emplace(row.name, row.content);
-        auto workspace = Workspace::load(tree->workspace(), files);
-        note_sync_forums(*database, forum_names(workspace));
+        const bool initialize_prompts = main_lease && std::ranges::none_of(rows, [](const auto& row) {
+            return row.name.starts_with(prompt_config_prefix);
+        });
+        std::vector<ConfigFile> candidate_rows;
+        if (initialize_prompts) {
+            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_begin)) {
+                fail_path("Forced SQLite begin failure");
+            }
+            for (auto& row : default_prompt_config_files()) {
+                files.emplace(std::move(row.name), std::move(row.content));
+            }
+            for (const auto& [name, content] : files) candidate_rows.push_back({name, content});
+            validate_config_rows(candidate_rows);
+        }
+        auto workspace = std::make_shared<const Workspace>(Workspace::load(tree->workspace(), files));
+        if (initialize_prompts) {
+            if (consume_runtime_fault(WorkspaceConfigFault::validation)) {
+                fail_path("Forced configuration validation failure");
+            }
+            if (consume_runtime_fault(WorkspaceConfigFault::sqlite_write)) {
+                fail_path("Forced SQLite write failure");
+            }
+            apply_config_changes(*database, rows, candidate_rows);
+            record_config_edit(*database, sync_machine, rows, candidate_rows);
+        }
+        note_sync_forums(*database, forum_names(*workspace));
+        if (initialize_prompts && consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
+            fail_path("Forced SQLite commit failure");
+        }
         transaction.commit();
-        publish(std::move(workspace));
+        {
+            const std::lock_guard publication_lock(snapshot_mutex);
+            published_workspace = std::move(workspace);
+        }
         ++revision;
         undo.reset();
     }
@@ -2230,8 +2261,10 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
 
 std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     const std::filesystem::path& database_path,
-    std::string database_password) {
+    std::string database_password,
+    std::string sync_machine) {
     auto impl = std::make_unique<Impl>();
+    impl->sync_machine = std::move(sync_machine);
     impl->database_path = normalize_path(database_path);
     impl->database_password = std::move(database_password);
     (void)require_existing_directory(
@@ -2595,6 +2628,13 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_provider_delete(
     std::string_view provider_id) {
     return impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
         editor.delete_provider(provider_id);
+        return std::vector<std::string>{};
+    });
+}
+
+void WorkspaceConfigStore::apply_prompt_text(std::string_view id, std::string_view text) {
+    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
+        editor.write_prompt_text(id, text);
         return std::vector<std::string>{};
     });
 }

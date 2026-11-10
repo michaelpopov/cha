@@ -102,6 +102,7 @@ import {
   VaultsScreen,
 } from './VaultSettings';
 import { NewProviderScreen, ProviderScreen, ProvidersScreen } from './ProviderSettings';
+import { PromptScreen, PromptsScreen } from './PromptSettings';
 import { NewStyleScreen, StyleScreen, StylesScreen } from './StyleSettings';
 import { NewVoiceScreen, VoiceScreen, VoiceSettingsScreen, VoicesScreen } from './VoiceSettings';
 import { R2StorageScreen } from './R2StorageSettings';
@@ -435,6 +436,13 @@ function ScreenContent({
         navigate={navigate}
         state={state}
       />
+    );
+    case 'settings-prompts': return (
+      <PromptsScreen key={state.notesEpoch} client={client} navigate={navigate} />
+    );
+    case 'settings-prompt': return (
+      <PromptScreen key={`${state.notesEpoch}:${state.inspectedPrompt.id}`}
+        client={client} navigate={navigate} state={state} />
     );
     case 'settings-styles': return (
       <StylesScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />

@@ -89,6 +89,34 @@ describe('native CHA client', () => {
     await expect(invalid.updateCloudStore('api_key_1', 'vs_1', { name: 'Research', description: '' })).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
+  it('uses the prompt wire contract and rejects malformed or mismatched details', async () => {
+    const fixture = loadFixture('prompt-contract.json') as {
+      list: unknown; get: unknown; update: unknown; detail: unknown;
+    };
+    const list = vi.fn(() => fixture.list);
+    const get = vi.fn(() => fixture.detail);
+    const update = vi.fn(() => fixture.detail);
+    const client = createNativeChaClient(createFakeNativeBridge({
+      'prompt.list': list, 'prompt.get': get, 'prompt.update': update,
+    }));
+    expect(await client.listPrompts()).toEqual(fixture.list);
+    expect(list).toHaveBeenCalledExactlyOnceWith({});
+    expect(await client.getPrompt('note-compression')).toEqual(fixture.detail);
+    expect(get).toHaveBeenCalledExactlyOnceWith(fixture.get);
+    expect(await client.updatePrompt('note-compression', { text: '' })).toEqual(fixture.detail);
+    expect(update).toHaveBeenCalledExactlyOnceWith(fixture.update);
+    await expect(client.getPrompt('page-formatting')).rejects.toBeInstanceOf(ChaProtocolError);
+
+    const invalid = createNativeChaClient(createFakeNativeBridge({
+      'prompt.list': () => [{ id: 0, display_name: 'Prompt' }],
+      'prompt.get': () => ({ ...fixture.detail as object, text: null }),
+      'prompt.update': () => ({ ...fixture.detail as object, writable: 'true' }),
+    }));
+    await expect(invalid.listPrompts()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(invalid.getPrompt('note-compression')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(invalid.updatePrompt('note-compression', { text: '' })).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('reads event snapshots without changing their order or contents', async () => {
     const items = [{ id: 2, recorded_at: 0, severity: 'info', message: '日本語' },
       { id: 1, recorded_at: 10, severity: 'success', message: 'Done' }];

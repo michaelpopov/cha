@@ -71,12 +71,13 @@ void upgrade_workspace_session_database_from_v1(
 void create_empty_workspace_session_database(
     const std::filesystem::path& path,
     std::string_view password = {});
-// Copies workspace configuration into a new database without copying sessions.
+// Copies workspace configuration with optional row overrides into a new database.
 void create_workspace_session_database_from_configuration(
     const std::filesystem::path& source,
     const std::filesystem::path& destination,
     std::string_view source_password = {},
-    std::string_view destination_password = {});
+    std::string_view destination_password = {},
+    const std::vector<ConfigFile>& overrides = {});
 void copy_workspace_session_database(
     const std::filesystem::path& source,
     const std::filesystem::path& destination,

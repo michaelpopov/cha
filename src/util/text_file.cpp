@@ -10,18 +10,23 @@
 
 namespace cha {
 
-void validate_text_file(std::string_view text, std::string_view too_large_message) {
+void validate_text_file(std::string_view text, std::string_view too_large_message, bool allow_empty) {
     if (text.size() > text_file_byte_limit) throw std::invalid_argument(std::string(too_large_message));
-    if (trim_view(text).empty()) throw std::invalid_argument("The file is empty.");
+    if (!allow_empty && trim_view(text).empty()) throw std::invalid_argument("The file is empty.");
     if (std::ranges::any_of(text, [](unsigned char c) {
             return c < 32 && c != '\n' && c != '\r' && c != '\t' && c != '\f';
         })) {
         throw std::invalid_argument("Choose a UTF-8 text file.");
     }
+    if (!is_valid_utf8(text)) throw std::invalid_argument("Choose a UTF-8 text file.");
+}
+
+bool is_valid_utf8(std::string_view text) {
     try {
         (void)nlohmann::json(text).dump();
+        return true;
     } catch (const nlohmann::json::type_error&) {
-        throw std::invalid_argument("Choose a UTF-8 text file.");
+        return false;
     }
 }
 

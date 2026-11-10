@@ -398,6 +398,22 @@ struct CreateProviderRequest {
     std::string copy_from;
 };
 
+struct PromptSummary {
+    std::string id;
+    std::string display_name;
+};
+
+struct PromptDetail {
+    std::string id;
+    std::string display_name;
+    std::string text;
+    bool writable{};
+};
+
+struct PromptUpdate {
+    std::string text;
+};
+
 struct StyleDetail {
     std::string id;
     std::string display_name;
@@ -632,6 +648,8 @@ void to_json(nlohmann::json& json, const ProviderSummary& value);
 void to_json(nlohmann::json& json, const CharacterChatSettings& value);
 void to_json(nlohmann::json& json, const ChatSettings& value);
 void to_json(nlohmann::json& json, const ProviderDetail& value);
+void to_json(nlohmann::json& json, const PromptSummary& value);
+void to_json(nlohmann::json& json, const PromptDetail& value);
 void to_json(nlohmann::json& json, const StyleDetail& value);
 void to_json(nlohmann::json& json, const VoiceDetail& value);
 void to_json(nlohmann::json& json, const JevSettings& value);

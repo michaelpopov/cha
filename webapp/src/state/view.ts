@@ -50,6 +50,8 @@ export type MainView =
   | 'settings-providers'
   | 'settings-new-provider'
   | 'settings-provider'
+  | 'settings-prompts'
+  | 'settings-prompt'
   | 'settings-styles'
   | 'settings-new-style'
   | 'settings-style'
@@ -139,6 +141,7 @@ export interface AppState {
   inspectedForum: { file: string | null; writable: boolean };
   inspectedVaultName: string | null;
   inspectedProvider: EditableInspection;
+  inspectedPrompt: { id: string | null; name: string | null };
   inspectedStyle: EditableInspection;
   inspectedVoice: EditableInspection;
   inspectedApiKey: { id: string | null; name: string | null };
@@ -185,6 +188,7 @@ export const initialAppState: AppState = {
   inspectedForum: { file: null, writable: false },
   inspectedVaultName: null,
   inspectedProvider: { id: null, name: null, writable: false },
+  inspectedPrompt: { id: null, name: null },
   inspectedStyle: { id: null, name: null, writable: false },
   inspectedVoice: { id: null, name: null, writable: false },
   inspectedApiKey: { id: null, name: null },
@@ -282,6 +286,8 @@ export type AppAction =
   | { type: 'inspect-provider'; providerId: string; providerName: string }
   | { type: 'provider-detail-loaded'; providerId: string; providerName: string; writable: boolean }
   | { type: 'provider-updated'; providerId: string; providerName: string; writable: boolean }
+  | { type: 'show-settings-prompts' }
+  | { type: 'inspect-prompt'; promptId: string; promptName: string }
   | { type: 'show-settings-styles' }
   | { type: 'show-settings-new-style' }
   | { type: 'inspect-style'; styleId: string; styleName: string }
@@ -372,6 +378,8 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-settings-providers'
     | 'show-settings-new-provider'
     | 'inspect-provider'
+    | 'show-settings-prompts'
+    | 'inspect-prompt'
     | 'show-settings-styles'
     | 'show-settings-new-style'
     | 'inspect-style'
@@ -942,6 +950,20 @@ function reduceApp(state: AppState, action: AppAction): AppState {
           writable: action.writable,
         },
       };
+    case 'show-settings-prompts':
+      return {
+        ...state,
+        mainView: 'settings-prompts',
+        inspectedPrompt: { id: null, name: null },
+        ...idleSessionOperation(),
+      };
+    case 'inspect-prompt':
+      return {
+        ...state,
+        mainView: 'settings-prompt',
+        inspectedPrompt: { id: action.promptId, name: action.promptName },
+        ...idleSessionOperation(),
+      };
     case 'show-settings-styles':
       return {
         ...state,
@@ -1273,6 +1295,8 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-merge-vault': return 'Merge vault';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';
+    case 'settings-prompts': return 'Prompts';
+    case 'settings-prompt': return state.inspectedPrompt.name;
     case 'settings-styles': return 'Styles';
     case 'settings-new-style': return 'New style';
     case 'settings-voices': return 'Voices';

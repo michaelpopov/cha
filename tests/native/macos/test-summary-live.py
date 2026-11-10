@@ -279,15 +279,21 @@ def inspect(lane, capture, rounds):
     check('Editor reopened JSON equals persisted JSON; compressed_text is unused', len(saved) == 1
           and saved[0]['compressed_text'] is None and saved[0]['document'] == capture.get('reopened')
           and capture.get('afterComment') == capture.get('reopened'))
-    prompt = (REPOSITORY / 'resources/session-summary-prompt.md').read_text().strip()
-    auxiliary = [item for item in rounds if prompt in system_text(api, item['request'])]
-    check('Auxiliary request uses production summary prompt with all saved source messages, no tools or catalogue',
-          len(auxiliary) == 1 and all(text in dump(auxiliary[0]['request']) for text in capture['source'])
-          and not auxiliary[0]['request'].get('tools')
-          and 'Summary catalogue JSON data:' not in system_text(api, auxiliary[0]['request']))
-    capture['generatedMarkdown'] = generated_markdown(api, auxiliary[0]['raw']) if auxiliary else ''
-    check('Generated Markdown has both nonempty chapters', bool(re.search(
-        r'^# Short summary\s+\S[\s\S]+^# Long summary\s+\S', capture['generatedMarkdown'], re.M)))
+    prompts = [(REPOSITORY / f'resources/session-{kind}-summary-prompt.md').read_text().strip()
+               for kind in ('short', 'long')]
+    auxiliary = [(index, item) for item in rounds for index, prompt in enumerate(prompts)
+                 if prompt in system_text(api, item['request'])]
+    check('Short and long requests each use the saved transcript and their bundled prompt',
+          [index for index, _ in auxiliary] == [0, 1]
+          and all(all(text in dump(item['request']) for text in capture['source'])
+                  and not item['request'].get('tools')
+                  and 'Summary catalogue JSON data:' not in system_text(api, item['request'])
+                  for _, item in auxiliary))
+    bodies = [generated_markdown(api, item['raw']) for _, item in auxiliary]
+    valid_bodies = ([index for index, _ in auxiliary] == [0, 1]
+                    and all(body.strip() and not re.search(r'^#\s', body, re.M) for body in bodies))
+    check('Both model responses supply nonempty bodies without top-level headings', valid_bodies)
+    capture['generatedMarkdown'] = f'# Short summary\n\n{bodies[0]}\n\n# Long summary\n\n{bodies[1]}' if valid_bodies else ''
     check('Configured Notes provider used', any('provider_id=live_notes' in line for line in capture.get('providerStarts', [])))
     note_id = saved[0]['id'] if len(saved) == 1 else None
     scenarios = ['natural'] if capture.get('natural') else (['direct', 'search'] if lane.get('primary') else ['search'])

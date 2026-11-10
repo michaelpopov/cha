@@ -1,4 +1,5 @@
 #include "workspace/workspace_config_editor.h"
+#include "workspace/prompt_catalog.h"
 #include "workspace/workspace_internal.h"
 #include "providers/voice_output_config.h"
 #include "util/base64.h"
@@ -253,6 +254,12 @@ void WorkspaceConfigEditor::delete_provider(std::string_view provider_id) {
         throw std::invalid_argument("Provider is in use");
     }
     remove_directory(path->second.parent_path());
+}
+
+void WorkspaceConfigEditor::write_prompt_text(std::string_view id, std::string_view text) {
+    const auto* entry = find_prompt_catalog_entry(id);
+    if (!entry) throw std::invalid_argument("That prompt was not found.");
+    files_.insert_or_assign(entry->path(), normalize_prompt_text(text));
 }
 
 void WorkspaceConfigEditor::write_style(

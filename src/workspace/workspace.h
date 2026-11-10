@@ -199,6 +199,12 @@ class Workspace;
 
 // A self-contained, eagerly loaded and validated view of workspace/. It owns
 // every value it publishes and never exposes filesystem-backed references.
+struct WorkspacePrompt {
+    std::string id;
+    std::string display_name;
+    std::string text;
+};
+
 class Workspace final {
 public:
     // Original source for raw settings reads and disposable prompt previews.
@@ -266,6 +272,8 @@ public:
         return forums_;
     }
 
+    [[nodiscard]] const std::vector<WorkspacePrompt>& prompts() const noexcept { return prompts_; }
+    [[nodiscard]] const WorkspacePrompt* find_prompt(std::string_view id) const noexcept;
     [[nodiscard]] const WorkspaceProvider* find_provider(
         std::string_view id) const noexcept;
     [[nodiscard]] const WorkspaceStyle* find_style(
@@ -333,6 +341,7 @@ private:
         const TextSource& source,
         LoadWarningCollector* warnings);
     std::filesystem::path root_;
+    std::vector<WorkspacePrompt> prompts_;
     std::vector<WorkspaceProvider> providers_;
     std::vector<WorkspaceStyle> styles_;
     std::vector<WorkspaceVoice> voices_;

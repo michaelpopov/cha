@@ -501,6 +501,27 @@ void test_provider(
     }
 }
 
+std::vector<PromptSummary> list_prompts(const Workspace& workspace) {
+    std::vector<PromptSummary> result;
+    for (const auto& prompt : workspace.prompts()) {
+        result.push_back({prompt.id, prompt.display_name});
+    }
+    return result;
+}
+
+PromptDetail get_prompt(const WorkspaceConfigStore& store, std::string_view id) {
+    const auto workspace = store.snapshot();
+    const auto* prompt = workspace->find_prompt(id);
+    if (!prompt) fail(ErrorCode::not_found, "That prompt was not found.");
+    return {prompt->id, prompt->display_name, prompt->text, store.is_main()};
+}
+
+PromptDetail update_prompt(WorkspaceConfigStore& store, std::string_view id, const PromptUpdate& update) {
+    if (!store.snapshot()->find_prompt(id)) fail(ErrorCode::not_found, "That prompt was not found.");
+    store.apply_prompt_text(id, update.text);
+    return get_prompt(store, id);
+}
+
 std::vector<StyleDetail> list_styles(
     const Workspace& workspace) {
     std::vector<StyleDetail> result;

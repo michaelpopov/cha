@@ -56,6 +56,19 @@ std::optional<nlohmann::json> dispatch_settings_operation(
             require_identifier(params, "provider_id"), epoch);
         result = nlohmann::json::object();
         break;
+    case Method::prompt_list:
+        require_only_keys(params, {});
+        result = application.list_prompts(epoch);
+        break;
+    case Method::prompt_get:
+        require_only_keys(params, {"prompt_id"});
+        result = application.get_prompt(require_identifier(params, "prompt_id"), epoch);
+        break;
+    case Method::prompt_update:
+        require_only_keys(params, {"prompt_id", "text"});
+        result = application.update_prompt(require_identifier(params, "prompt_id"),
+            PromptUpdate{require_string(params, "text")}, epoch);
+        break;
     case Method::style_list:
         require_only_keys(params, {});
         result = application.list_styles(epoch);

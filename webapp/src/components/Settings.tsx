@@ -69,6 +69,11 @@ export function SettingsNavigation({ navigate }: { navigate: Dispatch<Navigation
           label="Cloud stores"
           onClick={() => navigate({ type: 'show-settings-cloud-stores' })}
         />
+        <SettingsRow
+          icon={<TextLinesIcon />}
+          label="Prompts"
+          onClick={() => navigate({ type: 'show-settings-prompts' })}
+        />
       </div>
     </section>
   );

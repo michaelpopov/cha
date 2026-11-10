@@ -72,6 +72,9 @@ void test_provider(
     ApiKeyStore& api_keys,
     const std::atomic_bool& cancellation);
 
+[[nodiscard]] std::vector<PromptSummary> list_prompts(const Workspace& workspace);
+[[nodiscard]] PromptDetail get_prompt(const WorkspaceConfigStore& store, std::string_view id);
+[[nodiscard]] PromptDetail update_prompt(WorkspaceConfigStore& store, std::string_view id, const PromptUpdate& update);
 [[nodiscard]] std::vector<StyleDetail> list_styles(
     const Workspace& workspace);
 [[nodiscard]] StyleDetail create_style(

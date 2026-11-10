@@ -420,7 +420,10 @@ TEST(D1AppWiringTest, DaemonStartupRecreatesQueueAndRetriesPendingWork) {
     auto application = Application::open(command, {}, {}, mock.transport());
     EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_EQ(mock.count("CREATE TABLE"), 1u);
-    EXPECT_EQ(mock.count("INSERT"), 1u);
+    EXPECT_EQ(mock.count("INSERT"), 2u); // Existing note and startup prompt initialization.
+    const auto initialization = nlohmann::json::parse(mock.sent.back()["record"].get<std::string>());
+    EXPECT_EQ(initialization["kind"], "config.edit");
+    EXPECT_EQ(initialization["set"].size(), 5U);
     Database db(database, Database::Mode::read_only);
     EXPECT_FALSE(sync_has_pending(db));
     application->request_shutdown();
@@ -546,6 +549,7 @@ TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
     const auto epoch = application->context_epoch();
     (void)application->save_d1_storage(credentials(), epoch);
     ASSERT_TRUE(send.wait_for_reads());
+    (void)application->update_prompt("note-compression", {"Replicated prompt"}, epoch);
     const auto note = application->create_note_item({}, NoteItemKind::note, "Shared note", epoch);
     const auto document = nlohmann::json::parse(R"({
         "type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"From A"}]}]
@@ -572,7 +576,7 @@ TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
     ASSERT_GE(source_chat.transcript.size(), 2u);
     application->request_shutdown();
     ASSERT_TRUE(application->join_shutdown(5s));
-    EXPECT_EQ(send.count("INSERT"), 5u);  // Note create and update, two config edits, one turn.
+    EXPECT_EQ(send.count("INSERT"), 6u);  // Note create and update, three config edits, one turn.
     {
         Database db(source_path, Database::Mode::read_only, password);
         EXPECT_FALSE(sync_has_pending(db));
@@ -581,6 +585,13 @@ TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
     receive.incoming = std::move(send.sent);
     auto reopened = Application::open(receiver_command, password, {}, receive.transport());
     const auto new_epoch = reopened->context_epoch();
+    EXPECT_EQ(reopened->store().snapshot()->find_prompt("note-compression")->text, "Replicated prompt");
+    {
+        Database db(receiver_path, Database::Mode::read_only, password);
+        auto row = db.prepare("SELECT content FROM config WHERE name = 'system/prompts/note-compression.md'");
+        ASSERT_TRUE(row.step());
+        EXPECT_EQ(row.text(0), "Replicated prompt");
+    }
     const auto notes = reopened->list_note_items(new_epoch);
     const auto received = std::ranges::find(notes, "Shared note", &NoteItem::name);
     ASSERT_NE(received, notes.end());

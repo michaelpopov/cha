@@ -443,6 +443,15 @@ void to_json(nlohmann::json& json, const ProviderDetail& value) {
     };
 }
 
+void to_json(nlohmann::json& json, const PromptSummary& value) {
+    json = {{"id", value.id}, {"display_name", value.display_name}};
+}
+
+void to_json(nlohmann::json& json, const PromptDetail& value) {
+    json = {{"id", value.id}, {"display_name", value.display_name},
+        {"text", value.text}, {"writable", value.writable}};
+}
+
 void to_json(nlohmann::json& json, const StyleDetail& value) {
     json = appearance_json(value.appearance);
     json["id"] = value.id;

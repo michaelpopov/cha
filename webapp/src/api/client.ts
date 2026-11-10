@@ -53,6 +53,9 @@ export type ProviderSummary = components['schemas']['ProviderSummary'];
 export type ProviderDetail = components['schemas']['ProviderDetail'];
 export type CreateProviderRequest = components['schemas']['CreateProviderRequest'];
 export type ProviderUpdate = components['schemas']['ProviderUpdate'];
+export type PromptSummary = components['schemas']['PromptSummary'];
+export type PromptDetail = components['schemas']['PromptDetail'];
+export type PromptUpdate = components['schemas']['PromptUpdate'];
 export type StyleDetail = components['schemas']['StyleDetail'];
 export type CreateStyleRequest = components['schemas']['CreateStyleRequest'];
 export type StyleUpdate = components['schemas']['StyleUpdate'];
@@ -288,6 +291,9 @@ export interface ChaClient {
   testProvider(providerId: string, candidate: ProviderUpdate): Promise<void>;
   updateProvider(providerId: string, update: ProviderUpdate): Promise<ProviderDetail>;
   deleteProvider(providerId: string): Promise<void>;
+  listPrompts(): Promise<PromptSummary[]>;
+  getPrompt(promptId: string): Promise<PromptDetail>;
+  updatePrompt(promptId: string, update: PromptUpdate): Promise<PromptDetail>;
   listStyles(): Promise<StyleDetail[]>;
   createStyle(request: CreateStyleRequest): Promise<StyleDetail>;
   updateStyle(styleId: string, update: StyleUpdate): Promise<StyleDetail>;
@@ -552,6 +558,15 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
     && typeof value.writable === 'boolean'
     && Array.isArray(value.used_by)
     && value.used_by.every((name) => typeof name === 'string');
+}
+
+export function isPromptSummary(value: unknown): value is PromptSummary {
+  return hasIdentity(value) && Object.keys(value).length === 2;
+}
+
+export function isPromptDetail(value: unknown): value is PromptDetail {
+  return hasIdentity(value) && Object.keys(value).length === 4
+    && typeof value.text === 'string' && typeof value.writable === 'boolean';
 }
 
 export function isStyleDetail(value: unknown): value is StyleDetail {

@@ -175,6 +175,7 @@ describe('Sidebar navigation', () => {
     'sessions', 'forum-detail', 'forum-file', 'new-forum-file',
     'forum-members', 'settings', 'settings-vaults', 'settings-events',
     'settings-provider', 'settings-style', 'settings-voice', 'settings-api-key',
+    'settings-prompts', 'settings-prompt',
   ] satisfies MainView[])('keeps Settings current on %s', (mainView) => {
     renderSidebar({ ...readyState(), mainView });
     const settings = screen.getByRole('button', { name: 'Settings' });

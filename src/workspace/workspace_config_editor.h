@@ -26,6 +26,7 @@ public:
         std::string_view display_name,
         std::string_view copy_from = {});
     void delete_provider(std::string_view provider_id);
+    void write_prompt_text(std::string_view id, std::string_view text);
     void write_style(
         std::string_view style_id,
         std::string_view display_name,

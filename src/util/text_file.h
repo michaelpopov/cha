@@ -13,6 +13,7 @@ inline constexpr std::size_t text_file_byte_limit = 256 * 1024;
 // A missing last path component with spaces can be an ordinary prompt.
 // Reads at most one byte past the limit; call validate_text_file on the result.
 [[nodiscard]] std::optional<std::string> read_text_file(const std::filesystem::path& path);
-void validate_text_file(std::string_view text, std::string_view too_large_message);
+[[nodiscard]] bool is_valid_utf8(std::string_view text);
+void validate_text_file(std::string_view text, std::string_view too_large_message, bool allow_empty = false);
 
 } // namespace cha

@@ -7,6 +7,7 @@
 #include "util/private_filesystem.h"
 #include "util/public_name.h"
 #include "util/text.h"
+#include "workspace/prompt_catalog.h"
 
 #include <toml++/toml.hpp>
 
@@ -396,7 +397,7 @@ void bootstrap_configuration_directory(
         {
             storage::SqliteDatabase database(
                 database_path, storage::SqliteDatabase::Mode::read_write);
-            const std::vector<ConfigFile> configuration{
+            std::vector<ConfigFile> configuration{
                 {
                     "system/assistant/character.toml",
                     "display_name = \"Assistant\"\nprovider = \"chatgpt\"\n",
@@ -416,6 +417,7 @@ void bootstrap_configuration_directory(
                     "cache_retention = \"off\"\n",
                 },
             };
+            for (auto& row : default_prompt_config_files()) configuration.push_back(std::move(row));
             storage::SqliteTransaction transaction(database);
             replace_workspace_config_files(database, configuration);
             transaction.commit();

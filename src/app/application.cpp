@@ -234,7 +234,7 @@ Application::Impl::Impl(
       settings(std::move(selected_settings)),
       current_vault_(selected_command.vault),
       store(WorkspaceConfigStore::open(
-          command.vault.data, active_password)),
+          command.vault.data, active_password, command.machine)),
       api_keys(std::make_unique<ApiKeyStore>(
           *store,
           command.config_directory / "api-keys.json")),
@@ -334,7 +334,6 @@ Application::Impl::Impl(
               return assistant->execute(name, arguments, context, cancelled);
           }),
       d1_test_transport(std::move(d1_transport)) {
-    store->set_sync_machine(command.machine);
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         {std::string(entrance_id), std::string(welcome_id)},
@@ -1309,6 +1308,24 @@ std::shared_ptr<OperationReply> Application::test_provider(
             ErrorCode::operation_cancelled, "The operation was cancelled.");
     }
     return reply;
+}
+
+std::vector<PromptSummary> Application::list_prompts(std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::list_prompts(*impl_->store->snapshot());
+}
+
+PromptDetail Application::get_prompt(std::string_view id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::get_prompt(*impl_->store, id);
+}
+
+PromptDetail Application::update_prompt(std::string_view id, PromptUpdate update, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    return settings::update_prompt(*impl_->store, id, update);
 }
 
 std::vector<StyleDetail> Application::list_styles(

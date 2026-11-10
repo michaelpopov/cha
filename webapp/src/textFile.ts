@@ -5,7 +5,19 @@ export const textFileTooLarge = 'This file is too large to add to a chat. The li
 export const textFileAccept = 'text/*,.txt,.md,.markdown,.mdown,.mkd,.csv,.tsv,.json,.yaml,.yml,.toml,.xml,.log,'
   + '.py,.js,.ts,.tsx,.jsx,.cpp,.h,.c,.rs,.go,.sh,.css,.html,.sql';
 
-export async function readTextFile(file: File, tooLargeMessage = textFileTooLarge): Promise<string> {
+export function validateTextFile(text: string, tooLargeMessage: string, allowEmpty = false): void {
+  if (new TextEncoder().encode(text).length > textFileByteLimit) throw new Error(tooLargeMessage);
+  if (/[\x00-\x08\x0b\x0e-\x1f\ud800-\udfff]/u.test(text)) {
+    throw new Error('Choose a UTF-8 text file.');
+  }
+  if (!allowEmpty && !text.trim()) throw new Error('The file is empty.');
+}
+
+export async function readTextFile(
+  file: File,
+  tooLargeMessage = textFileTooLarge,
+  { allowEmpty = false, preserveBOM = false } = {},
+): Promise<string> {
   if (file.size > textFileByteLimit) throw new Error(tooLargeMessage);
   let bytes: Uint8Array;
   try {
@@ -15,13 +27,10 @@ export async function readTextFile(file: File, tooLargeMessage = textFileTooLarg
   }
   let text: string;
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: preserveBOM }).decode(bytes);
   } catch {
     throw new Error('Choose a UTF-8 text file.');
   }
-  if (/[\x00-\x08\x0b\x0e-\x1f]/.test(text)) {
-    throw new Error('Choose a UTF-8 text file.');
-  }
-  if (!text.trim()) throw new Error('The file is empty.');
+  validateTextFile(text, tooLargeMessage, allowEmpty);
   return text;
 }

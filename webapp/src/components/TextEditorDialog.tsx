@@ -9,9 +9,11 @@ export function TextEditorDialog({
   onCancel,
   onChange,
   onSave,
+  placeholder = 'Enter or paste Markdown here',
   ready,
   saveDisabled = false,
   saving,
+  textareaLabel,
   title,
   value,
 }: {
@@ -20,9 +22,11 @@ export function TextEditorDialog({
   onCancel(): void;
   onChange(value: string): void;
   onSave(): void;
+  placeholder?: string | null;
   ready: boolean;
   saveDisabled?: boolean;
   saving: boolean;
+  textareaLabel?: string;
   title: string;
   value: string;
 }) {
@@ -31,10 +35,12 @@ export function TextEditorDialog({
   const editor = transliteration.field;
 
   useEffect(() => {
-    if (typeof dialog.current?.showModal === 'function') dialog.current.showModal();
-    else dialog.current?.setAttribute('open', '');
+    const element = dialog.current;
+    if (!element) return;
+    if (typeof element.showModal === 'function') element.showModal();
+    else element.setAttribute('open', '');
     return () => {
-      if (typeof dialog.current?.close === 'function') dialog.current.close();
+      if (typeof element.close === 'function') element.close();
     };
   }, []);
 
@@ -59,11 +65,11 @@ export function TextEditorDialog({
       <form onSubmit={submit}>
         <h2>{title}</h2>
         <textarea
-          aria-label={`${title} text`}
+          aria-label={textareaLabel ?? `${title} text`}
           autoFocus
           disabled={!ready || loading || saving}
           onChange={(event) => onChange(transliteration.convert(event, value))}
-          placeholder={loading ? 'Loading…' : 'Enter or paste Markdown here'}
+          placeholder={loading ? 'Loading…' : placeholder ?? undefined}
           ref={editor}
           spellCheck={false}
           value={value}

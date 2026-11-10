@@ -1,0 +1,12 @@
+{
+  "list": [
+    {"id":"note-compression","display_name":"Note compression"},
+    {"id":"session-short-summary","display_name":"Short session summary"},
+    {"id":"session-long-summary","display_name":"Long session summary"},
+    {"id":"page-formatting","display_name":"Page formatting"},
+    {"id":"youtube-transcript","display_name":"YouTube transcript formatting"}
+  ],
+  "get": {"prompt_id":"note-compression"},
+  "update": {"prompt_id":"note-compression","text":""},
+  "detail": {"id":"note-compression","display_name":"Note compression","text":"","writable":true}
+}

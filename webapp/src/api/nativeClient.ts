@@ -40,6 +40,8 @@ import {
   isSessionLabelResult,
   isSessionListingArray,
   isSessionSnapshot,
+  isPromptDetail,
+  isPromptSummary,
   isStyleDetail,
   isVoiceDetail,
   isAudioAcceptance,
@@ -80,6 +82,8 @@ import {
   type SaveR2StorageRequest,
   type D1StorageDetail,
   type SaveD1StorageRequest,
+  type PromptDetail,
+  type PromptSummary,
   type StyleDetail,
   type StyleUpdate,
   type VaultDetail,
@@ -683,6 +687,18 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     deleteProvider: async (providerId) => {
       await call('provider.delete', { provider_id: providerId }, isRecord);
     },
+    listPrompts: () => call(
+      'prompt.list', {},
+      (value): value is PromptSummary[] => Array.isArray(value) && value.every(isPromptSummary),
+    ),
+    getPrompt: (promptId) => call(
+      'prompt.get', { prompt_id: promptId },
+      (value): value is PromptDetail => isPromptDetail(value) && value.id === promptId,
+    ),
+    updatePrompt: (promptId, update) => call(
+      'prompt.update', { prompt_id: promptId, text: update.text },
+      (value): value is PromptDetail => isPromptDetail(value) && value.id === promptId,
+    ),
     listStyles: () => call(
       'style.list',
       {},

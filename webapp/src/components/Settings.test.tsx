@@ -170,7 +170,7 @@ describe('Settings screens', () => {
 
     const destinations = screen.getAllByRole('button');
     expect(destinations.map((button) => button.textContent)).toEqual([
-      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Session settings', 'Notes settings', 'Events', 'Search API', 'Voices', 'API Keys', 'Cloud stores',
+      'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Session settings', 'Notes settings', 'Events', 'Search API', 'Voices', 'API Keys', 'Cloud stores', 'Prompts',
     ]);
     for (const [label, type] of [
       ['Personas', 'show-personas'],
@@ -186,6 +186,7 @@ describe('Settings screens', () => {
       ['Voices', 'show-settings-voices'],
       ['API Keys', 'show-settings-api-keys'],
       ['Cloud stores', 'show-settings-cloud-stores'],
+      ['Prompts', 'show-settings-prompts'],
     ]) {
       await userEvent.click(screen.getByRole('button', { name: label }));
       expect(dispatch).toHaveBeenLastCalledWith({ type });

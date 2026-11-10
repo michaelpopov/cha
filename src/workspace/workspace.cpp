@@ -1,4 +1,5 @@
 #include "workspace/workspace.h"
+#include "workspace/prompt_catalog.h"
 #include "workspace/workspace_internal.h"
 
 #include "characters/model_context.h"
@@ -2260,6 +2261,32 @@ Workspace Workspace::load(
     workspace.root_ = std::move(root);
     const LoadWarnings load_warnings{workspace.root_, warnings};
 
+    for (const auto& entry : prompt_catalog) {
+        const auto name = entry.path();
+        const auto path = workspace.root_ / name;
+        const auto stored = source.is_regular_file(path) ? source.read(path) : std::nullopt;
+        std::optional<std::string> text;
+        if (stored) {
+            try {
+                text = normalize_prompt_text(*stored);
+            } catch (const std::invalid_argument& error) {
+                load_warnings.emit_logical(name, "Ignoring invalid prompt '" + name + "': " + error.what());
+            }
+        }
+        if (!text) text = normalize_prompt_text(entry.embedded_text());
+        workspace.prompts_.push_back({std::string(entry.id), std::string(entry.display_name), std::move(*text)});
+    }
+    const auto prompt_directory = workspace.root_ / "system/prompts";
+    if (source.is_directory(prompt_directory)) {
+        for (const auto& path : source.entries(prompt_directory, true)) {
+            if (!source.is_regular_file(path)) continue;
+            const auto name = load_warnings.logical(path);
+            if (std::ranges::none_of(prompt_catalog, [&](const auto& entry) { return entry.path() == name; })) {
+                load_warnings.emit_logical(name, "Ignoring unknown prompt '" + name + "'.");
+            }
+        }
+    }
+
     // Keys have no catalog dependencies; retain the existing loading order.
     LoadedKeys keys = load_keys(source, workspace.root_, load_warnings);
     workspace.api_keys_ = std::move(keys.api_keys);
@@ -2350,6 +2377,11 @@ Workspace Workspace::load(
         std::span<const WorkspaceForum>(workspace.forums_),
         workspace.forum_index_, "Forum");
     return workspace;
+}
+
+const WorkspacePrompt* Workspace::find_prompt(std::string_view id) const noexcept {
+    const auto found = std::ranges::find(prompts_, id, &WorkspacePrompt::id);
+    return found == prompts_.end() ? nullptr : &*found;
 }
 
 const WorkspaceProvider* Workspace::find_provider(std::string_view id) const noexcept {

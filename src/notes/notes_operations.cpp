@@ -14,13 +14,6 @@
 #include <initializer_list>
 #include <thread>
 
-namespace cha {
-std::string_view embedded_compression_prompt();
-std::string_view embedded_session_summary_prompt();
-std::string_view embedded_youtube_transcript_prompt();
-std::string_view embedded_page_formatting_prompt();
-}
-
 namespace cha::app {
 namespace {
 constexpr std::size_t note_compression_min_bytes = 4 * 1024;
@@ -46,7 +39,7 @@ ProviderSelection note_editing_provider(const Workspace& workspace) {
 }
 
 SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, OpenAiOAuth* oauth, ApiKeyStore* api_keys,
-    std::string_view id, std::string_view name, std::string_view prompt) {
+    const WorkspacePrompt& prompt) {
     auto provider = note_editing_provider(workspace);
     provider.config.timeout_s = 0;
     // Bind legacy names to a stable reference, so deleting a key cannot make a
@@ -69,8 +62,8 @@ SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, Open
         && oauth->status().state != OpenAiOAuthState::connected)
         throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-        .character = {std::string(id), std::string(name)}, .provider = std::move(provider),
-        .system_prompt = std::string(prompt),
+        .character = {prompt.id, prompt.display_name}, .provider = std::move(provider),
+        .system_prompt = prompt.text,
     });
     // Validate before acceptance; the worker resolves the same key reference
     // again under the lifecycle lock before every actual request.
@@ -219,11 +212,11 @@ std::string format_note_page(const Workspace& workspace, std::string text, std::
     title = trim_view(title);
     if (title.empty()) title = transcript_title(text);
     if (!title.empty() && transcript_title(text) != title) text = "# " + title + "\n\n" + text;
+    const auto& prompt = *workspace.find_prompt(youtube ? "youtube-transcript" : "page-formatting");
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-        .character = {youtube ? "youtube-transcript" : "page-formatting",
-                      youtube ? "YouTube transcript" : "Page formatting"},
+        .character = {prompt.id, prompt.display_name},
         .provider = note_editing_provider(workspace),
-        .system_prompt = std::string(youtube ? embedded_youtube_transcript_prompt() : embedded_page_formatting_prompt()),
+        .system_prompt = prompt.text,
     });
     auto answer = run_note_prompt(definition, std::move(text), oauth, api_keys, cancel);
     const auto& result = answer.result;
@@ -333,8 +326,9 @@ nlohmann::json NotesService::compress_note(std::int64_t id, std::uint64_t epoch,
         if (skip_ineligible) return {{"skipped", true}};
         throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
     }
-    const auto definition = prepare_note_provider(*impl_->store->snapshot(), impl_->openai_auth, impl_->api_keys,
-        "note-compression", "Note compression", embedded_compression_prompt());
+    const auto workspace = impl_->store->snapshot();
+    const auto definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+        *workspace->find_prompt("note-compression"));
     const auto control = std::make_shared<Impl::CompressionControl>();
     control->name = note.name;
     impl_->compressions[id] = control;
@@ -541,8 +535,10 @@ std::shared_ptr<OperationReply> NotesService::generate_session_summary(
     } catch (const NoteError& error) { rethrow_note(error); }
     catch (const SessionNotFoundError&) { throw ApplicationError(ErrorCode::not_found); }
     catch (const ForumNotFoundError&) { throw ApplicationError(ErrorCode::not_found); }
-    const auto definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
-        "session-summary", "Session summary", embedded_session_summary_prompt());
+    const auto short_definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+        *workspace->find_prompt("session-short-summary"));
+    const auto long_definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+        *workspace->find_prompt("session-long-summary"));
     if (impl_->next_summary_run > note_id_limit) throw ApplicationError(ErrorCode::internal_error);
     const auto run = std::make_shared<Impl::SummaryRun>();
     run->run_id = impl_->next_summary_run++;
@@ -554,32 +550,45 @@ std::shared_ptr<OperationReply> NotesService::generate_session_summary(
     try {
         impl_->store->append_event(EventSeverity::info, "Summary save started for " + summary_target_label(identity, run->label) + ".");
         if (!impl_->background_jobs.launch(
-            [owner = impl_.get(), identity, run, definition, reply, source = std::move(source)](std::atomic_bool& cancel) mutable {
+            [owner = impl_.get(), identity, run, short_definition, long_definition,
+             reply, source = std::move(source)](std::atomic_bool& cancel) {
                 nlohmann::json result;
                 ErrorCode code = ErrorCode::internal_error;
                 std::string failure;
                 try {
-                    NotePromptAnswer answer;
-                    for (unsigned retries = 0;; ++retries) {
-                        std::unique_ptr<ProviderClient> client;
-                        {
-                            const std::lock_guard lifecycle(owner->lifecycle_mutex);
-                            const auto found = owner->summaries.find(identity);
-                            // A retired run still settles its reply, so the request does not stay outstanding.
-                            if (found == owner->summaries.end() || found->second != run || cancel.load())
-                                throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
-                            owner->require_admitted(run->epoch);
-                            client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys);
+                    const auto generate = [&](const SharedCharacterDefinition& definition) {
+                        NotePromptAnswer answer;
+                        for (unsigned retries = 0;; ++retries) {
+                            std::unique_ptr<ProviderClient> client;
+                            {
+                                const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                                const auto found = owner->summaries.find(identity);
+                                // A retired run still settles its reply, so the request does not stay outstanding.
+                                if (found == owner->summaries.end() || found->second != run || cancel.load())
+                                    throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
+                                owner->require_admitted(run->epoch);
+                                client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys);
+                            }
+                            answer = collect_note_prompt(*client, definition, source, cancel);
+                            if (!answer.result.retryable || cancel.load() || retries == 3) break;
+                            const auto seconds = 10 << retries;
+                            if (owner->settings.test_hooks.note_compression_wait) owner->settings.test_hooks.note_compression_wait(seconds);
+                            else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
                         }
-                        answer = collect_note_prompt(*client, definition, source, cancel);
-                        if (!answer.result.retryable || cancel.load() || retries == 3) break;
-                        const auto seconds = 10 << retries;
-                        if (owner->settings.test_hooks.note_compression_wait) owner->settings.test_hooks.note_compression_wait(seconds);
-                        else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
-                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        require_summary_answer(answer, cancel);
+                        return std::move(answer.text);
+                    };
+                    auto short_text = generate(short_definition);
+                    const auto long_text = generate(long_definition);
+                    constexpr std::string_view short_heading = "# Short summary\n\n";
+                    constexpr std::string_view long_heading = "\n\n# Long summary\n\n";
+                    if (short_heading.size() + short_text.size() + long_heading.size() + long_text.size()
+                        > note_document_byte_limit) {
+                        throw ApplicationError(ErrorCode::body_too_large, "The generated summary exceeds 12 MiB.");
                     }
-                    source.clear();
-                    require_summary_answer(answer, cancel);
+                    short_text.insert(0, short_heading);
+                    short_text.append(long_heading).append(long_text);
                     {
                         const std::lock_guard lifecycle(owner->lifecycle_mutex);
                         const auto found = owner->summaries.find(identity);
@@ -589,7 +598,7 @@ std::shared_ptr<OperationReply> NotesService::generate_session_summary(
                         run->ready = true;
                         result = {{"run_id", run->run_id}, {"parent_id", run->target.parent_id},
                             {"target_note_id", run->target.target_note_id ? nlohmann::json(*run->target.target_note_id) : nlohmann::json(nullptr)},
-                            {"markdown", std::move(answer.text)}};
+                            {"markdown", std::move(short_text)}};
                     }
                 } catch (const ApplicationError& error) { code = error.code; failure = error.what(); }
                 catch (...) { failure = "Check the Notes provider settings and try again."; }

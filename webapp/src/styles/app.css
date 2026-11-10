@@ -2675,3 +2675,9 @@ select.cha-form-control {
   padding-block: 0.5rem;
   resize: vertical;
 }
+
+.cha-prompt-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

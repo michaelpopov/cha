@@ -613,6 +613,38 @@ components:
         display_name:
           type: string
 
+    PromptSummary:
+      type: object
+      additionalProperties: false
+      required: [id, display_name]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+
+    PromptDetail:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, text, writable]
+      properties:
+        id:
+          $ref: "#/components/schemas/Identifier"
+        display_name:
+          type: string
+        text:
+          type: string
+        writable:
+          type: boolean
+
+    PromptUpdate:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+
     StyleDetail:
       type: object
       additionalProperties: false

@@ -296,6 +296,9 @@ public:
         nlohmann::json body,
         std::uint64_t epoch);
 
+    [[nodiscard]] std::vector<PromptSummary> list_prompts(std::uint64_t epoch);
+    [[nodiscard]] PromptDetail get_prompt(std::string_view id, std::uint64_t epoch);
+    [[nodiscard]] PromptDetail update_prompt(std::string_view id, PromptUpdate update, std::uint64_t epoch);
     [[nodiscard]] std::vector<StyleDetail> list_styles(
         std::uint64_t epoch);
     [[nodiscard]] StyleDetail create_style(

@@ -1,5 +1,6 @@
 #include "storage/session_lease.h"
 #include "storage/sqlite_storage.h"
+#include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
 #include "util/logging.h"
@@ -7,6 +8,7 @@
 #include "util/picture.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
+#include "workspace/prompt_catalog.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_editor.h"
 #include "workspace/workspace_config_store.h"
@@ -1511,8 +1513,8 @@ TEST_F(
             "WHEN NEW.name = 'system/keys/config.toml' "
             "BEGIN SELECT RAISE(ABORT, 'forced counter insert failure'); END");
     }
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
 
     EXPECT_THROW(
         store->apply_api_key_create("api_key_1", "Models", "secret"),
@@ -1540,8 +1542,8 @@ TEST_F(
             "WHEN OLD.name = 'characters/unused/character.toml' "
             "BEGIN SELECT RAISE(ABORT, 'forced config delete failure'); END");
     }
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
 
     EXPECT_THROW(
         (void)store->apply_character_delete("unused"),
@@ -1594,8 +1596,8 @@ TEST_F(
             "WHEN OLD.forum_id = 'lobby' "
             "BEGIN SELECT RAISE(ABORT, 'forced forum delete failure'); END");
     }
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
 
     EXPECT_THROW(
         (void)store->apply_forum_delete("lobby"),
@@ -1617,12 +1619,12 @@ TEST_F(
         source() / "forums" / "lobby" / "members" / "writer"
             / "character.toml");
     (void)import_workspace_configuration(source(), database());
+    const auto store = open_store();
     const auto expected = config_contents(database());
     ASSERT_EQ(
         expected.at("forums/lobby/members/writer/character.toml"),
         "# Required placeholder\n");
 
-    const auto store = open_store();
     std::filesystem::create_directories(export_);
     const std::filesystem::path collected_database =
         export_ / "collected.sqlite3";
@@ -1946,6 +1948,151 @@ TEST_F(
     EXPECT_EQ(store->snapshot()->find_character("guide")->character.display_name, "Guide");
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, PromptInitializationIsAtomicAndRecordsStartupSync) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.prepare("INSERT INTO config VALUES (?1, ?2)", "system/keys/api_key_1/config.toml",
+            "display_name = \"D1\"\ntype = \"D1\"\naccount_id = \"a\"\ndatabase_id = \"d\"\napi_token = \"t\"\n").run();
+        handle.prepare("INSERT INTO config VALUES (?1, ?2)", "system/prompts-other/nearby.md", "Unrelated").run();
+    }
+    const auto original = config_contents(database());
+    for (const auto fault : {WorkspaceConfigFault::validation, WorkspaceConfigFault::sqlite_begin,
+            WorkspaceConfigFault::sqlite_write, WorkspaceConfigFault::sqlite_commit}) {
+        force_next_workspace_config_fault(fault);
+        EXPECT_THROW((void)WorkspaceConfigStore::open(database(), {}, "mac"), std::runtime_error);
+        EXPECT_EQ(config_contents(database()), original);
+        Database handle(database(), Database::Mode::read_only);
+        EXPECT_TRUE(sync_queue_list(handle).empty());
+    }
+    {
+        auto lease = SessionLease::acquire_main(database());
+        const auto secondary = WorkspaceConfigStore::open(database(), {}, "mac");
+        EXPECT_FALSE(secondary->is_main());
+        EXPECT_EQ(secondary->snapshot()->prompts().size(), prompt_catalog.size());
+        EXPECT_THROW(secondary->apply_prompt_text("note-compression", "Changed"), SecondaryProcessError);
+        EXPECT_EQ(config_contents(database()), original);
+    }
+    const auto store = WorkspaceConfigStore::open(database(), {}, "mac");
+    auto initialized = config_contents(database());
+    EXPECT_EQ(initialized.size(), original.size() + prompt_catalog.size());
+    for (const auto& row : default_prompt_config_files()) EXPECT_EQ(initialized.at(row.name), row.content);
+    {
+        auto maintenance = store->reserve_maintenance();
+        maintenance.close();
+        maintenance.reopen();
+    }
+    Database handle(database(), Database::Mode::read_only);
+    const auto queued = sync_queue_list(handle);
+    ASSERT_EQ(queued.size(), 1U);
+    const auto record = nlohmann::json::parse(queued.front().record);
+    EXPECT_EQ(record["kind"], "config.edit");
+    EXPECT_EQ(record["set"].size(), prompt_catalog.size());
+    EXPECT_EQ(config_contents(database()), initialized);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, PromptFallbackAndSavePreserveRawRowsAndSnapshots) {
+    constexpr std::string_view compression = "system/prompts/note-compression.md";
+    constexpr std::string_view legacy = "system/prompts/session-summary.md";
+    constexpr std::string_view short_summary = "system/prompts/session-short-summary.md";
+    const std::string invalid(1, static_cast<char>(0xff));
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.prepare("INSERT INTO config VALUES (?1, ?2)", legacy, "Legacy combined").run();
+        handle.prepare("INSERT INTO config VALUES (?1, ?2)", compression, invalid).run();
+        handle.prepare("INSERT INTO config VALUES (?1, ?2)", short_summary, "").run();
+    }
+    const auto original = config_contents(database());
+    const auto store = open_store();
+    const auto before = store->snapshot();
+    const auto* prompt = before->find_prompt("note-compression");
+    ASSERT_NE(prompt, nullptr);
+    EXPECT_EQ(prompt->text, prompt_catalog.front().embedded_text());
+    EXPECT_EQ(before->find_prompt("session-short-summary")->text, "");
+    EXPECT_NE(before->find_prompt("session-long-summary")->text, "Legacy combined");
+    EXPECT_EQ(before->find_prompt("session-summary"), nullptr);
+    EXPECT_EQ(config_contents(database()), original);
+    for (const auto fault : {WorkspaceConfigFault::validation, WorkspaceConfigFault::sqlite_begin,
+            WorkspaceConfigFault::sqlite_write, WorkspaceConfigFault::sqlite_commit}) {
+        force_next_workspace_config_fault(fault);
+        EXPECT_THROW(store->apply_prompt_text("note-compression", "Edit"), std::runtime_error);
+        EXPECT_EQ(config_contents(database()), original);
+        EXPECT_EQ(store->snapshot(), before);
+    }
+    EXPECT_THROW(store->apply_prompt_text("unknown", "Edit"), std::invalid_argument);
+    EXPECT_THROW(store->apply_prompt_text("note-compression", invalid), std::invalid_argument);
+    const std::string unit = "é";
+    std::string boundary;
+    for (int i = 0; i < 128 * 1024; ++i) boundary += unit;
+    EXPECT_THROW(store->apply_prompt_text("note-compression", boundary + "x"), std::invalid_argument);
+    store->apply_prompt_text("note-compression", boundary);
+    EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, boundary);
+    const auto long_text = before->find_prompt("session-long-summary")->text;
+    store->apply_prompt_text("session-long-summary", long_text);
+    EXPECT_EQ(config_contents(database()).at("system/prompts/session-long-summary.md"), long_text);
+    store->apply_prompt_text("note-compression", "\xef\xbb\xbf  # café $$(file.md)\r\n  <b>\r \t");
+    EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, "  # café $$(file.md)\n  <b>\n \t");
+    store->apply_prompt_text("note-compression", "");
+    {
+        auto maintenance = store->reserve_maintenance();
+        maintenance.close();
+        maintenance.reopen();
+    }
+    EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, "");
+    EXPECT_EQ(config_contents(database()).at(std::string(legacy)), "Legacy combined");
+    EXPECT_EQ(before->find_prompt("note-compression")->text, prompt_catalog.front().embedded_text());
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, MalformedPromptBytesDoNotBlockImportOrMergeWithD1) {
+    constexpr auto path = "system/prompts/note-compression.md";
+    constexpr auto valid_path = "system/prompts/page-formatting.md";
+    const std::string invalid(1, static_cast<char>(0xff));
+    const std::string credentials = "display_name = \"D1\"\ntype = \"D1\"\naccount_id = \"a\"\ndatabase_id = \"d\"\napi_token = \"t\"\n";
+    const auto check_queued = [&](std::string_view expected) {
+        Database handle(database(), Database::Mode::read_only);
+        const auto queued = sync_queue_list(handle);
+        ASSERT_EQ(queued.size(), 1U);
+        const auto record = nlohmann::json::parse(queued.front().record);
+        EXPECT_EQ(record["kind"], "config.edit");
+        for (const auto& row : record["set"]) EXPECT_NE(row["name"], path);
+        EXPECT_NE(std::ranges::find_if(record["set"], [&](const auto& row) {
+            return row["name"] == valid_path && row["content"] == expected;
+        }), record["set"].end());
+    };
+
+    {
+        const auto store = open_store();
+    }
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.prepare("INSERT INTO config VALUES (?1, ?2)", "system/keys/api_key_1/config.toml", credentials).run();
+    }
+    write_bytes(source() / "system/keys/api_key_1/config.toml", credentials);
+    write_bytes(source() / path, invalid);
+    write_bytes(source() / valid_path, "Imported");
+    (void)import_workspace_configuration(source(), database(), WorkspaceConfigLease::acquire, {}, "mac");
+    check_queued("Imported");
+    EXPECT_EQ(stored_config(database(), path), invalid);
+    {
+        Database handle(database(), Database::Mode::read_write);
+        storage::SqliteTransaction transaction(handle);
+        sync_clear_outgoing(handle);
+        transaction.commit();
+    }
+    const auto store = WorkspaceConfigStore::open(database(), {}, "mac");
+    EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, prompt_catalog.front().embedded_text());
+    EXPECT_EQ(store->snapshot()->find_prompt("page-formatting")->text, "Imported");
+
+    test::TestWorkspace incoming;
+    const std::string changed_invalid(1, static_cast<char>(0xfe));
+    write_bytes(incoming.root() / path, changed_invalid);
+    write_bytes(incoming.root() / valid_path, "Merged");
+    merge_from(*store, import_source_database(incoming));
+    check_queued("Merged");
+    EXPECT_EQ(stored_config(database(), path), changed_invalid);
+    EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, prompt_catalog.front().embedded_text());
+    EXPECT_EQ(store->snapshot()->find_prompt("page-formatting")->text, "Merged");
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, RuntimeEditsNeverReadOrWriteConfigurationFiles) {
     const auto store = open_store();
     const auto old_snapshot = store->snapshot();
@@ -2094,8 +2241,8 @@ TEST_F(
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     MergeRejectsCandidateConflictsBeforeCommit) {
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
     const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
@@ -2161,8 +2308,8 @@ TEST_F(
         source() / "characters" / "guide" / "shared.md",
         "Destination include body\n");
     (void)import_workspace_configuration(source(), database());
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
     const std::shared_ptr<const Workspace> published = store->snapshot();
 
     test::TestWorkspace source_workspace;
@@ -2182,8 +2329,8 @@ TEST_F(
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     MergeRejectsMalformedSourceProvidersAndStyles) {
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
     const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
@@ -2264,8 +2411,8 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, MergeNormalizesSavedKeyNextId) {
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     MergeRejectsMalformedCountersAndKeyIdExhaustion) {
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
     const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
@@ -2383,8 +2530,8 @@ TEST_F(
 TEST_F(
     RuntimeWorkspaceConfigStoreTest,
     MergeRejectsWrongPasswordInvalidSchemaInactiveLeaseAndSelfPath) {
-    const auto before = config_contents(database());
     const auto store = open_store();
+    const auto before = config_contents(database());
     const std::shared_ptr<const Workspace> published = store->snapshot();
 
     {
@@ -3793,11 +3940,11 @@ TEST_F(WorkspaceConfigStoreTest, PicturesRoundTripAllBytesInNestedDefinitionsAnd
         }
     }
     import_from_source();
-    const auto before = config_contents(database());
     {
         const auto store = WorkspaceConfigStore::open(database());
         EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
     }
+    const auto before = config_contents(database());
     export_workspace_configuration(database(), export_);
     for (const auto directory : {"characters/nested/guide", "system/assistant"}) {
         for (std::size_t i = 0; i < names.size(); ++i) {
@@ -3991,6 +4138,7 @@ TEST_F(WorkspaceConfigStoreTest, PictureSymlinkFailsImportOnlyInDefinitionFolder
 
 TEST_F(WorkspaceConfigStoreTest, MalformedPictureBase64FailsExportWithoutChangingRows) {
     import_from_source();
+    { const auto store = WorkspaceConfigStore::open(database()); }
     for (const auto encoded : {"bad", "!!!!", "AA=A", "AA==AAAA", "AB==", "AAB="}) {
         {
             Database handle(database(), Database::Mode::read_write);
@@ -4000,7 +4148,6 @@ TEST_F(WorkspaceConfigStoreTest, MalformedPictureBase64FailsExportWithoutChangin
             statement.run();
         }
         const auto before = config_contents(database());
-        { const auto store = WorkspaceConfigStore::open(database()); }
         try {
             export_workspace_configuration(database(), export_);
             ADD_FAILURE() << "export accepted " << encoded;

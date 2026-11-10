@@ -7,6 +7,7 @@
 #include "util/picture.h"
 #include "util/private_filesystem.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -741,15 +742,20 @@ void create_workspace_session_database_from_configuration(
     const std::filesystem::path& source,
     const std::filesystem::path& destination,
     std::string_view source_password,
-    std::string_view destination_password) {
+    std::string_view destination_password,
+    const std::vector<ConfigFile>& overrides) {
     require_regular_database_source(source);
     require_missing_database_destination(destination);
     try {
         Database input(source, Database::Mode::read_only, source_password);
         validate_workspace_session_database_identity(input);
         validate_workspace_session_contents(input);
-        const std::vector<ConfigFile> configuration =
-            read_workspace_config_files(input);
+        auto configuration = read_workspace_config_files(input);
+        for (const auto& row : overrides) {
+            const auto found = std::ranges::find(configuration, row.name, &ConfigFile::name);
+            if (found == configuration.end()) configuration.push_back(row);
+            else *found = row;
+        }
 
         create_empty_workspace_session_database(destination, destination_password);
         Database output(

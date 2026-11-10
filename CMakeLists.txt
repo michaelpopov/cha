@@ -276,7 +276,8 @@ target_link_libraries(cha_sqlite3 PUBLIC OpenSSL::Crypto)
 
 add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/application_guide.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/generated/session_summary_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/session_short_summary_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/session_long_summary_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/compression_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/youtube_transcript_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/page_formatting_prompt.cpp
@@ -339,6 +340,7 @@ add_library(cha_lib STATIC
     src/providers/voice_websocket.cpp
     src/app/r2_database_transfer.cpp
     src/workspace/workspace.cpp
+    src/workspace/prompt_catalog.cpp
     src/workspace/workspace_config_editor.cpp
     src/workspace/workspace_config_store.cpp
     src/session/session_open.cpp
@@ -390,10 +392,17 @@ add_custom_command(
     VERBATIM)
 
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/session_summary_prompt.cpp
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/session_short_summary_prompt.cpp
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/session-summary-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/session_summary_prompt.cpp -DSYMBOL=embedded_session_summary_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS resources/session-summary-prompt.md cmake/embed_text.cmake
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/session-short-summary-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/session_short_summary_prompt.cpp -DSYMBOL=embedded_session_short_summary_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/session-short-summary-prompt.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/session_long_summary_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/session-long-summary-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/session_long_summary_prompt.cpp -DSYMBOL=embedded_session_long_summary_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/session-long-summary-prompt.md cmake/embed_text.cmake
     VERBATIM)
 
 add_custom_command(
