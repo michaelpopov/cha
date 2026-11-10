@@ -1,5 +1,6 @@
 #include "app/d1_sync.h"
 
+#include "characters/character_config.h"
 #include "runtime/live_session_manager.h"
 #include "storage/note_storage.h"
 #include "storage/session_repository.h"
@@ -228,6 +229,22 @@ enum class ApplyOutcome { applied, skipped, reservation_failed };
 // Changed chats and their current labels.
 using ChangedChats = std::map<FullSessionId, std::string>;
 
+// The ordinary validation of SessionController::set_character_settings.
+bool valid_character_record(
+    const Workspace& workspace, std::string_view forum_id, const nlohmann::json& record) {
+    if (!workspace.find_forum_member(forum_id, record.at("character_id").get<std::string>()))
+        return false;
+    const auto text = [&](const char* name) {
+        const auto found = record.find(name);
+        return found == record.end() || found->is_null()
+            ? std::string{} : found->get<std::string>();
+    };
+    const std::string provider = text("provider_id");
+    const std::string effort = text("reasoning_effort");
+    return (provider.empty() || workspace.find_provider(provider))
+        && (effort.empty() || valid_reasoning_effort(effort));
+}
+
 ApplyOutcome apply_complete_record(
     const std::string& record_text,
     const D1SyncWorker::Config& config, bool& notes_changed, ChangedChats& chats_changed) {
@@ -288,6 +305,11 @@ ApplyOutcome apply_complete_record(
             Database database(config.database_path, Database::Mode::read_write, config.database_password);
             if (!sync_chat_forum_exists(database, identity.forum_id)) {
                 log_warn("Skipped incoming chat change: chat forum does not exist.");
+                return ApplyOutcome::skipped;
+            }
+            if (kind == "chat.character" && (!config.store
+                || !valid_character_record(*config.store->snapshot(), identity.forum_id, envelope))) {
+                log_warn("Skipped incoming chat character settings that are not valid.");
                 return ApplyOutcome::skipped;
             }
             std::optional<LiveSessionMaintenanceReservation> reservation;

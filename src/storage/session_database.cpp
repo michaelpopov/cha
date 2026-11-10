@@ -651,8 +651,8 @@ void SessionJournal::Impl::finish_turn(
         if (const auto identity = sync_chat_identity(database, session_key)) {
             if (!was_shared) {
                 sync_record_chat_initial(database, session_key, *identity);
-            } else {
-                // A turn that was stopped before any response has only its prompt.
+            } else if (response) {
+                // R59: a turn with only its prompt adds no record.
                 auto prompt = database.prepare(
                     "SELECT entry_id, request_id, kind, participant_id, display_name, "
                     "addressed_to, addressed_to_name, text, status, created_at, "
@@ -660,8 +660,7 @@ void SessionJournal::Impl::finish_turn(
                     "WHERE session_key=?1 AND request_id=?2 AND kind=0",
                     session_key, sqlite_id(request_id, "Request ID"));
                 if (prompt.step()) {
-                    std::vector<TranscriptEntry> entries{read_entry(prompt)};
-                    if (response) entries.push_back(*response);
+                    std::vector<TranscriptEntry> entries{read_entry(prompt), *response};
                     sync_enqueue_chat(database, *identity, "chat.entries",
                         sync_chat_entries_fields(entries, static_cast<int>(state)));
                 }

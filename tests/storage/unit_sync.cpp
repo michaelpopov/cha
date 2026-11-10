@@ -444,6 +444,19 @@ TEST(D1Client, RejectsUnconfirmedBatchesAndMalformedRows) {
     EXPECT_TRUE(rows.empty());
     ASSERT_TRUE(error);
     EXPECT_EQ(error->failure, D1Client::Failure::protocol);
+    // Row IDs must follow the read position in increasing order.
+    for (const auto* ids : {"[-1,6]", "[0,6]", "[5,5]", "[6,5]"}) {
+        nlohmann::json list = nlohmann::json::array();
+        for (const auto& rowid : nlohmann::json::parse(ids))
+            list.push_back({{"rowid", rowid}, {"piece", 1}, {"pieces", 1}, {"record", "r"}});
+        response = d1_success(list.dump());
+        const auto [unordered, order_error] = client.read_queue("q/V/a", 50);
+        EXPECT_TRUE(unordered.empty()) << ids;
+        ASSERT_TRUE(order_error) << ids;
+        EXPECT_EQ(order_error->failure, D1Client::Failure::protocol) << ids;
+    }
+    response = d1_success(R"([{"rowid":2,"piece":1,"pieces":1,"record":"r"}])");
+    EXPECT_TRUE(client.read_queue("q/V/a", 50, 2).second);
 }
 
 TEST(D1Client, ReadsRowsAndCounts) {

@@ -259,6 +259,11 @@ std::pair<std::vector<D1Client::Row>, std::optional<D1Client::Error>> D1Client::
         for (const auto& row : result_rows(result)) {
             rows.push_back({integer_field(row, "rowid"), integer_field(row, "piece"),
                 integer_field(row, "pieces"), row.at("record").get<std::string>()});
+            // The query returns rows after after_rowid in increasing order.
+            const std::int64_t previous =
+                rows.size() > 1 ? rows[rows.size() - 2].rowid : after_rowid;
+            if (rows.back().rowid <= previous)
+                throw std::runtime_error("D1 queue rows are out of order.");
         }
     } catch (const std::exception&) {
         return {{}, Error{Failure::protocol, "Invalid D1 queue rows."}};

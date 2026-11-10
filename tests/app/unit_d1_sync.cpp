@@ -345,6 +345,42 @@ TEST(D1AppWiringTest, IncomingChatIsWrittenToTheSessionMirror) {
     EXPECT_TRUE(found);
 }
 
+TEST(D1AppWiringTest, IncomingCharacterSettingsUseOrdinaryValidation) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    seed_d1(database);
+    // Each record names its own chat, so an applied invalid record adds a row.
+    const auto character = [](std::string session_id, std::string character_id,
+                               nlohmann::json provider, nlohmann::json effort) {
+        return sync_make_record("chat.character", {
+            {"chat", {"lobby", std::move(session_id)}}, {"label", "Chat"},
+            {"character_id", std::move(character_id)},
+            {"provider_id", std::move(provider)}, {"reasoning_effort", std::move(effort)}});
+    };
+    const std::vector<std::string> records{
+        character("s1", "missing", "test", nullptr),
+        character("s2", "guide", "missing", nullptr),
+        character("s3", "guide", nullptr, "invalid"),
+        character("s4", "guide", "test", "high"),
+    };
+    MockD1 mock;
+    for (std::size_t i = 0; i < records.size(); ++i) {
+        mock.incoming.push_back(
+            {{"rowid", i + 1}, {"piece", 1}, {"pieces", 1}, {"record", records[i]}});
+    }
+    auto application = Application::open(
+        make_d1_command(workspace, database), {}, {}, mock.transport());
+    EXPECT_EQ(mock.count("DELETE FROM"), 1u);
+    Database db(database, Database::Mode::read_only);
+    auto rows = db.prepare(
+        "SELECT character_id, provider_id, reasoning_effort FROM session_character_settings");
+    ASSERT_TRUE(rows.step());
+    EXPECT_EQ(rows.text(0), "guide");
+    EXPECT_EQ(rows.text(1), "test");
+    EXPECT_EQ(rows.text(2), "high");
+    EXPECT_FALSE(rows.step());
+}
+
 class D1HandoffTest : public testing::TestWithParam<bool> {};
 
 TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {

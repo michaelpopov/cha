@@ -170,7 +170,7 @@ TEST_F(ChatSyncTest, TerminalStatesArePreserved) {
     records = queued_records(*database_);
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(records[1]["state"], 3);
-    // A turn cancelled with no response sends its prompt alone.
+    // R59: a turn cancelled with no response adds no record.
     make_chat_session(*database_, "f1", "s-empty-cancel", "Chat");
     key = session_key_for(*database_, "f1", "s-empty-cancel");
     {
@@ -182,31 +182,28 @@ TEST_F(ChatSyncTest, TerminalStatesArePreserved) {
         journal.cancel_turn(2, std::nullopt);
     }
     records = queued_records(*database_);
-    ASSERT_EQ(records.size(), 4u);
-    for (const std::size_t i : {2u, 3u}) {
-        EXPECT_EQ(records[i]["state"], 2);
-        EXPECT_EQ(records[i]["entries"].size(), 1u);
-    }
-    EXPECT_EQ(records[3]["entries"][0]["text"], "Again");
+    ASSERT_EQ(records.size(), 2u);
 
-    // The receiver stores the prompt in a cancelled turn.
-    for (const std::size_t i : {2u, 3u}) {
-        records[i]["chat"][1] = "s-empty-cancel-receiver";
-        sync_apply_chat_record(*database_, records[i]);
+    // The receiver skips a turn with only its prompt.
+    auto prompt_only = records[0];
+    prompt_only["chat"][1] = "s-invalid";
+    prompt_only["entries"].erase(1);
+    for (const int state : {1, 2, 3}) {
+        prompt_only["state"] = state;
+        EXPECT_THROW(sync_apply_chat_record(*database_, prompt_only), std::runtime_error);
+    }
+    // A fractional number is skipped; it is not cut to an integer.
+    for (const auto* field : {"/state", "/entries/0/kind", "/entries/1/status"}) {
+        auto fractional = records[0];
+        fractional["chat"][1] = "s-invalid";
+        const nlohmann::json::json_pointer pointer(field);
+        fractional[pointer] = fractional[pointer].get<int>() + 0.5;
+        EXPECT_THROW(sync_apply_chat_record(*database_, fractional), std::runtime_error) << field;
     }
     auto received = database_->prepare(
-        "SELECT t.state, e.text FROM turns t JOIN entries e USING(session_key, request_id) "
-        "WHERE t.session_key=?1 ORDER BY t.request_id",
-        session_key_for(*database_, "f1", "s-empty-cancel-receiver"));
+        "SELECT COUNT(*) FROM sessions WHERE session_id='s-invalid'");
     ASSERT_TRUE(received.step());
-    EXPECT_EQ(received.integer(0), 2);
-    EXPECT_EQ(received.text(1), "Hi");
-    ASSERT_TRUE(received.step());
-    EXPECT_EQ(received.text(1), "Again");
-    EXPECT_FALSE(received.step());
-    // A prompt alone is not valid for a completed turn.
-    records[2]["state"] = 1;
-    EXPECT_THROW(sync_apply_chat_record(*database_, records[2]), std::runtime_error);
+    EXPECT_EQ(received.integer(0), 0);
 }
 
 TEST_F(ChatSyncTest, RenameFromTemporaryPublishesInitialNotRename) {
@@ -476,9 +473,11 @@ TEST_F(ChatSyncTest, TurnPositionIgnoresLocalCancellationWithoutReply) {
     journal.start_turn(2, human_entry(2, "First shared prompt", 2));
     journal.complete_turn(2, reply_entry(3, "First shared reply", 2));
     journal.delete_turn(3);
+    // The turn without a reply makes the chat shared but adds no record.
     const auto records = queued_records(*database_);
-    ASSERT_EQ(records.size(), 3u);
-    EXPECT_EQ(records[2]["turn"], 1);
+    ASSERT_EQ(records.size(), 2u);
+    EXPECT_EQ(records[0]["entries"][0]["text"], "First shared prompt");
+    EXPECT_EQ(records[1]["turn"], 1);
 
     make_chat_session(*database_, "f1", "s-receiver", "Chat");
     const auto receiver = session_key_for(*database_, "f1", "s-receiver");
@@ -489,13 +488,11 @@ TEST_F(ChatSyncTest, TurnPositionIgnoresLocalCancellationWithoutReply) {
         record["chat"][1] = "s-receiver";
         sync_apply_chat_record(*database_, record);
     }
-    // Both turns without a reply stay; the turn with the reply is deleted.
+    // The local turn without a reply stays; the received turn is deleted.
     auto remaining = database_->prepare(
         "SELECT request_id FROM turns WHERE session_key=?1 ORDER BY request_id", receiver);
     ASSERT_TRUE(remaining.step());
     EXPECT_EQ(remaining.integer(0), 1);
-    ASSERT_TRUE(remaining.step());
-    EXPECT_EQ(remaining.integer(0), 2);
     EXPECT_FALSE(remaining.step());
 }
 
@@ -598,6 +595,62 @@ TEST_F(ChatSyncTest, IncomingPositionalDeleteAndMissingAttachmentSkip) {
             {"turn", 99},
         }),
         std::runtime_error);
+    // A fractional position skips and keeps the remaining turn.
+    EXPECT_THROW(
+        sync_apply_chat_record(*database_, {
+            {"kind", "chat.delete_turn"},
+            {"chat", {"f1", "s-pos"}},
+            {"label", "Chat"},
+            {"turn", 1.5},
+        }),
+        std::runtime_error);
+    auto kept = database_->prepare("SELECT COUNT(*) FROM turns WHERE session_key=?1", key);
+    ASSERT_TRUE(kept.step());
+    EXPECT_EQ(kept.integer(0), 1);
+}
+
+TEST_F(ChatSyncTest, IncomingAttachmentsOverLimitSkip) {
+    make_chat_session(*database_, "f1", "s-file", "Chat");
+    const auto key = session_key_for(*database_, "f1", "s-file");
+    const auto add_file = [&](std::string name, std::size_t size) {
+        sync_apply_chat_record(*database_, {
+            {"kind", "chat.add_file"},
+            {"chat", {"f1", "s-file"}},
+            {"label", "Chat"},
+            {"name", std::move(name)},
+            {"text", std::string(size, 'x')},
+        });
+    };
+    add_file("limit.txt", 256 * 1024);
+    EXPECT_THROW(add_file("over.txt", 256 * 1024 + 1), std::runtime_error);
+    auto files = database_->prepare(
+        "SELECT name FROM session_files WHERE session_key=?1", key);
+    ASSERT_TRUE(files.step());
+    EXPECT_EQ(files.text(0), "limit.txt");
+    EXPECT_FALSE(files.step());
+
+    (void)note_create(*database_, std::nullopt, NoteItemKind::note, "Source");
+    const auto add_note = [&](std::size_t size) {
+        sync_apply_chat_record(*database_, {
+            {"kind", "chat.add_note"},
+            {"chat", {"f1", "s-file"}},
+            {"label", "Chat"},
+            {"path", {"Source"}},
+            {"name", "Source"},
+            {"text", std::string(size, 'x')},
+        });
+    };
+    EXPECT_THROW(add_note(256 * 1024 + 1), std::runtime_error);
+    add_note(256 * 1024);
+    auto notes = database_->prepare(
+        "SELECT length(text) FROM session_notes WHERE session_key=?1", key);
+    ASSERT_TRUE(notes.step());
+    EXPECT_EQ(notes.integer(0), 256 * 1024);
+    EXPECT_FALSE(notes.step());
+    // One notice for the file and one for the note.
+    auto entries = database_->prepare("SELECT COUNT(*) FROM entries WHERE session_key=?1", key);
+    ASSERT_TRUE(entries.step());
+    EXPECT_EQ(entries.integer(0), 2);
 }
 
 // --- Worker transport script -------------------------------------------------
@@ -931,6 +984,29 @@ TEST(D1WorkerTest, InvalidRecordsSkippedAndAcked) {
     // Invalid rows skipped, valid note applied, all acked (no crash).
     Database database(path, Database::Mode::read_only);
     EXPECT_TRUE(sync_queue_list(database).empty());
+}
+
+TEST(D1WorkerTest, UnorderedReadAppliesAndAcknowledgesNothing) {
+    test::TestWorkspace workspace;
+    const auto path = workspace.root() / "w.sqlite3";
+    create_empty_workspace_session_database(path);
+    {
+        Database database(path, Database::Mode::read_write);
+        add_d1_key(database);
+    }
+    auto scripted = std::make_shared<ScriptedTransport>();
+    scripted->responses = {
+        {200, queue_rows_success({
+            {-1, 1, 1, sync_make_record("note.create", {{"path", {"A"}}, {"item", "note"}})},
+            {6, 1, 1, sync_make_record("note.create", {{"path", {"B"}}, {"item", "note"}})},
+        }).dump()},
+    };
+    D1SyncWorker worker(worker_config(path, scripted));
+    worker.run_once();
+    EXPECT_EQ(scripted->bodies.size(), 1u); // No DELETE request.
+    Database database(path, Database::Mode::read_only);
+    EXPECT_FALSE(sync_note_find(database, {"A"}));
+    EXPECT_FALSE(sync_note_find(database, {"B"}));
 }
 
 TEST(D1WorkerTest, AckFailureEndsPassAndRetainsForReplay) {
