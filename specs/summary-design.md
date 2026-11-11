@@ -66,6 +66,8 @@ design.
 | `is_summary` also covers the Summary note. | 2.5 | The existing menu and compression rules for summary notes then apply with no new code. |
 | Summarize is not on chat folders or the vault row. Exclude from summaries is not on summary notes. | 11 | These items can never have an effect there. They are part of the UI approval. |
 | No start event. A successful section or overview call writes no event. Each cancelled call writes an info event. | 10 | PRD 6 asks for the result of each job. Compression writes a cancel event in the same way. |
+| A table cell with `rowspan` or `colspan` other than 1 fails the conversion. | 6.2 | A merged cell cannot become one plain line of text. Markdown tables have no merged cells, so only raw HTML tables are affected. |
+| Markdown that converts to a document with no text fails the conversion. | 6.2 | An answer with only a rule or a picture would replace a good version with an empty one. |
 
 ## 2. Storage
 
@@ -171,7 +173,7 @@ are.
 | `note_get()` | Select the version row with `c.compressed=1 AND c.level=?` for the requested mode. See section 2.6. |
 | `note_get_text()` | Add `c.level=0`. Chats keep the compressed-or-original rule. |
 | `write_compressed_note()` | Becomes `write_version_row(database, id, level, blob)`. The `UPDATE` and `INSERT` use the level. Compression calls it with level 0. |
-| `delete_compressed_note()` | Keep it for summary replacement: it deletes all version rows of a note. Add `delete_version_row(database, id, level)` for incoming sync records with a null field. |
+| `delete_compressed_note()` | Remove it. Its `DELETE` of all version rows of a note moves into the new `replace_summary_note()`, which `note_commit_summary()` and `note_commit_folder_summary()` call. Add `delete_version_row(database, id, level)` for incoming sync records with a null field. |
 | `document_owner()` | No change. A row with `compressed=1` belongs to its parent note, for every level. |
 | `name_taken()`, the source query of `rebuild_folder_annotations()` | Add `compressed = 0`, so SQLite uses `note_items_original_name` (section 2.2). |
 | Folder export and import | See section 9.2. |
@@ -599,8 +601,9 @@ export function markdownNoteDocument(markdown: string): Record<string, unknown>;
    with tabs between the cells.
 4. Parse with the `notesExtensions()` schema and return the node.
 
-`markdownNoteDocument()` converts the node with `toJSON()` and checks the
-12 MiB document limit. Both functions throw on failure.
+`markdownNoteDocument()` refuses a node with no text, converts the node with
+`toJSON()`, and checks the 12 MiB document limit. Both functions throw on
+failure.
 
 `summaryDocument()` calls `markdownNoteNode()`, keeps its chapter check on
 the node, and then converts and checks the size as today. Its behavior and
@@ -1108,15 +1111,15 @@ does not add mechanisms for them.
 | `src/storage/sync_storage.cpp` | `note_fields()` for the new fields. |
 | `src/workspace/prompt_catalog.cpp`, `CMakeLists.txt`, `resources/` | Four catalog entries, four resource files, embedding. |
 | `src/notes/notes_service.h`, `notes_service_internal.h`, `notes_operations.cpp` | Plan, generate, commit, abandon, cancel, exclusion flag, the call list, and the extension of `cancel_summaries_locked()`. |
-| `src/app/application.h`, `.cpp` | Wrappers for the new service methods. |
+| `src/app/application.h`, `notes_operations.cpp` | Wrappers for the new service methods. |
 | `src/bridge/bridge_protocol.cpp`, `bridge_router.cpp`, `notes_dispatch.cpp` | Six methods, deadline exemption, `notes.get` modes. |
 | `resources/dto.yaml`, `webapp/src/api/schema.d.ts` | DTOs and generated types. |
-| `webapp/src/api/client.ts`, `nativeClient.ts`, `noteGuards.ts`, `guards.ts` | Client methods and guards. |
+| `webapp/src/api/client.ts`, `nativeClient.ts`, `noteGuards.ts` | Client methods and guards. |
 | `webapp/src/notes/summaryImport.ts` | `markdownNoteDocument()`. |
 | `webapp/src/notes/summaries.ts` (new) | `summarizeAndWait()`. |
 | `webapp/src/components/App.tsx`, `NoteCompressionDialog.tsx` | `summarizeNotes` action, dialog label, no `mode` argument in `requestOpenNote()`. |
 | `webapp/src/components/NotesTree.tsx`, `webapp/src/notes/tree.ts` | Menu items, removal of **Show compressed**, dot, row fields. |
-| `webapp/src/components/NotesScreen.tsx`, `webapp/src/state/view.ts`, `webapp/src/notes/useNoteImports.ts` | Four modes. |
+| `webapp/src/components/NotesScreen.tsx`, `webapp/src/notes/useNoteImports.ts` | Four modes. `webapp/src/state/view.ts` gets them from the generated `NoteTextMode` type. |
 
 Implement in this order:
 

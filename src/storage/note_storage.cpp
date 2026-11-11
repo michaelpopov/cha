@@ -255,6 +255,7 @@ void require_folder(
 }
 
 // read_item() reads these columns by position.
+// compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
 constexpr std::string_view note_item_select =
     "SELECT n.id, n.parent_id, n.kind, n.name, "
     "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
@@ -379,11 +380,13 @@ void replace_summary_note(storage::SqliteDatabase& database, std::int64_t id, st
     update.run();
 }
 
+// compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
 void delete_version_row(storage::SqliteDatabase& database, std::int64_t id, int level) {
     database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1 AND level=?", id, level).run();
 }
 
 // Caller owns the transaction. An update keeps the version row's ID and scroll position.
+// compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
 void write_version_row(
     storage::SqliteDatabase& database, std::int64_t id, int level, std::string_view blob) {
     auto note = database.prepare(
