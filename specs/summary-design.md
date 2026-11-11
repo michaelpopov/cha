@@ -1151,9 +1151,13 @@ call is necessary.
 
 Run `npm run api-types`, `npm run check`, and the relevant Vitest suites.
 Build the C++ targets and run the note storage, notes service, workspace,
-bridge, sync, and ChaWeb adapter tests. Extend the native note compression
-smoke scenario: summarize a folder, open L1 and L2, open the Summary note,
-and cancel a folder run.
+bridge, sync, and ChaWeb adapter tests. Add a new native smoke test,
+`tests/native/macos/test-note-summaries.py` with
+`tests/native/note-summaries.js`: summarize a folder, open L1 and L2, open
+the Summary note, and cancel a folder run. Do not add these steps to the
+native note compression test. That test checks an exact list of compressed
+rows and an exact count of events, and summary steps in the same vault would
+break these checks.
 
 ## 15. Default prompt texts
 
