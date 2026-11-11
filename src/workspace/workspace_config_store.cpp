@@ -3010,6 +3010,22 @@ bool WorkspaceConfigStore::commit_compressed_note(std::int64_t id, std::string_v
     return note_commit_compressed(*impl_->database, id, source, text, success_message, impl_->sync_machine);
 }
 
+void WorkspaceConfigStore::commit_note_level(std::int64_t id, int level,
+    const nlohmann::json& document, std::string_view success_message) {
+    const std::lock_guard lock(impl_->mutex);
+    note_commit_level(*impl_->database, id, level, document, success_message, impl_->sync_machine);
+}
+
+NoteItem WorkspaceConfigStore::commit_folder_summary(std::int64_t folder_id, const nlohmann::json& document) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_commit_folder_summary(*impl_->database, folder_id, document, impl_->sync_machine);
+}
+
+NoteItem WorkspaceConfigStore::set_note_summary_excluded(std::int64_t id, bool excluded) {
+    const std::lock_guard lock(impl_->mutex);
+    return note_set_summary_excluded(*impl_->database, id, excluded, impl_->sync_machine);
+}
+
 NoteItem WorkspaceConfigStore::rename_note_item(
     std::int64_t id,
     std::string_view name) {

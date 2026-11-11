@@ -1507,6 +1507,254 @@ TEST_F(NoteStorageTest, ScrollPositionsArePerNoteAndSurviveReadOnlyAndReopen) {
     });
 }
 
+void expect_version_schema(Database& database) {
+    for (const auto* index : {"note_items_original_name", "note_items_version_parent", "note_items_folder_summary"})
+        EXPECT_TRUE(has_schema_object(database, "index", index));
+    for (const auto* index : {"note_items_sibling_name", "note_items_compressed_parent"})
+        EXPECT_FALSE(has_schema_object(database, "index", index));
+    auto columns = database.prepare(
+        "SELECT COUNT(*) FROM pragma_table_info('note_items') "
+        "WHERE name IN ('level', 'summary_excluded', 'folder_summary')");
+    ASSERT_TRUE(columns.step());
+    EXPECT_EQ(columns.integer(0), 3);
+}
+
+TEST_F(NoteStorageTest, VersionSchemaUpgradePreservesRowsInProtectedVault) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Source");
+    ASSERT_TRUE(note_save(*database_, note.id, annotation_fixture()["document"]));
+    note_save_compressed(*database_, note.id, "Compressed text");
+    database_->execute(R"sql(
+        DROP INDEX note_items_original_name;
+        DROP INDEX note_items_version_parent;
+        DROP INDEX note_items_folder_summary;
+        ALTER TABLE note_items DROP COLUMN folder_summary;
+        ALTER TABLE note_items DROP COLUMN summary_excluded;
+        ALTER TABLE note_items DROP COLUMN level;
+        CREATE UNIQUE INDEX note_items_sibling_name ON note_items(IFNULL(parent_id, 0), name);
+        CREATE UNIQUE INDEX note_items_compressed_parent ON note_items(parent_id) WHERE compressed=1;
+    )sql");
+    const auto snapshot = [](Database& database) {
+        std::vector<std::string> rows;
+        auto row = database.prepare(
+            "SELECT json_array(id,parent_id,kind,name,hex(content_json),compressed,read_only,scroll_top,forum_id,changed) "
+            "FROM note_items ORDER BY id");
+        while (row.step()) rows.push_back(row.text(0));
+        return rows;
+    };
+    const auto before = snapshot(*database_);
+    ASSERT_EQ(before.size(), 4u);
+    database_.reset();
+    protect_workspace_session_database(path_, "secret");
+    database_ = std::make_unique<Database>(path_, Database::Mode::read_write, "secret");
+    for (int run = 0; run < 2; ++run) {
+        storage::SqliteTransaction tx(*database_);
+        create_note_items_schema(*database_);
+        tx.commit();
+        expect_version_schema(*database_);
+        EXPECT_EQ(snapshot(*database_), before);
+    }
+    auto integrity = database_->prepare("PRAGMA integrity_check");
+    ASSERT_TRUE(integrity.step());
+    EXPECT_EQ(integrity.text(0), "ok");
+    for (const auto* query : {
+        "EXPLAIN QUERY PLAN SELECT 1 FROM note_items WHERE IFNULL(parent_id, 0)=? AND name=? AND id<>0 AND compressed=0 LIMIT 1",
+        "EXPLAIN QUERY PLAN SELECT id,name,content_json FROM note_items WHERE IFNULL(parent_id, 0)=? AND kind='note' AND compressed=0 ORDER BY id",
+    }) {
+        auto plan = database_->prepare(query);
+        plan.bind(1, folder.id);
+        if (std::string_view(query).find("name=?") != std::string_view::npos) plan.bind(2, note.name);
+        ASSERT_TRUE(plan.step());
+        EXPECT_NE(plan.text(3).find("SEARCH note_items USING INDEX note_items_original_name"), std::string::npos);
+    }
+}
+
+TEST_F(NoteStorageTest, LegacyCompressedTextMigrationCreatesVersionSchema) {
+    database_->execute(R"sql(
+        PRAGMA foreign_keys = OFF;
+        DROP TABLE note_items;
+        CREATE TABLE note_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES note_items(id),
+            kind TEXT NOT NULL, name TEXT NOT NULL, content_json BLOB, compressed_text TEXT,
+            read_only INTEGER NOT NULL DEFAULT 0, scroll_top INTEGER NOT NULL DEFAULT 0
+        ) STRICT;
+        INSERT INTO note_items(id, kind, name, content_json, compressed_text)
+            VALUES(7, 'note', 'Source', X'7B7D', 'Legacy compression');
+        PRAGMA foreign_keys = ON;
+    )sql");
+    migrate_compressed_notes(*database_);
+    expect_version_schema(*database_);
+    const auto compressed = note_get(*database_, 7, NoteTextMode::compressed);
+    EXPECT_NE(compressed.document_id, 7);
+    EXPECT_EQ(compressed.document, note_document_from_text("Legacy compression"));
+    auto original = database_->prepare("SELECT hex(content_json) FROM note_items WHERE id=7");
+    ASSERT_TRUE(original.step());
+    EXPECT_EQ(original.text(0), "7B7D");
+}
+
+TEST_F(NoteStorageTest, VersionRowsKeepIndependentModesFlagsAndScrollPositions) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Source");
+    const auto full = note_document_from_text("Full text");
+    EXPECT_FALSE(note_save(*database_, note.id, full));
+    for (auto mode : {NoteTextMode::full_text, NoteTextMode::compressed, NoteTextMode::l1, NoteTextMode::l2}) {
+        const auto content = note_get(*database_, note.id, mode);
+        EXPECT_EQ(content.document_id, note.id);
+        EXPECT_EQ(content.document, full);
+    }
+    const auto add_version = [&](int level, std::string_view text) {
+        auto insert = database_->prepare(
+            "INSERT INTO note_items(parent_id, kind, name, content_json, compressed, level) "
+            "VALUES(?, 'note', 'Source', ?, 1, ?)");
+        insert.bind(1, note.id);
+        insert.bind_blob(2, compressed_content(note_document_from_text(text).dump()));
+        insert.bind(3, level);
+        insert.run();
+        return database_->last_insert_rowid();
+    };
+    const auto l1 = add_version(1, "Level one");
+    auto item = note_find_item(*database_, note.id).value();
+    EXPECT_TRUE(item.has_l1);
+    EXPECT_FALSE(item.has_l2);
+    EXPECT_FALSE(item.has_compressed);
+    EXPECT_EQ(note_get_text(*database_, note.id, true).text, "Full text");
+    const auto l2 = add_version(2, "Level two");
+    note_save_compressed(*database_, note.id, "Compressed text");
+    const auto compressed = database_->last_insert_rowid();
+    ASSERT_EQ(note_list(*database_).size(), 2u);
+    item = note_list(*database_).back();
+    EXPECT_TRUE(item.has_compressed);
+    EXPECT_TRUE(item.has_l1);
+    EXPECT_TRUE(item.has_l2);
+    EXPECT_EQ(note_get_text(*database_, note.id, true).text, "Compressed text");
+    note_save_scroll_position(*database_, note.id, 10);
+    note_save_scroll_position(*database_, compressed, 20);
+    note_save_scroll_position(*database_, l1, 30);
+    note_save_scroll_position(*database_, l2, 40);
+    const auto expect_content = [&](NoteTextMode mode, std::int64_t id, std::string_view text, int scroll) {
+        const auto content = note_get(*database_, note.id, mode);
+        EXPECT_EQ(content.document_id, id);
+        EXPECT_EQ(content.document, note_document_from_text(text));
+        EXPECT_EQ(content.scroll_top, scroll);
+    };
+    expect_content(NoteTextMode::full_text, note.id, "Full text", 10);
+    expect_content(NoteTextMode::compressed, compressed, "Compressed text", 20);
+    expect_content(NoteTextMode::l1, l1, "Level one", 30);
+    expect_content(NoteTextMode::l2, l2, "Level two", 40);
+    EXPECT_THROW(add_version(1, "Duplicate"), std::runtime_error);
+    EXPECT_THROW(database_->prepare("UPDATE note_items SET level=1 WHERE id=?", note.id).run(), std::runtime_error);
+    EXPECT_THROW((void)note_create(*database_, folder.id, NoteItemKind::note, "Source"), NoteError);
+    const auto other = note_create(*database_, folder.id, NoteItemKind::note, "Other");
+    const auto root = note_create(*database_, {}, NoteItemKind::note, "Root");
+    database_->prepare("UPDATE note_items SET folder_summary=1 WHERE id=?", other.id).run();
+    EXPECT_TRUE(note_find_item(*database_, other.id)->is_summary);
+    EXPECT_FALSE(note_find_item(*database_, other.id)->summary_linked);
+    for (auto id : {note.id, root.id})
+        EXPECT_THROW(database_->prepare("UPDATE note_items SET folder_summary=1 WHERE id=?", id).run(), std::runtime_error);
+    (void)note_set_read_only(*database_, note.id, true);
+    EXPECT_THROW(note_save(*database_, l1, note_document_from_text("Edited")), NoteError);
+    (void)note_set_read_only(*database_, note.id, false);
+    EXPECT_THROW(note_save(*database_, l1, {{"type", "paragraph"}}), NoteError);
+    EXPECT_FALSE(note_save(*database_, l1, annotation_fixture()["document"]));
+    ASSERT_EQ(note_list(*database_).size(), 4u);
+    expect_content(NoteTextMode::full_text, note.id, "Full text", 10);
+    expect_content(NoteTextMode::compressed, compressed, "Compressed text", 20);
+    expect_content(NoteTextMode::l2, l2, "Level two", 40);
+    note_delete(*database_, note.id);
+    EXPECT_EQ(item_count(*database_), 3);
+    const auto child = note_create(*database_, folder.id, NoteItemKind::note, "Child");
+    note_save_compressed(*database_, child.id, "Compressed child");
+    database_->prepare("UPDATE note_items SET level=2 WHERE parent_id=?", child.id).run();
+    note_delete(*database_, folder.id);
+    EXPECT_EQ(item_count(*database_), 1);
+}
+
+TEST_F(NoteStorageTest, CommitLevelValidatesNoteDocumentAndSize) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    const auto session_summary = note_commit_summary(*database_, source,
+        note_summary_target(*database_, source), summary_document());
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    const auto folder_summary = note_commit_folder_summary(*database_, folder.id, summary_document());
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Source");
+    const auto document = note_document_from_text("Level text");
+    for (auto id : {session_summary.id, folder_summary.id, folder.id}) {
+        expect_note_error(NoteFailure::invalid, "That item is not a note.",
+            [&] { note_commit_level(*database_, id, 1, document, "Saved."); });
+    }
+    EXPECT_THROW(note_commit_level(*database_, note.id, 0, document, "Saved."), NoteError);
+    EXPECT_THROW(note_commit_level(*database_, note.id, 1, {{"type", "paragraph"}}, "Saved."), NoteError);
+    expect_note_error(NoteFailure::too_large, "Note exceeds 12 MiB. Remove content or use a smaller picture.", [&] {
+        note_commit_level(*database_, note.id, 2, padded_document(document, note_document_byte_limit), "Saved.");
+    });
+    EXPECT_FALSE(note_find_item(*database_, note.id)->has_l1);
+    EXPECT_FALSE(note_find_item(*database_, note.id)->has_l2);
+}
+
+TEST_F(NoteStorageTest, FolderSummaryCreatesAndReplacesByFlag) {
+    create_event_history_schema(*database_);
+    const auto empty = note_create(*database_, {}, NoteItemKind::folder, "Empty folder");
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto initial = note_document_from_text("First summary");
+    EXPECT_EQ(note_commit_folder_summary(*database_, empty.id, initial).name, "Summary");
+    const auto ordinary = note_create(*database_, folder.id, NoteItemKind::note, "Summary");
+    const auto ordinary_document = note_get(*database_, ordinary.id).document;
+    const auto summary = note_commit_folder_summary(*database_, folder.id, initial);
+    EXPECT_EQ(summary.name, "Summary (2)");
+    EXPECT_TRUE(summary.folder_summary);
+    EXPECT_TRUE(summary.is_summary);
+    EXPECT_TRUE(summary.read_only);
+    EXPECT_FALSE(summary.summary_linked);
+    database_->prepare("UPDATE note_items SET name='Renamed summary', read_only=0 WHERE id=?", summary.id).run();
+    ASSERT_TRUE(note_save(*database_, summary.id, annotation_fixture()["document"]));
+    const auto annotation = note_list(*database_).back();
+    ASSERT_EQ(annotation.kind, NoteItemKind::annotation);
+    EXPECT_NE(note_get_text(*database_, annotation.id).text.find("Renamed summary"), std::string::npos);
+    note_save_scroll_position(*database_, summary.id, 60);
+    database_->prepare("INSERT INTO note_audio VALUES(?,0,'audio/mpeg',X'0102')", summary.id).run();
+    (void)note_set_read_only(*database_, summary.id, true);
+    const auto attempt = note_audio_accept(*database_, summary.id, 1, "http://localhost", "key", [](const auto&) {});
+    ASSERT_TRUE(attempt);
+    database_->prepare("UPDATE note_items SET read_only=0 WHERE id=?", summary.id).run();
+    note_save_compressed(*database_, summary.id, "Old compressed text");
+    for (int level : {1, 2}) {
+        database_->prepare(
+            "INSERT INTO note_items(parent_id,kind,name,content_json,compressed,level) "
+            "SELECT parent_id,kind,name,content_json,1,? FROM note_items WHERE parent_id=? AND compressed=1 AND level=0",
+            level, summary.id).run();
+    }
+    const auto replacement = note_document_from_text("Replacement");
+    const auto saved = note_commit_folder_summary(*database_, folder.id, replacement);
+    EXPECT_EQ(saved.id, summary.id);
+    EXPECT_EQ(saved.name, "Renamed summary");
+    EXPECT_TRUE(saved.folder_summary);
+    EXPECT_TRUE(saved.read_only);
+    EXPECT_FALSE(saved.has_audio);
+    EXPECT_FALSE(saved.has_compressed);
+    EXPECT_FALSE(saved.has_l1);
+    EXPECT_FALSE(saved.has_l2);
+    EXPECT_FALSE(note_audio_attempt_for_note(*database_, summary.id));
+    EXPECT_EQ(note_get(*database_, summary.id).scroll_top, 0);
+    EXPECT_EQ(note_get(*database_, summary.id).document, replacement);
+    EXPECT_EQ(note_get(*database_, ordinary.id).document, ordinary_document);
+    EXPECT_EQ(note_get_text(*database_, annotation.id).text.find("Renamed summary"), std::string::npos);
+    const auto events = event_list(*database_);
+    EXPECT_TRUE(std::any_of(events.begin(), events.end(), [&](const auto& event) {
+        return event.severity == EventSeverity::success
+            && event.message == "Summary ready for “Book” (folder " + std::to_string(folder.id)
+                + ", note " + std::to_string(summary.id) + ").";
+    }));
+    expect_note_error(NoteFailure::invalid, "The summary document has no readable text.", [&] {
+        (void)note_commit_folder_summary(*database_, folder.id, note_document_from_text(" "));
+    });
+    expect_note_error(NoteFailure::invalid, "That item is not a folder.",
+        [&] { (void)note_commit_folder_summary(*database_, ordinary.id, initial); });
+    summary_source(*database_);
+    const auto managed = note_summary_target(*database_, {"a", "source"}).parent_id;
+    expect_note_error(NoteFailure::invalid, "This folder is managed by CHA.",
+        [&] { (void)note_commit_folder_summary(*database_, managed, initial); });
+}
+
 TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
     EXPECT_EQ(
         database_->pragma_integer("user_version"),
@@ -1515,7 +1763,7 @@ TEST_F(NoteStorageTest, NewDatabaseKeepsSchema2IdentityAndNoteSchema) {
         database_->pragma_integer("application_id"),
         workspace_session_application_id);
     EXPECT_TRUE(has_schema_object(*database_, "table", "note_items"));
-    EXPECT_TRUE(has_schema_object(*database_, "index", "note_items_sibling_name"));
+    EXPECT_TRUE(has_schema_object(*database_, "index", "note_items_original_name"));
     EXPECT_TRUE(has_schema_object(*database_, "index", "note_items_parent"));
     EXPECT_NO_THROW(validate_workspace_session_contents(*database_));
     EXPECT_TRUE(note_list(*database_).empty());
@@ -2497,6 +2745,23 @@ TEST_F(NoteStorageTest, SummaryToolsReadEncryptedDatabaseWithCapturedPassword) {
     EXPECT_EQ(summary_tool_result(encrypted, "summary_read", {{"note_id", id}}, "a", "wrong")["error"], "unavailable");
 }
 
+
+TEST_F(NoteStorageTest, FolderSummaryIsAbsentFromCharacterSummaryTools) {
+    summary_source(*database_);
+    const FullSessionId source{"a", "source"};
+    const auto session_summary = note_commit_summary(*database_, source,
+        note_summary_target(*database_, source), summary_document());
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto summary = note_commit_folder_summary(*database_, folder.id, summary_document("Folder-only detail"));
+    const auto search = summary_search_result(path_);
+    ASSERT_EQ(search["items"].size(), 1u);
+    EXPECT_EQ(search["items"][0]["note_id"], session_summary.id);
+    EXPECT_EQ(summary_tool_result(path_, "summary_read", {{"note_id", summary.id}})["error"], "not_found");
+    const auto catalogue = note_short_summary_catalogue(path_, "", "a", -1, std::atomic_bool{false});
+    ASSERT_TRUE(catalogue);
+    ASSERT_EQ(catalogue->at("items").size(), 1u);
+    EXPECT_EQ(catalogue->at("items")[0]["note_id"], session_summary.id);
+}
 
 TEST_F(NoteStorageTest, ShortCatalogueSharesScopeAndChaptersButExcludesOnlyCurrentSession) {
     summary_source(*database_, "own", "Own summary");

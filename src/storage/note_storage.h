@@ -56,9 +56,13 @@ struct NoteItem {
     std::optional<std::string> forum_id;
     bool is_summary{};
     bool summary_linked{};
+    bool has_l1{};
+    bool has_l2{};
+    bool summary_excluded{};
+    bool folder_summary{};
 };
 
-enum class NoteTextMode { full_text, compressed };
+enum class NoteTextMode { full_text, compressed, l1, l2 };
 
 struct NoteContent {
     std::int64_t id{};
@@ -153,6 +157,14 @@ void note_save_compressed(
 bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
     std::string_view source, std::string_view text, std::string_view success_message,
     std::string_view sync_machine = {});
+// Writes the L1 or L2 row, the success event, and the sync record together.
+void note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
+    int level, const nlohmann::json& document, std::string_view success_message,
+    std::string_view sync_machine = {});
+[[nodiscard]] NoteItem note_commit_folder_summary(storage::SqliteDatabase& database,
+    std::int64_t folder_id, const nlohmann::json& document, std::string_view sync_machine = {});
+[[nodiscard]] NoteItem note_set_summary_excluded(storage::SqliteDatabase& database,
+    std::int64_t id, bool excluded, std::string_view sync_machine = {});
 void note_save_scroll_position(
     storage::SqliteDatabase& database, std::int64_t id, std::int64_t scroll_top);
 [[nodiscard]] NoteItem note_set_read_only(

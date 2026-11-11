@@ -693,6 +693,139 @@ TEST_F(SyncNotesTest, CompressedEditRecordsAnUpdateForTheOriginalPath) {
     EXPECT_EQ(record["scroll_top"], 0);
 }
 
+TEST_F(SyncNotesTest, LevelEditFlagsTheOriginalNote) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
+    note_save_compressed(*database_, note.id, "Generated", sync_machine);
+    database_->prepare("UPDATE note_items SET level=1 WHERE parent_id=?", note.id).run();
+    const auto l1 = note_get(*database_, note.id, NoteTextMode::l1);
+    ASSERT_NE(l1.document_id, note.id);
+    EXPECT_FALSE(note_save(*database_, l1.document_id, text_document("Edited"), sync_machine));
+    EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 1u);
+    const auto record = records().back();
+    EXPECT_EQ(record["kind"], "note.update");
+    EXPECT_EQ(record["path"], nlohmann::json::array({"Note"}));
+    EXPECT_TRUE(record["compressed_content"].is_null());
+}
+
+TEST_F(SyncNotesTest, IncomingCompressionUpdatePreservesOtherVersions) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
+    auto update = records().back();
+    update["kind"] = "note.update";
+    const auto level_one = text_document("Level one");
+    const auto level_two = text_document("Level two");
+    note_commit_level(*database_, note.id, 1, level_one, "Saved.", sync_machine);
+    update["l1_content"] = records().back()["content"];
+    note_commit_level(*database_, note.id, 2, level_two, "Saved.", sync_machine);
+    update["l2_content"] = records().back()["content"];
+    const auto l1_id = note_get(*database_, note.id, NoteTextMode::l1).document_id;
+    const auto l2_id = note_get(*database_, note.id, NoteTextMode::l2).document_id;
+    for (bool omit_compressed_field : {false, true}) {
+        note_save_compressed(*database_, note.id, "Compressed");
+        if (omit_compressed_field) update.erase("compressed_content");
+        ASSERT_TRUE(note_apply_record(*database_, update));
+        EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document_id, note.id);
+        const auto l1 = note_get(*database_, note.id, NoteTextMode::l1);
+        const auto l2 = note_get(*database_, note.id, NoteTextMode::l2);
+        EXPECT_EQ(l1.document_id, l1_id);
+        EXPECT_EQ(l1.document, level_one);
+        EXPECT_EQ(l2.document_id, l2_id);
+        EXPECT_EQ(l2.document, level_two);
+    }
+}
+
+TEST_F(SyncNotesTest, LevelCommitWritesVersionEventAndRecordAtomically) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
+    (void)note_set_read_only(*database_, note.id, true, sync_machine);
+    const auto document = text_document("Level one");
+    const auto before = records();
+    const auto events_before = event_list(*database_).size();
+    database_->execute("CREATE TRIGGER fail_level BEFORE INSERT ON sync_queue "
+        "BEGIN SELECT RAISE(ABORT, 'injected sync failure'); END");
+    EXPECT_THROW(note_commit_level(*database_, note.id, 1, document, "Saved.", sync_machine), NoteError);
+    EXPECT_FALSE(note_find_item(*database_, note.id)->has_l1);
+    EXPECT_EQ(event_list(*database_).size(), events_before);
+    EXPECT_EQ(records(), before);
+    database_->execute("DROP TRIGGER fail_level");
+    note_commit_level(*database_, note.id, 1, document, "Saved.", sync_machine);
+    const auto stored = note_get(*database_, note.id, NoteTextMode::l1);
+    ASSERT_NE(stored.document_id, note.id);
+    EXPECT_EQ(stored.document, document);
+    const auto events = event_list(*database_);
+    ASSERT_EQ(events.size(), events_before + 1);
+    EXPECT_EQ(events.front().severity, EventSeverity::success);
+    EXPECT_EQ(events.front().message, "Saved.");
+    const auto queued = records();
+    ASSERT_EQ(queued.size(), before.size() + 1);
+    const auto& record = queued.back();
+    EXPECT_EQ(record["kind"], "note.level");
+    EXPECT_EQ(record["path"], nlohmann::json::array({"Note"}));
+    EXPECT_EQ(record["level"], "l1");
+    EXPECT_EQ(note_parse_saved_document(decode_base64(record["content"].get<std::string>()), note.id), document);
+    note_save_scroll_position(*database_, stored.document_id, 35);
+    const auto updated = text_document("Replacement");
+    note_commit_level(*database_, note.id, 1, updated, "Saved again.", sync_machine);
+    const auto replaced = note_get(*database_, note.id, NoteTextMode::l1);
+    EXPECT_EQ(replaced.document_id, stored.document_id);
+    EXPECT_EQ(replaced.scroll_top, 35);
+    EXPECT_EQ(replaced.document, updated);
+}
+
+TEST_F(SyncNotesTest, FolderSummaryCreateAndReplacementSyncByPath) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book", sync_machine);
+    const auto summary = note_commit_folder_summary(*database_, folder.id, text_document("New summary"), sync_machine);
+    const auto queued = records();
+    ASSERT_EQ(queued.size(), 2u);
+    EXPECT_EQ(queued.back()["kind"], "note.create");
+    EXPECT_EQ(queued.back()["path"], nlohmann::json::array({"Book", "Summary"}));
+    EXPECT_EQ(queued.back()["folder_summary"], true);
+    EXPECT_EQ(queued.back()["summary_excluded"], false);
+    EXPECT_TRUE(queued.back()["l1_content"].is_null());
+    EXPECT_TRUE(queued.back()["l2_content"].is_null());
+    EXPECT_EQ(note_commit_folder_summary(*database_, folder.id, text_document("Replacement"), sync_machine).id, summary.id);
+    EXPECT_EQ(records(), queued);
+    EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 1u);
+    const auto update = records().back();
+    EXPECT_EQ(update["kind"], "note.update");
+    EXPECT_EQ(update["path"], nlohmann::json::array({"Book", "Summary"}));
+    EXPECT_FALSE(update.contains("folder_summary"));
+    EXPECT_EQ(update["summary_excluded"], false);
+    EXPECT_TRUE(update["l1_content"].is_null());
+    EXPECT_TRUE(update["l2_content"].is_null());
+}
+
+TEST_F(SyncNotesTest, SummaryExclusionAndLevelsAreIncludedInOutgoingRecords) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
+    const auto count = records().size();
+    EXPECT_TRUE(note_set_summary_excluded(*database_, note.id, true).summary_excluded);
+    EXPECT_EQ(records().size(), count);
+    EXPECT_FALSE(note_set_summary_excluded(*database_, note.id, false, sync_machine).summary_excluded);
+    EXPECT_TRUE(note_set_summary_excluded(*database_, note.id, true, sync_machine).summary_excluded);
+    const auto exclusion = records().back();
+    EXPECT_EQ(exclusion["kind"], "note.summary_excluded");
+    EXPECT_EQ(exclusion["path"], nlohmann::json::array({"Note"}));
+    EXPECT_EQ(exclusion["summary_excluded"], true);
+    EXPECT_TRUE(note_find_item(*database_, note.id)->summary_excluded);
+    note_save_compressed(*database_, note.id, "Compressed", sync_machine);
+    const auto level_one = text_document("Level one");
+    const auto level_two = text_document("Level two");
+    note_commit_level(*database_, note.id, 1, level_one, "L1 saved.", sync_machine);
+    note_commit_level(*database_, note.id, 2, level_two, "L2 saved.", sync_machine);
+    EXPECT_EQ(records().back()["level"], "l2");
+    EXPECT_FALSE(note_save(*database_, note.id, text_document("Edited original"), sync_machine));
+    EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 1u);
+    const auto update = records().back();
+    EXPECT_EQ(update["kind"], "note.update");
+    EXPECT_EQ(update["summary_excluded"], true);
+    EXPECT_FALSE(update.contains("folder_summary"));
+    for (const auto& [field, document] : std::initializer_list<std::pair<const char*, nlohmann::json>>{
+        {"compressed_content", note_document_from_text("Compressed")},
+        {"l1_content", level_one},
+        {"l2_content", level_two},
+    }) {
+        EXPECT_EQ(note_parse_saved_document(decode_base64(update[field].get<std::string>()), note.id), document);
+    }
+}
+
 TEST_F(SyncNotesTest, BookImportRecordsParentsFirst) {
     const std::vector<NoteImportEntry> notes = {
         {"B", text_document("bee")}, {"A", text_document("ay")}};

@@ -65,8 +65,11 @@ void sync_record_note(
 nlohmann::json stored_note_fields(
     storage::SqliteDatabase& database, std::int64_t id) {
     auto row = database.prepare(
-        "SELECT n.kind, n.content_json, c.content_json, n.read_only, n.scroll_top "
-        "FROM note_items n LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 "
+        "SELECT n.kind, n.content_json, c.content_json, n.read_only, n.scroll_top, "
+        "l1.content_json, l2.content_json, n.summary_excluded, n.folder_summary "
+        "FROM note_items n LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 AND c.level=0 "
+        "LEFT JOIN note_items l1 ON l1.parent_id=n.id AND l1.compressed=1 AND l1.level=1 "
+        "LEFT JOIN note_items l2 ON l2.parent_id=n.id AND l2.compressed=1 AND l2.level=2 "
         "WHERE n.id=?1 AND n.compressed=0",
         id);
     if (!row.step()) throw std::runtime_error("Sync note is missing.");
@@ -78,6 +81,12 @@ nlohmann::json stored_note_fields(
     else fields["compressed_content"] = encode_base64(row.blob(2));
     fields["read_only"] = row.integer(3) != 0;
     fields["scroll_top"] = row.integer(4);
+    if (row.is_null(5)) fields["l1_content"] = nullptr;
+    else fields["l1_content"] = encode_base64(row.blob(5));
+    if (row.is_null(6)) fields["l2_content"] = nullptr;
+    else fields["l2_content"] = encode_base64(row.blob(6));
+    fields["summary_excluded"] = row.integer(7) != 0;
+    fields["folder_summary"] = row.integer(8) != 0;
     return fields;
 }
 
@@ -165,6 +174,10 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     item.is_summary = statement.integer(7) != 0;
     item.summary_linked = statement.integer(8) != 0;
     item.has_audio = statement.integer(9) != 0;
+    item.has_l1 = statement.integer(10) != 0;
+    item.has_l2 = statement.integer(11) != 0;
+    item.summary_excluded = statement.integer(12) != 0;
+    item.folder_summary = statement.integer(13) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -179,7 +192,7 @@ bool name_taken(
     std::int64_t except_id) {
     storage::SqliteStatement statement = database.prepare(
         "SELECT 1 FROM note_items "
-        "WHERE IFNULL(parent_id, 0) = ?1 AND name = ?2 AND id <> ?3 LIMIT 1");
+        "WHERE IFNULL(parent_id, 0) = ?1 AND name = ?2 AND id <> ?3 AND compressed = 0 LIMIT 1");
     statement.bind(1, parent_key(parent_id));
     statement.bind(2, name);
     statement.bind(3, except_id);
@@ -201,6 +214,15 @@ std::string summary_name(storage::SqliteDatabase& database, std::int64_t parent,
         if (name_taken(database, parent, candidate, 0)) continue;
         require_name(candidate);
         return candidate;
+    }
+}
+
+std::string folder_summary_name(storage::SqliteDatabase& database, std::int64_t folder_id) {
+    for (std::int64_t copy = 1;; ++copy) {
+        auto name = copy == 1 ? std::string("Summary") : "Summary (" + std::to_string(copy) + ")";
+        if (name_taken(database, folder_id, name, 0)) continue;
+        require_name(name);
+        return name;
     }
 }
 
@@ -236,11 +258,14 @@ std::optional<NoteItem> find_item(
     storage::SqliteDatabase& database,
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT n.id, n.parent_id, n.kind, n.name, c.id IS NOT NULL, n.read_only, n.forum_id, "
-        "s.note_id IS NOT NULL, s.session_key IS NOT NULL, "
-        "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id) "
+        "SELECT n.id, n.parent_id, n.kind, n.name, "
+        "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
+        "n.read_only, n.forum_id, (s.note_id IS NOT NULL OR n.folder_summary=1), s.session_key IS NOT NULL, "
+        "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id), "
+        "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
+        "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
+        "n.summary_excluded, n.folder_summary "
         "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id "
-        "LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 "
         "WHERE n.id = ?1 AND n.compressed=0");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
@@ -341,26 +366,43 @@ std::string encode_compressed_note(std::string_view text, std::int64_t id) {
     return compress_document(compact_document(note_document_from_text(text), id, true));
 }
 
+// A summary replacement removes all version rows.
 void delete_compressed_note(storage::SqliteDatabase& database, std::int64_t id) {
     database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1", id).run();
 }
 
-// Caller owns the transaction. An update keeps the compressed row's ID and name.
-void write_compressed_note(
-    storage::SqliteDatabase& database, std::int64_t id, std::string_view blob) {
+void replace_summary_note(storage::SqliteDatabase& database, std::int64_t id, std::string_view blob) {
+    abandon_note_audio(database, id, "summary replaced.");
+    database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
+    delete_compressed_note(database, id);
+    auto update = database.prepare("UPDATE note_items SET content_json=?, read_only=1, scroll_top=0 WHERE id=?");
+    update.bind_blob(1, blob);
+    update.bind(2, id);
+    update.run();
+}
+
+void delete_version_row(storage::SqliteDatabase& database, std::int64_t id, int level) {
+    database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1 AND level=?", id, level).run();
+}
+
+// Caller owns the transaction. An update keeps the version row's ID and scroll position.
+void write_version_row(
+    storage::SqliteDatabase& database, std::int64_t id, int level, std::string_view blob) {
     auto note = database.prepare(
         "SELECT name FROM note_items WHERE id=? AND kind='note' AND compressed=0", id);
     if (!note.step()) fail(NoteFailure::not_found, missing_note_message);
     auto update = database.prepare(
-        "UPDATE note_items SET content_json=? WHERE parent_id=? AND compressed=1");
+        "UPDATE note_items SET content_json=? WHERE parent_id=? AND compressed=1 AND level=?");
     update.bind_blob(1, blob);
     update.bind(2, id);
+    update.bind(3, level);
     update.run();
     if (database.changes() != 0) return;
     auto insert = database.prepare(
-        "INSERT INTO note_items(parent_id, kind, name, content_json, compressed) VALUES (?, 'note', ?, ?, 1)",
+        "INSERT INTO note_items(parent_id, kind, name, content_json, compressed, level) VALUES (?, 'note', ?, ?, 1, ?)",
         id, note.text(0));
     insert.bind_blob(3, blob);
+    insert.bind(4, level);
     insert.run();
 }
 
@@ -556,7 +598,7 @@ bool rebuild_folder_annotations(storage::SqliteDatabase& database, std::optional
     Json doc = {{"type", "doc"}, {"content", Json::array()}};
     std::size_t bytes = doc.dump().size();
     bool eligible = false, limited = false;
-    auto sources = database.prepare("SELECT id, name, content_json FROM note_items WHERE IFNULL(parent_id, 0) = ?1 AND kind = 'note' ORDER BY id", parent_key(parent_id));
+    auto sources = database.prepare("SELECT id, name, content_json FROM note_items WHERE IFNULL(parent_id, 0) = ?1 AND kind = 'note' AND compressed = 0 ORDER BY id", parent_key(parent_id));
     while (!limited && sources.step()) {
         const auto source_id = sources.integer(0);
         const auto name = sources.text(1);
@@ -1101,7 +1143,16 @@ std::optional<nlohmann::json> note_short_summary_catalogue(const std::filesystem
 
 namespace {
 
+constexpr std::string_view level_column =
+    "level INTEGER NOT NULL DEFAULT 0 CHECK (level IN (0, 1, 2) AND (level = 0 OR compressed = 1))";
+constexpr std::string_view summary_excluded_column =
+    "summary_excluded INTEGER NOT NULL DEFAULT 0 CHECK (summary_excluded IN (0, 1))";
+constexpr std::string_view folder_summary_column =
+    "folder_summary INTEGER NOT NULL DEFAULT 0 CHECK (folder_summary IN (0, 1) "
+    "AND (folder_summary = 0 OR (kind = 'note' AND compressed = 0 AND parent_id IS NOT NULL)))";
+
 void create_note_items_table(storage::SqliteDatabase& database, std::string_view name) {
+    // compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
     database.execute("CREATE TABLE IF NOT EXISTS " + std::string(name) + R"sql( (
     id INTEGER PRIMARY KEY AUTOINCREMENT
         CHECK (id > 0 AND id <= 9007199254740991),
@@ -1114,6 +1165,9 @@ void create_note_items_table(storage::SqliteDatabase& database, std::string_view
     read_only INTEGER NOT NULL DEFAULT 0 CHECK (read_only IN (0, 1)),
     scroll_top INTEGER NOT NULL DEFAULT 0 CHECK (scroll_top >= 0 AND scroll_top <= 9007199254740991),
     changed INTEGER NOT NULL DEFAULT 0 CHECK (changed IN (0, 1)),
+)sql" + std::string(level_column) + ",\n"
+    + std::string(summary_excluded_column) + ",\n"
+    + std::string(folder_summary_column) + R"sql(,
     CHECK (
         (kind = 'folder' AND content_json IS NULL)
         OR (kind IN ('note', 'annotation') AND content_json IS NOT NULL)
@@ -1129,12 +1183,16 @@ void create_note_items_indexes(storage::SqliteDatabase& database) {
     database.execute(R"sql(
 CREATE UNIQUE INDEX IF NOT EXISTS note_items_annotation_parent
     ON note_items(IFNULL(parent_id, 0)) WHERE kind = 'annotation';
-CREATE UNIQUE INDEX IF NOT EXISTS note_items_sibling_name
-    ON note_items(IFNULL(parent_id, 0), name);
+DROP INDEX IF EXISTS note_items_sibling_name;
+CREATE UNIQUE INDEX IF NOT EXISTS note_items_original_name
+    ON note_items(IFNULL(parent_id, 0), name) WHERE compressed = 0;
 CREATE INDEX IF NOT EXISTS note_items_parent
     ON note_items(parent_id);
-CREATE UNIQUE INDEX IF NOT EXISTS note_items_compressed_parent
-    ON note_items(parent_id) WHERE compressed = 1;
+DROP INDEX IF EXISTS note_items_compressed_parent;
+CREATE UNIQUE INDEX IF NOT EXISTS note_items_version_parent
+    ON note_items(parent_id, level) WHERE compressed = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS note_items_folder_summary
+    ON note_items(parent_id) WHERE folder_summary = 1;
 CREATE UNIQUE INDEX IF NOT EXISTS note_items_forum_id
     ON note_items(forum_id) WHERE forum_id IS NOT NULL;
 )sql");
@@ -1223,6 +1281,12 @@ void create_note_items_schema(storage::SqliteDatabase& database) {
     create_note_items_table(database, "note_items");
     if (!note_items_has_column(database, "forum_id"))
         database.execute("ALTER TABLE note_items ADD COLUMN forum_id TEXT");
+    if (!note_items_has_column(database, "level"))
+        database.execute("ALTER TABLE note_items ADD COLUMN " + std::string(level_column));
+    if (!note_items_has_column(database, "summary_excluded"))
+        database.execute("ALTER TABLE note_items ADD COLUMN " + std::string(summary_excluded_column));
+    if (!note_items_has_column(database, "folder_summary"))
+        database.execute("ALTER TABLE note_items ADD COLUMN " + std::string(folder_summary_column));
     create_note_items_indexes(database);
     database.execute(R"sql(
 CREATE TABLE IF NOT EXISTS note_summaries (
@@ -1290,11 +1354,14 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT n.id, n.parent_id, n.kind, n.name, c.id IS NOT NULL, n.read_only, n.forum_id, "
-            "s.note_id IS NOT NULL, s.session_key IS NOT NULL, "
-            "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id) "
+            "SELECT n.id, n.parent_id, n.kind, n.name, "
+            "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
+            "n.read_only, n.forum_id, (s.note_id IS NOT NULL OR n.folder_summary=1), s.session_key IS NOT NULL, "
+            "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id), "
+            "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
+            "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
+            "n.summary_excluded, n.folder_summary "
             "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id "
-            "LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 "
             "WHERE n.compressed=0 ORDER BY n.id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
@@ -1385,6 +1452,16 @@ std::int64_t note_import_book(
     }
 }
 
+namespace {
+
+int note_text_level(NoteTextMode mode) {
+    if (mode == NoteTextMode::l1) return 1;
+    if (mode == NoteTextMode::l2) return 2;
+    return 0;
+}
+
+} // namespace
+
 NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id, NoteTextMode mode) {
     try {
         storage::SqliteTransaction transaction(database);
@@ -1393,8 +1470,9 @@ NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id, NoteTex
             "CASE WHEN c.id IS NULL THEN n.content_json ELSE c.content_json END, "
             "COALESCE(c.scroll_top, n.scroll_top) "
             "FROM note_items n LEFT JOIN note_items c "
-            "ON c.parent_id=n.id AND c.compressed=1 AND n.kind='note' AND ?2 "
-            "WHERE n.id=?1 AND n.compressed=0", id, mode == NoteTextMode::compressed ? 1 : 0);
+            "ON c.parent_id=n.id AND c.compressed=1 AND c.level=?3 AND n.kind='note' AND ?2 "
+            "WHERE n.id=?1 AND n.compressed=0", id, mode != NoteTextMode::full_text ? 1 : 0,
+            note_text_level(mode));
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
         if ((statement.text(0) != "note" && statement.text(0) != "annotation")) {
             fail(NoteFailure::invalid, not_note_message);
@@ -1420,7 +1498,7 @@ NoteText note_get_text(
         auto statement = database.prepare(
             "SELECT n.name, c.id, CASE WHEN c.id IS NULL THEN n.content_json ELSE c.content_json END "
             "FROM note_items n LEFT JOIN note_items c "
-            "ON c.parent_id=n.id AND c.compressed=1 AND n.kind='note' AND ?2 "
+            "ON c.parent_id=n.id AND c.compressed=1 AND c.level=0 AND n.kind='note' AND ?2 "
             "WHERE n.id=?1 AND n.compressed=0 AND n.kind IN ('note', 'annotation')",
             id, prefer_compressed ? 1 : 0);
         if (!statement.step()) fail(NoteFailure::not_found, missing_note_message);
@@ -1512,6 +1590,26 @@ NoteItem note_set_read_only(
     }
 }
 
+NoteItem note_set_summary_excluded(
+    storage::SqliteDatabase& database, std::int64_t id, bool excluded,
+    std::string_view sync_machine) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        auto item = find_item(database, id);
+        if (!item) fail(NoteFailure::not_found, missing_note_message);
+        if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
+        database.prepare("UPDATE note_items SET summary_excluded=? WHERE id=?",
+            static_cast<std::int64_t>(excluded), id).run();
+        item->summary_excluded = excluded;
+        if (sync_connected(database, sync_machine))
+            sync_record_note(database, id, {{"summary_excluded", excluded}}, "note.summary_excluded");
+        transaction.commit();
+        return *item;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, change_message);
+    }
+}
+
 void note_save_compressed(
     storage::SqliteDatabase& database, std::int64_t id, std::string_view text,
     std::string_view sync_machine) {
@@ -1521,7 +1619,7 @@ void note_save_compressed(
     try {
         storage::SqliteTransaction transaction(database);
         const auto blob = encode_compressed_note(text, id);
-        write_compressed_note(database, id, blob);
+        write_version_row(database, id, 0, blob);
         if (sync_connected(database, sync_machine))
             sync_record_note(database, id, {{"compressed_content", encode_base64(blob)}}, "note.compress");
         transaction.commit();
@@ -1539,12 +1637,77 @@ bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
         storage::SqliteTransaction transaction(database);
         if (note_get_text(database, id).text != source) return false;
         const auto blob = encode_compressed_note(text, id);
-        write_compressed_note(database, id, blob);
+        write_version_row(database, id, 0, blob);
         event_append_in_transaction(database, EventSeverity::success, success_message);
         if (sync_connected(database, sync_machine))
             sync_record_note(database, id, {{"compressed_content", encode_base64(blob)}}, "note.compress");
         transaction.commit();
         return true;
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, saving_message);
+    }
+}
+
+void note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
+    int level, const nlohmann::json& document, std::string_view success_message,
+    std::string_view sync_machine) {
+    try {
+        storage::SqliteTransaction transaction(database);
+        const auto item = find_item(database, id);
+        if (!item || item->kind != NoteItemKind::note || item->is_summary)
+            fail(NoteFailure::invalid, not_note_message);
+        if (level != 1 && level != 2) fail(NoteFailure::invalid, "Invalid summary level.");
+        if (!document.contains("type") || document["type"] != "doc")
+            fail(NoteFailure::invalid, "Summary content must have a doc root.");
+        const auto blob = compress_document(compact_document(document, id, true));
+        write_version_row(database, id, level, blob);
+        event_append_in_transaction(database, EventSeverity::success, success_message);
+        if (sync_connected(database, sync_machine))
+            sync_record_note(database, id, {{"level", level == 1 ? "l1" : "l2"},
+                {"content", encode_base64(blob)}}, "note.level");
+        transaction.commit();
+    } catch (const std::runtime_error& error) {
+        throw sql_failure(error, NoteFailure::saving, saving_message);
+    }
+}
+
+NoteItem note_commit_folder_summary(storage::SqliteDatabase& database,
+    std::int64_t folder_id, const nlohmann::json& document, std::string_view sync_machine) {
+    if (!document.contains("type") || document["type"] != "doc"
+        || !document.contains("content") || !document["content"].is_array() || !summary_text(document))
+        fail(NoteFailure::invalid, "The summary document has no readable text.");
+    try {
+        const auto blob = compress_document(compact_document(document, 0, true));
+        storage::SqliteTransaction transaction(database);
+        auto folder = database.prepare(
+            "SELECT name, forum_id FROM note_items WHERE id=? AND kind='folder' AND compressed=0", folder_id);
+        if (!folder.step()) fail(NoteFailure::invalid, "That item is not a folder.");
+        if (!folder.is_null(1)) fail(NoteFailure::invalid, managed_folder_message);
+        const auto folder_name = folder.text(0);
+        auto summary = database.prepare(
+            "SELECT id FROM note_items WHERE parent_id=? AND folder_summary=1", folder_id);
+        const bool replacing = summary.step();
+        std::int64_t id;
+        if (replacing) {
+            id = summary.integer(0);
+            replace_summary_note(database, id, blob);
+        } else {
+            const auto name = folder_summary_name(database, folder_id);
+            auto insert = database.prepare(
+                "INSERT INTO note_items(parent_id, kind, name, content_json, read_only, folder_summary) "
+                "VALUES (?, 'note', ?, ?, 1, 1)", folder_id, name);
+            insert.bind_blob(3, blob);
+            insert.run();
+            id = database.last_insert_rowid();
+        }
+        rebuild_folder_annotations(database, folder_id, false);
+        event_append_in_transaction(database, EventSeverity::success, "Summary ready for “" + folder_name
+            + "” (folder " + std::to_string(folder_id) + ", note " + std::to_string(id) + ").");
+        if (replacing) sync_flag_note(database, sync_machine, id);
+        else if (sync_connected(database, sync_machine)) sync_record_note_create(database, id);
+        const auto item = *find_item(database, id);
+        transaction.commit();
+        return item;
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, saving_message);
     }
@@ -1590,13 +1753,7 @@ NoteItem note_commit_summary(storage::SqliteDatabase& database, const FullSessio
         std::int64_t id;
         if (target.target_note_id) {
             id = *target.target_note_id;
-            abandon_note_audio(database, id, "summary replaced.");
-            database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
-            delete_compressed_note(database, id);
-            auto update = database.prepare("UPDATE note_items SET content_json=?, read_only=1, scroll_top=0 WHERE id=?");
-            update.bind_blob(1, blob);
-            update.bind(2, id);
-            update.run();
+            replace_summary_note(database, id, blob);
         } else {
             const auto name = summary_name(database, target.parent_id, label, now);
             auto insert = database.prepare("INSERT INTO note_items(parent_id, kind, name, content_json, read_only) VALUES (?, 'note', ?, ?, 1)");
@@ -2082,10 +2239,10 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
                     const auto blob = compressed.blob(1);
                     if (compressed.step()) fail(NoteFailure::invalid, not_export_message);
                     (void)parse_compressed_note(blob, row.integer(0));
-                    write_compressed_note(database, id, blob);
+                    write_version_row(database, id, 0, blob);
                 }
             } else if (!row.is_null(6)) {
-                write_compressed_note(database, id, encode_compressed_note(row.text(6), id));
+                write_version_row(database, id, 0, encode_compressed_note(row.text(6), id));
             }
             auto clips = file.prepare("SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", row.integer(0));
             while (clips.step()) {
@@ -2240,7 +2397,7 @@ void apply_compressed_content(storage::SqliteDatabase& database, std::int64_t id
     if (legacy) field = record.find("compressed_text");
     if (field == record.end() || field->is_null()) {
         if (required) fail(NoteFailure::invalid, "The incoming note record is invalid.");
-        delete_compressed_note(database, id);
+        delete_version_row(database, id, 0);
         return;
     }
     if (!field->is_string()) fail(NoteFailure::invalid, "The incoming note record is invalid.");
@@ -2258,7 +2415,7 @@ void apply_compressed_content(storage::SqliteDatabase& database, std::int64_t id
         }
         (void)parse_compressed_note(blob, id);
     }
-    write_compressed_note(database, id, blob);
+    write_version_row(database, id, 0, blob);
 }
 
 void apply_insert_note(storage::SqliteDatabase& database, const nlohmann::json& record,

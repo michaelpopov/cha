@@ -408,6 +408,10 @@ public:
     void save_compressed_note(std::int64_t id, std::string_view text);
     bool commit_compressed_note(std::int64_t id, std::string_view source,
         std::string_view text, std::string_view success_message);
+    void commit_note_level(std::int64_t id, int level, const nlohmann::json& document,
+        std::string_view success_message);
+    [[nodiscard]] NoteItem commit_folder_summary(std::int64_t folder_id, const nlohmann::json& document);
+    [[nodiscard]] NoteItem set_note_summary_excluded(std::int64_t id, bool excluded);
     [[nodiscard]] NoteItem rename_note_item(
         std::int64_t id,
         std::string_view name);
