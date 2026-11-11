@@ -6,6 +6,10 @@
     "name": "Research",
     "is_summary": false,
     "summary_linked": false,
+    "has_l1": false,
+    "has_l2": false,
+    "summary_excluded": false,
+    "folder_summary": false,
     "has_compressed": false,
     "has_audio": false,
     "read_only": false

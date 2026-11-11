@@ -272,6 +272,10 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
     EXPECT_EQ(listing.json, nlohmann::json({{"items", application_->list_note_items(epoch)}}));
     bool annotation_read = false;
     for (const auto& item : listing.json.at("items")) {
+        EXPECT_EQ(item.at("has_l1"), false);
+        EXPECT_EQ(item.at("has_l2"), false);
+        EXPECT_EQ(item.at("summary_excluded"), false);
+        EXPECT_EQ(item.at("folder_summary"), false);
         if (item.at("kind") == "folder") continue;
         const auto id = item.at("id").get<std::int64_t>();
         EXPECT_NE(id, compressed_id);

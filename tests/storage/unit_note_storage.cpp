@@ -251,6 +251,10 @@ TEST_F(NoteStorageTest, SummaryReplacementKeepsIdentityAndClearsAudioCommentsAnd
     auto wire = nlohmann::json(first);
     EXPECT_EQ(wire["is_summary"], true);
     EXPECT_EQ(wire["summary_linked"], true);
+    EXPECT_EQ(wire["has_l1"], false);
+    EXPECT_EQ(wire["has_l2"], false);
+    EXPECT_EQ(wire["summary_excluded"], false);
+    EXPECT_EQ(wire["folder_summary"], false);
     EXPECT_THROW((void)note_rename(*database_, first.id, "Topic"), NoteError);
     (void)note_set_read_only(*database_, first.id, false);
     (void)note_save(*database_, first.id, summary_document("User edits"));

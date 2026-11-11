@@ -1,5 +1,5 @@
 import { getSchema } from '@tiptap/core';
-import { DOMParser as NoteParser } from '@tiptap/pm/model';
+import { DOMParser as NoteParser, type Node as ProseMirrorNode } from '@tiptap/pm/model';
 
 import { flattenClipboardTable, notesExtensions } from './editor';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
@@ -7,7 +7,7 @@ import { notePageHtml } from './pageImport';
 
 export const summaryConversionError = 'The generated summary could not be converted to a note. Save summary again.';
 
-export function summaryDocument(markdown: string): Record<string, unknown> {
+function markdownNoteNode(markdown: string): ProseMirrorNode {
   if (new TextEncoder().encode(markdown).length > noteDocumentByteLimit)
     throw new Error(summaryConversionError);
   const body = document.createElement('div');
@@ -21,7 +21,24 @@ export function summaryDocument(markdown: string): Record<string, unknown> {
     }
     flattenClipboardTable(table);
   }
-  const parsed = NoteParser.fromSchema(getSchema(notesExtensions())).parse(body);
+  return NoteParser.fromSchema(getSchema(notesExtensions())).parse(body);
+}
+
+function checkedDocument(node: ProseMirrorNode): Record<string, unknown> {
+  const result = node.toJSON() as Record<string, unknown>;
+  if (noteDocumentByteLength(result) > noteDocumentByteLimit)
+    throw new Error(summaryConversionError);
+  return result;
+}
+
+export function markdownNoteDocument(markdown: string): Record<string, unknown> {
+  const parsed = markdownNoteNode(markdown);
+  if (!parsed.textContent.trim()) throw new Error(summaryConversionError);
+  return checkedDocument(parsed);
+}
+
+export function summaryDocument(markdown: string): Record<string, unknown> {
+  const parsed = markdownNoteNode(markdown);
   const titles = ['short summary', 'long summary'];
   let chapter = 0;
   let readable = false;
@@ -37,8 +54,5 @@ export function summaryDocument(markdown: string): Record<string, unknown> {
     }
   });
   if (chapter !== 2 || !readable) throw new Error(summaryConversionError);
-  const result = parsed.toJSON() as Record<string, unknown>;
-  if (noteDocumentByteLength(result) > noteDocumentByteLimit)
-    throw new Error(summaryConversionError);
-  return result;
+  return checkedDocument(parsed);
 }

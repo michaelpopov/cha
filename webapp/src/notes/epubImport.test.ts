@@ -1,6 +1,7 @@
 import { getSchema } from '@tiptap/core';
 import { zipSync, strToU8 } from 'fflate';
 import { describe, expect, it } from 'vitest';
+import { noteItem } from '../test/notes';
 
 import type { NoteItem } from '../api/client';
 import { prepareEpubImport } from './epubImport';
@@ -373,7 +374,7 @@ describe('EPUB import', () => {
 
   it('cleans Unicode names, uses fallbacks and avoids existing root names', () => {
     const result = prepareEpubImport(archive(book('<h1> </h1><h2>' + '😀'.repeat(220) + '</h2>', '<dc:title> </dc:title><dc:title> Book\n Title </dc:title>')), 'file.epub', [
-      { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Book Title' },
+      noteItem({ id: 1, kind: 'folder', name: 'Book Title' }),
     ]);
     expect(result.name).toBe('Book Title 1');
     expect(Array.from(result.notes[0].name)).toHaveLength(195);
@@ -385,10 +386,10 @@ describe('EPUB import', () => {
   it('checks book names only in the selected destination', () => {
     const bytes = archive(book('<p>Text</p>', '<dc:title>Book</dc:title>'));
     const items: NoteItem[] = [
-      { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Book' },
-      { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 3, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 2, kind: 'folder', name: 'Book' },
-      { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Other' },
+      noteItem({ id: 1, kind: 'folder', name: 'Book' }),
+      noteItem({ id: 2, kind: 'folder', name: 'Research' }),
+      noteItem({ id: 3, parent_id: 2, kind: 'folder', name: 'Book' }),
+      noteItem({ id: 4, kind: 'folder', name: 'Other' }),
     ];
     expect(prepareEpubImport(bytes, 'file.epub', items, 2)).toMatchObject({ parent_id: 2, name: 'Book 1' });
     expect(prepareEpubImport(bytes, 'file.epub', items, 4)).toMatchObject({ parent_id: 4, name: 'Book' });

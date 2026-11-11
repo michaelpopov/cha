@@ -852,10 +852,47 @@ export interface components {
             forum_id?: string;
             is_summary: boolean;
             summary_linked: boolean;
+            has_l1: boolean;
+            has_l2: boolean;
+            summary_excluded: boolean;
+            folder_summary: boolean;
             has_compressed: boolean;
             has_audio: boolean;
             read_only: boolean;
             name: string;
+        };
+        SummaryPlan: {
+            notes: components["schemas"]["SummaryTarget"][];
+        };
+        SummaryTarget: {
+            id: components["schemas"]["NoteId"];
+            name: string;
+            has_l1: boolean;
+            has_l2: boolean;
+        };
+        SummaryGenerateRequest: {
+            id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            part: "l1" | "l2" | "l3_section" | "l3_overview";
+            text?: string;
+        };
+        SummaryGenerated: {
+            markdown: string;
+        };
+        SummaryCommitRequest: {
+            id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            part: "l1" | "l2" | "l3";
+            document: components["schemas"]["NoteDocument"];
+        };
+        SummaryAbandonRequest: {
+            id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            part: "l1" | "l2" | "l3";
+        };
+        NoteSummaryExcludedRequest: {
+            id: components["schemas"]["NoteId"];
+            excluded: boolean;
         };
         SessionSummaryGenerated: {
             run_id: components["schemas"]["NoteId"];
@@ -899,7 +936,7 @@ export interface components {
             pending: boolean;
         };
         /** @enum {string} */
-        NoteTextMode: "full_text" | "compressed";
+        NoteTextMode: "full_text" | "compressed" | "l1" | "l2";
         NoteContent: {
             id: components["schemas"]["NoteId"];
             document_id: components["schemas"]["NoteId"];

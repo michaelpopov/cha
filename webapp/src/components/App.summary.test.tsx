@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChaError, type NoteItem, type SessionSummaryGenerated } from '../api/client';
 import { bootstrapFixture, fixtureClient } from '../test/fixtures';
+import { noteItem } from '../test/notes';
 import { noteSaveDelayMs } from '../notes/useNoteSave';
 import { summaryDocument } from '../notes/summaryImport';
 import { App } from './App';
@@ -16,8 +17,7 @@ function deferred<T>() {
 }
 const documentFor = (text: string) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
 const generated: SessionSummaryGenerated = { run_id: 1, target_note_id: 4, parent_id: 10, markdown: '# Short summary\n\nOverview.\n\n**Keywords:** topic\n\n# Long summary\n\nNew summary' };
-const summary: NoteItem = { id: 4, parent_id: null, name: 'Plan', kind: 'note', is_summary: true,
-  summary_linked: true, has_compressed: false, has_audio: false, read_only: false };
+const summary: NoteItem = noteItem({ id: 4, name: 'Plan', is_summary: true, summary_linked: true });
 function editor(): Editor {
   const element = document.querySelector('.ProseMirror') as (HTMLElement & { chaEditor: Editor });
   if (!element?.chaEditor) throw new Error('Editor not ready');

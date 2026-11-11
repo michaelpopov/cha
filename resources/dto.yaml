@@ -1960,7 +1960,7 @@ components:
     NoteItem:
       type: object
       additionalProperties: false
-      required: [id, parent_id, kind, name, has_compressed, has_audio, read_only, is_summary, summary_linked]
+      required: [id, parent_id, kind, name, has_compressed, has_audio, read_only, is_summary, summary_linked, has_l1, has_l2, summary_excluded, folder_summary]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         parent_id:
@@ -1972,6 +1972,10 @@ components:
           type: string
         is_summary: {type: boolean}
         summary_linked: {type: boolean}
+        has_l1: {type: boolean}
+        has_l2: {type: boolean}
+        summary_excluded: {type: boolean}
+        folder_summary: {type: boolean}
         has_compressed:
           type: boolean
         has_audio:
@@ -1981,6 +1985,74 @@ components:
         name:
           type: string
           minLength: 1
+
+    SummaryPlan:
+      type: object
+      additionalProperties: false
+      required: [notes]
+      properties:
+        notes:
+          type: array
+          items: {$ref: "#/components/schemas/SummaryTarget"}
+
+    SummaryTarget:
+      type: object
+      additionalProperties: false
+      required: [id, name, has_l1, has_l2]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        name: {type: string, minLength: 1}
+        has_l1: {type: boolean}
+        has_l2: {type: boolean}
+
+    SummaryGenerateRequest:
+      type: object
+      additionalProperties: false
+      required: [id, part]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        part: {type: string, enum: [l1, l2, l3_section, l3_overview]}
+        text: {type: string, minLength: 1}
+      if:
+        properties:
+          part: {const: l3_overview}
+      then:
+        required: [text]
+      else:
+        properties:
+          text: false
+
+    SummaryGenerated:
+      type: object
+      additionalProperties: false
+      required: [markdown]
+      properties:
+        markdown: {type: string}
+
+    SummaryCommitRequest:
+      type: object
+      additionalProperties: false
+      required: [id, part, document]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        part: {type: string, enum: [l1, l2, l3]}
+        document: {$ref: "#/components/schemas/NoteDocument"}
+
+    SummaryAbandonRequest:
+      type: object
+      additionalProperties: false
+      required: [id, part]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        part: {type: string, enum: [l1, l2, l3]}
+
+    NoteSummaryExcludedRequest:
+      type: object
+      additionalProperties: false
+      required: [id, excluded]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        excluded: {type: boolean}
 
     SessionSummaryGenerated:
       type: object
@@ -2072,7 +2144,7 @@ components:
           type: boolean
     NoteTextMode:
       type: string
-      enum: [full_text, compressed]
+      enum: [full_text, compressed, l1, l2]
     NoteContent:
       type: object
       additionalProperties: false

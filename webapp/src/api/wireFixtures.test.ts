@@ -13,6 +13,7 @@ import {
   isVoiceInputSettings,
   type SessionSnapshot,
 } from './client';
+import { isNoteItem, isSummaryGenerated, isSummaryPlan } from './noteGuards';
 import { isAppendEvent } from './events';
 import { isNativeSessionEvent } from './nativeEvents';
 import { nativeProtocolVersion } from './nativeBridge';
@@ -76,6 +77,19 @@ describe('C++ wire fixtures', () => {
       (loadFixture('native-reply-command.json') as { result: unknown }).result,
     )).toBe(true);
     expect(isNativeSessionEvent(loadFixture('native-event-append.json'))).toBe(true);
+  });
+
+  it('accepts the notes wire fixture and enforces the folder summary flag', () => {
+    const fixture = loadFixture('notes-contract.json') as {
+      items: Record<string, unknown>[];
+      summary_plan: unknown;
+      summary_generated: unknown;
+    };
+    expect(fixture.items.every(isNoteItem)).toBe(true);
+    expect(isNoteItem({ ...fixture.items[0], has_l1: undefined })).toBe(false);
+    expect(isNoteItem({ ...fixture.items[1], folder_summary: true })).toBe(false);
+    expect(isSummaryPlan(fixture.summary_plan)).toBe(true);
+    expect(isSummaryGenerated(fixture.summary_generated)).toBe(true);
   });
 
   it('loads DTOs from the transport-neutral schema rather than HTTP paths', () => {

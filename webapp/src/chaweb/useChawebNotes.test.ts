@@ -26,7 +26,7 @@ it('derives a flat picker from immediate readable parents, with deterministic fu
     noteItem({ id: 2, parent_id: 7, kind: 'annotation', name: 'ANNOTATIONS' }),
     noteItem({ id: 1, parent_id: 5, is_summary: true, summary_linked: true }),
     noteItem({ id: 11, kind: 'folder', name: 'Projects / CHA' }),
-    noteItem({ id: 12, parent_id: 11, read_only: true }),
+    noteItem({ id: 12, parent_id: 11, read_only: true, is_summary: true, folder_summary: true }),
   ];
   const folders = noteFolders(items);
   expect(folders[0]).toEqual({ id: 'root', name: 'Top level' });

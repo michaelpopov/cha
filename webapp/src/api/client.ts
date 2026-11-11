@@ -98,6 +98,11 @@ export type FolderStoreOperation = components['schemas']['FolderStoreOperation']
 export type ActivityEvent = components['schemas']['ActivityEvent'];
 export type ActivityEventList = components['schemas']['ActivityEventList'];
 export type NoteContent = components['schemas']['NoteContent'];
+export type SummaryPlan = components['schemas']['SummaryPlan'];
+export type SummaryTarget = components['schemas']['SummaryTarget'];
+export type SummaryGenerated = components['schemas']['SummaryGenerated'];
+export type SummaryGeneratePart = components['schemas']['SummaryGenerateRequest']['part'];
+export type SummaryCommitPart = components['schemas']['SummaryCommitRequest']['part'];
 export type NoteTextMode = components['schemas']['NoteTextMode'];
 
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
@@ -200,6 +205,12 @@ export interface NotesClient {
   compressNote: (id: number, epoch: number, skipIneligible?: boolean) => Promise<NoteCompressionStartResult>;
   compressionStatus: (id: number, epoch: number) => Promise<NoteCompressionStatus>;
   cancelCompression: (id: number, epoch: number) => Promise<void>;
+  summaryPlan(id: number): Promise<SummaryPlan>;
+  summaryGenerate(id: number, part: SummaryGeneratePart, text?: string): Promise<string>;
+  summaryCommit(id: number, part: SummaryCommitPart, document: Record<string, unknown>): Promise<void>;
+  summaryAbandon(id: number, part: SummaryCommitPart): Promise<void>;
+  summaryCancel(): Promise<void>;
+  setNoteSummaryExcluded(id: number, excluded: boolean): Promise<NoteItem>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;
 }

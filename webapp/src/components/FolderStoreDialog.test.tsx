@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChaError, type FolderStoreOperation, type NoteItem, type NotesClient } from '../api/client';
 import { fixtureClient } from '../test/fixtures';
 import { FolderStoreDialog } from './FolderStoreDialog';
+import { noteItem } from '../test/notes';
 
 type Operation = Extract<FolderStoreOperation, { present: true }>;
-const source: NoteItem = { id: 11, parent_id: null, kind: 'folder', name: 'Research', is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, read_only: false };
+const source: NoteItem = noteItem({ id: 11, kind: 'folder', name: 'Research' });
 const openaiChoice = { service: 'openai' as const, api_key_id: 'key1', api_key_name: 'Personal OpenAI' };
 const googleChoice = { service: 'google' as const, api_key_id: 'key2', api_key_name: 'Personal Google' };
 const choices = [openaiChoice];

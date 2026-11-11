@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { summaryDocument } from './summaryImport';
+import { markdownNoteDocument, summaryConversionError, summaryDocument } from './summaryImport';
 import { noteDocumentByteLimit } from './documentBytes';
 
 function texts(node: Record<string, unknown>): string {
@@ -87,5 +87,35 @@ describe('summaryDocument', () => {
     expect(() => summaryDocument('a'.repeat(noteDocumentByteLimit + 1))).toThrow();
     // Backslashes and quotes require JSON escaping and can cross the limit after parsing.
     expect(() => convertSummary('```\n' + '"'.repeat(noteDocumentByteLimit / 2) + '\n```')).toThrow();
+  });
+});
+
+describe('markdownNoteDocument', () => {
+  it('converts headings, lists, marks, and links without requiring chapters', () => {
+    const doc = markdownNoteDocument('## Findings\n\n- **Bold** and *emphasis* [source](https://example.org/a)');
+    const json = JSON.stringify(doc);
+    for (const type of ['heading', 'bulletList', 'bold', 'italic', 'link']) expect(json).toContain(type);
+    expect(json).toContain('https://example.org/a');
+    expect(texts(doc)).toBe('Findings\nBold and emphasis source');
+  });
+
+  it('flattens each table row into a paragraph with tab separators', () => {
+    const doc = markdownNoteDocument('| Key | Value |\n| --- | --- |\n| One | Two |');
+    const rows = doc.content as Record<string, unknown>[];
+    expect(rows.map(row => [row.type, texts(row)])).toEqual([
+      ['paragraph', 'Key\tValue'], ['paragraph', 'One\tTwo'],
+    ]);
+  });
+
+  it.each(['<table><tr><td colspan="2">Merged</td></tr></table>', ' ', '![](https://example.org/image.png)'])(
+    'rejects unconvertible content %s', markdown => {
+      expect(() => markdownNoteDocument(markdown)).toThrow();
+    },
+  );
+
+  it('checks both Markdown and encoded document size', () => {
+    expect(() => markdownNoteDocument('é'.repeat(noteDocumentByteLimit / 2 + 1))).toThrow(summaryConversionError);
+    const code = '```\n' + '"'.repeat(noteDocumentByteLimit / 2) + '\n```';
+    expect(() => markdownNoteDocument(code)).toThrow(summaryConversionError);
   });
 });

@@ -428,6 +428,12 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     contextEpoch: () => 1,
     compressionStatus: async () => ({ pending: false }),
     cancelCompression: async () => undefined,
+    summaryPlan: unavailable('notes.summaryPlan'),
+    summaryGenerate: unavailable('notes.summaryGenerate'),
+    summaryCommit: unavailable('notes.summaryCommit'),
+    summaryAbandon: unavailable('notes.summaryAbandon'),
+    summaryCancel: unavailable('notes.summaryCancel'),
+    setNoteSummaryExcluded: unavailable('notes.setSummaryExcluded'),
     compressNote: unavailable('notes.compressStart'),
     ...overrides,
     saveNote: async (id, document) => {

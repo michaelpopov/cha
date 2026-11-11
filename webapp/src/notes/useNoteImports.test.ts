@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/core';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { noteItem } from '../test/notes';
 
 import { ChaError, type NoteItem, type NotePage } from '../api/client';
 import { fixtureClient } from '../test/fixtures';
@@ -10,8 +11,7 @@ import { useNoteImports } from './useNoteImports';
 import { useNoteLeave } from './useNoteLeave';
 import type { NoteSaveHandle } from './useNoteSave';
 
-const note: NoteItem = { id: 9, parent_id: null, kind: 'note', name: 'New note', read_only: false,
-  is_summary: false, summary_linked: false, has_compressed: false, has_audio: false };
+const note: NoteItem = noteItem({ id: 9, name: 'New note' });
 const page: NotePage = { url: 'https://youtu.be/video', title: 'Video', markdown: 'Transcript' };
 
 function pending<T>() {

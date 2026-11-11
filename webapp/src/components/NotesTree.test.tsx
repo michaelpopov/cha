@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { noteItem } from '../test/notes';
 
 import {
   ChaError,
@@ -11,10 +12,10 @@ import {
 } from '../api/client';
 import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions } from './NotesTree';
 
-const study: NoteItem = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Study' };
-const aardvark: NoteItem = { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Aardvark' };
-const philosophy: NoteItem = { id: 3, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'folder', name: 'Philosophy' };
-const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 3, kind: 'note', name: 'Plan' };
+const study: NoteItem = noteItem({ id: 1, kind: 'folder', name: 'Study' });
+const aardvark: NoteItem = noteItem({ id: 2, name: 'Aardvark' });
+const philosophy: NoteItem = noteItem({ id: 3, parent_id: 1, kind: 'folder', name: 'Philosophy' });
+const plan: NoteItem = noteItem({ id: 4, parent_id: 3, name: 'Plan' });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -32,6 +33,12 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     commitSessionSummary: async () => { throw new Error('sessionSummary.commit'); },
     abandonSessionSummary: async () => undefined,
     contextEpoch: () => 1,
+    summaryPlan: async () => ({ notes: [] }),
+    summaryGenerate: async () => { throw new Error('notes.summaryGenerate'); },
+    summaryCommit: async () => undefined,
+    summaryAbandon: async () => undefined,
+    summaryCancel: async () => undefined,
+    setNoteSummaryExcluded: async () => { throw new Error('notes.setSummaryExcluded'); },
     compressionStatus: async () => ({ pending: false }),
     cancelCompression: async () => undefined,
     listNoteItems: async () => [],
@@ -390,8 +397,8 @@ describe('Notes tree', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Importing EPUB…');
     expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
     items = [aardvark,
-      { id: 10, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Book' },
-      { id: 11, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 10, kind: 'note', name: '001. First' },
+      noteItem({ id: 10, kind: 'folder', name: 'Book' }),
+      noteItem({ id: 11, parent_id: 10, name: '001. First' }),
     ];
     await act(async () => pending.resolve(10));
     expect(await screen.findByRole('treeitem', { name: '001. First' })).toBeInTheDocument();
@@ -451,7 +458,7 @@ describe('Notes tree', () => {
 
   it('imports a folder into the selected folder and reveals it', async () => {
     let items = [study, philosophy];
-    const imported: NoteItem = { id: 10, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: philosophy.id, kind: 'folder', name: 'Stoics' };
+    const imported: NoteItem = noteItem({ id: 10, parent_id: philosophy.id, kind: 'folder', name: 'Stoics' });
     const transfer = {
       exportFolder: vi.fn(async () => undefined),
       importFolder: vi.fn(async () => { items = [...items, imported]; }),
@@ -480,8 +487,8 @@ describe('Notes tree', () => {
     let items = [study, philosophy, aardvark];
     const importEpub = vi.fn(async () => {
       items = [...items,
-        { id: 10, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: philosophy.id, kind: 'folder', name: 'Book' },
-        { id: 11, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 10, kind: 'note', name: '001. First' },
+        noteItem({ id: 10, parent_id: philosophy.id, kind: 'folder', name: 'Book' }),
+        noteItem({ id: 11, parent_id: 10, name: '001. First' }),
       ];
       return 10;
     });
@@ -504,7 +511,7 @@ describe('Notes tree', () => {
   });
 
   it('retries only the listing after an imported book commits but the refresh fails', async () => {
-    const folder: NoteItem = { id: 10, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Book' };
+    const folder: NoteItem = noteItem({ id: 10, kind: 'folder', name: 'Book' });
     const importEpub = vi.fn(async () => 10);
     const listNoteItems = vi.fn().mockResolvedValueOnce([])
       .mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce([folder]);
@@ -592,11 +599,11 @@ describe('Notes tree', () => {
 
   it('suggests available names and creates notes in the chosen folder after confirmation', async () => {
     let current: NoteItem[] = [study, philosophy,
-      { id: 7, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 3, kind: 'folder', name: 'New note' },
-      { id: 8, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 3, kind: 'note', name: 'New note 2' }];
+      noteItem({ id: 7, parent_id: 3, kind: 'folder', name: 'New note' }),
+      noteItem({ id: 8, parent_id: 3, name: 'New note 2' })];
     let nextId = 10;
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
-      const item = { id: nextId++, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id, kind, name };
+      const item = noteItem({ id: nextId++, parent_id, kind, name });
       current = [...current, item];
       return item;
     });
@@ -646,9 +653,9 @@ describe('Notes tree', () => {
   });
 
   it('creates numbered folders without leaving the open note', async () => {
-    let current: NoteItem[] = [study, { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'folder', name: 'New folder' }];
+    let current: NoteItem[] = [study, noteItem({ id: 5, parent_id: 1, kind: 'folder', name: 'New folder' })];
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
-      const item = { id: 6, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id, kind, name };
+      const item = noteItem({ id: 6, parent_id, kind, name });
       current = [...current, item];
       return item;
     });
@@ -666,7 +673,7 @@ describe('Notes tree', () => {
 
   it('disables menus while creating and captures the destination', async () => {
     const leave = deferred<boolean>();
-    const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => ({ id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id, kind, name }));
+    const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => (noteItem({ id: 9, parent_id, kind, name })));
     renderTree({ notes: client({ listNoteItems: async () => [study, aardvark], createNoteItem }), onBeforeCreateNote: () => leave.promise });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'New note');
@@ -682,7 +689,7 @@ describe('Notes tree', () => {
     let failRefresh = false;
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
       failRefresh = true;
-      return { id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id, kind, name };
+      return noteItem({ id: 9, parent_id, kind, name });
     });
     const { onOpenNote } = renderTree({ notes: client({
       listNoteItems: async () => {
@@ -706,7 +713,7 @@ describe('Notes tree', () => {
   it('keeps creation errors and the entered name in the dialog for retry', async () => {
     const createNoteItem = vi.fn()
       .mockRejectedValueOnce(new ChaError('invalid_argument', 'That name is already used.'))
-      .mockResolvedValueOnce({ id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'folder', name: 'Archive' });
+      .mockResolvedValueOnce(noteItem({ id: 9, parent_id: 1, kind: 'folder', name: 'Archive' }));
     renderTree({ notes: client({ listNoteItems: async () => [study], createNoteItem }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'New folder');
@@ -724,7 +731,7 @@ describe('Notes tree', () => {
   it.each(['note', 'folder'] as const)('creates a %s with the entered name', async (kind) => {
     let current: NoteItem[] = [study];
     const createNoteItem = vi.fn(async (parent_id: number | null, kind: NoteItem['kind'], name: string) => {
-      const item = { id: 9, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id, kind, name };
+      const item = noteItem({ id: 9, parent_id, kind, name });
       current = [...current, item];
       return item;
     });
@@ -793,7 +800,7 @@ describe('Notes tree', () => {
 
   it('renames the active note without reopening or leaving it', async () => {
     const renameNoteItem = vi.fn(async (id: number, name: string) => (
-      { id, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note' as const, name }
+      noteItem({ id, name })
     ));
     let renamed = false;
     const onBeforeCreateNote = vi.fn(async () => true);

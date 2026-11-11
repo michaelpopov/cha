@@ -21,11 +21,12 @@ import { useNoteImports } from '../notes/useNoteImports';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
 import type { AppAction } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
+import { noteItem } from '../test/notes';
 import { NotesScreen } from './NotesScreen';
 import { TransliterationProvider } from './TransliterationMode';
 
-const plan: NoteItem = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Plan' };
-const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Essay' };
+const plan: NoteItem = noteItem({ id: 4, name: 'Plan' });
+const essay: NoteItem = noteItem({ id: 5, name: 'Essay' });
 
 function documentWith(text: string) {
   return {
@@ -783,13 +784,13 @@ describe('Notes screen', () => {
     [[], 'Title', 'Title'],
     [[], 'New note', 'New note'],
   ] as const)('chooses an available title among siblings %j', async (names, title, expected) => {
-    const folder: NoteItem = { id: 3, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Folder' };
+    const folder: NoteItem = noteItem({ id: 3, kind: 'folder', name: 'Folder' });
     const original = { ...plan, parent_id: folder.id, name: 'New note' };
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
     render(<Harness
       items={[folder, original,
-        { id: 20, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Title' },
-        ...names.map((name, index) => ({ id: 30 + index, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: folder.id, kind: 'note' as const, name })),
+        noteItem({ id: 20, name: 'Title' }),
+        ...names.map((name, index) => (noteItem({ id: 30 + index, parent_id: folder.id, name }))),
       ]}
       getNote={async (id) => ({ id, document_id: id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}

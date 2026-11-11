@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { strToU8, zipSync } from 'fflate';
+import { noteItem } from '../test/notes';
 
 import { ChaError, ChaProtocolError, isCommandResult, type SessionSnapshot } from './client';
 import { createEnvelopeNativeBridge, createFakeNativeBridge } from './nativeBridge';
@@ -275,7 +276,7 @@ describe('native CHA client', () => {
   });
 
   it('accepts annotation metadata and the creation flag', async () => {
-    const annotation = { id: 9, parent_id: null, kind: 'annotation', name: 'ANNOTATIONS', read_only: true, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false };
+    const annotation = noteItem({ id: 9, kind: 'annotation', name: 'ANNOTATIONS', read_only: true });
     const client = createNativeChaClient(createFakeNativeBridge({
       'notes.list': () => ({ items: [annotation] }),
       'notes.save': () => ({ annotation_created: true }),
@@ -668,9 +669,57 @@ describe('native CHA client', () => {
 });
 
 describe('notes native client', () => {
-  const folder = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Plan' };
-  const note = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'note', name: 'Draft' };
+  const folder = noteItem({ id: 1, kind: 'folder', name: 'Plan' });
+  const note = noteItem({ id: 4, parent_id: 1, name: 'Draft' });
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
+
+  it('calls the six summary methods with their wire parameters', async () => {
+    const plan = { notes: [{ id: 4, name: 'Draft', has_l1: true, has_l2: false }] };
+    const excluded = { ...note, summary_excluded: true };
+    const handlers = {
+      'notes.summaryPlan': vi.fn(() => plan),
+      'notes.summaryGenerate': vi.fn(() => ({ markdown: '**Summary**' })),
+      'notes.summaryCommit': vi.fn(() => ({})),
+      'notes.summaryAbandon': vi.fn(() => ({})),
+      'notes.summaryCancel': vi.fn(() => ({})),
+      'notes.setSummaryExcluded': vi.fn(() => excluded),
+    };
+    const client = clientFor(handlers);
+    expect(await client.summaryPlan(1)).toEqual(plan);
+    expect(await client.summaryGenerate(4, 'l1')).toBe('**Summary**');
+    expect(await client.summaryGenerate(1, 'l3_overview', '# Draft')).toBe('**Summary**');
+    expect(await client.summaryCommit(4, 'l1', document)).toBeUndefined();
+    expect(await client.summaryAbandon(1, 'l3')).toBeUndefined();
+    expect(await client.summaryCancel()).toBeUndefined();
+    expect(await client.setNoteSummaryExcluded(4, true)).toEqual(excluded);
+
+    expect(handlers['notes.summaryPlan']).toHaveBeenCalledExactlyOnceWith({ id: 1 });
+    expect(handlers['notes.summaryGenerate'].mock.calls).toEqual([
+      [{ id: 4, part: 'l1' }],
+      [{ id: 1, part: 'l3_overview', text: '# Draft' }],
+    ]);
+    expect(handlers['notes.summaryCommit']).toHaveBeenCalledExactlyOnceWith({ id: 4, part: 'l1', document });
+    expect(handlers['notes.summaryAbandon']).toHaveBeenCalledExactlyOnceWith({ id: 1, part: 'l3' });
+    expect(handlers['notes.summaryCancel']).toHaveBeenCalledExactlyOnceWith({});
+    expect(handlers['notes.setSummaryExcluded']).toHaveBeenCalledExactlyOnceWith({ id: 4, excluded: true });
+  });
+
+  it('rejects malformed replies to all six summary methods', async () => {
+    const client = clientFor({
+      'notes.summaryPlan': () => ({ notes: [{ id: 4, name: 'Draft', has_l1: 'true', has_l2: false }] }),
+      'notes.summaryGenerate': () => ({ markdown: 42 }),
+      'notes.summaryCommit': () => null,
+      'notes.summaryAbandon': () => ({ unexpected: true }),
+      'notes.summaryCancel': () => [],
+      'notes.setSummaryExcluded': () => ({ ...note, folder_summary: true }),
+    });
+    await expect(client.summaryPlan(1)).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryGenerate(4, 'l1')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryCommit(4, 'l1', document)).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryAbandon(1, 'l3')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryCancel()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.setNoteSummaryExcluded(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
 
   it('requests a compressed document by the logical note ID', async () => {
     const content = { id: 4, document_id: 8, document };
@@ -844,8 +893,8 @@ describe('notes native client', () => {
     const write = vi.fn(() => ({ id: 12 }));
     const client = clientFor({ 'notes.importBook': write });
     expect(await client.importEpub(epubFile(), [
-      { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Research' },
-      { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'folder', name: 'Book' },
+      noteItem({ id: 1, kind: 'folder', name: 'Research' }),
+      noteItem({ id: 2, parent_id: 1, kind: 'folder', name: 'Book' }),
     ], 1)).toBe(12);
     expect(write).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ parent_id: 1, name: 'Book 1' }));
   });
@@ -1080,8 +1129,7 @@ describe('native folder store contract', () => {
 });
 
 it('validates the summary contract and sends only run-owned commit fields', async () => {
-  const item = { id: 4, parent_id: 2, kind: 'note', name: 'Summary', has_compressed: false, has_audio: false,
-    read_only: true, is_summary: true, summary_linked: true };
+  const item = noteItem({ id: 4, parent_id: 2, name: 'Summary', read_only: true, is_summary: true, summary_linked: true });
   const generated = { run_id: 1, parent_id: 2, target_note_id: null, markdown: 'Summary' };
   const generate = vi.fn(() => generated);
   const commit = vi.fn(() => ({ item }));

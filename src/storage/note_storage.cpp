@@ -819,6 +819,10 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"read_only", item.read_only},
         {"is_summary", item.is_summary},
         {"summary_linked", item.summary_linked},
+        {"has_l1", item.has_l1},
+        {"has_l2", item.has_l2},
+        {"summary_excluded", item.summary_excluded},
+        {"folder_summary", item.folder_summary},
     };
     if (item.forum_id) json["forum_id"] = *item.forum_id;
 }

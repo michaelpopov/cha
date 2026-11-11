@@ -1,13 +1,17 @@
 {
   "items": [
-    { "id": 1, "parent_id": null, "kind": "folder", "name": "Plan", "has_compressed": false, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false },
-    { "id": 4, "parent_id": 1, "kind": "note", "name": "Draft", "has_compressed": true, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false },
-    { "id": 5, "parent_id": 1, "kind": "annotation", "name": "Annotation", "has_compressed": false, "has_audio": false, "read_only": true, "is_summary": false, "summary_linked": false },
-    { "id": 6, "parent_id": 1, "kind": "note", "name": "Summary", "has_compressed": false, "has_audio": false, "read_only": true, "is_summary": true, "summary_linked": true },
-    { "id": 7, "parent_id": null, "kind": "folder", "name": "Forum", "has_compressed": false, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false, "forum_id": "research" }
+    {"id": 1, "parent_id": null, "kind": "folder", "name": "Plan", "has_compressed": false, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false, "has_l1": false, "has_l2": false, "summary_excluded": false, "folder_summary": false},
+    {"id": 4, "parent_id": 1, "kind": "note", "name": "Draft", "has_compressed": true, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false, "has_l1": true, "has_l2": false, "summary_excluded": false, "folder_summary": false},
+    {"id": 5, "parent_id": 1, "kind": "annotation", "name": "Annotation", "has_compressed": false, "has_audio": false, "read_only": true, "is_summary": false, "summary_linked": false, "has_l1": false, "has_l2": false, "summary_excluded": false, "folder_summary": false},
+    {"id": 6, "parent_id": 1, "kind": "note", "name": "Summary", "has_compressed": false, "has_audio": false, "read_only": true, "is_summary": true, "summary_linked": true, "has_l1": false, "has_l2": false, "summary_excluded": false, "folder_summary": false},
+    {"id": 7, "parent_id": null, "kind": "folder", "name": "Forum", "has_compressed": false, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false, "forum_id": "research", "has_l1": false, "has_l2": false, "summary_excluded": false, "folder_summary": false},
+    {"id": 8, "parent_id": 9, "kind": "note", "name": "Summary", "has_compressed": false, "has_audio": false, "read_only": true, "is_summary": true, "summary_linked": false, "has_l1": false, "has_l2": false, "summary_excluded": false, "folder_summary": true},
+    {"id": 9, "parent_id": null, "kind": "folder", "name": "Archive", "has_compressed": false, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false, "has_l1": false, "has_l2": false, "summary_excluded": false, "folder_summary": false}
   ],
   "contents": [
-    { "id": 4, "document_id": 4, "document": { "type": "doc", "content": [{ "type": "paragraph" }] }, "scroll_top": 1200 },
-    { "id": 6, "document_id": 8, "document": { "type": "doc", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Stored summary\nSecond line" }] }] }, "scroll_top": 0 }
-  ]
+    {"id": 4, "document_id": 4, "document": {"type": "doc", "content": [{"type": "paragraph"}]}, "scroll_top": 1200},
+    {"id": 6, "document_id": 8, "document": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Stored summary\nSecond line"}]}]}, "scroll_top": 0}
+  ],
+  "summary_plan": {"notes": [{"id": 4, "name": "Draft", "has_l1": true, "has_l2": false}]},
+  "summary_generated": {"markdown": "## Draft\n\nOverview."}
 }

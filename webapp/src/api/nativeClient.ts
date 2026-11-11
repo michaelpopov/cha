@@ -1,4 +1,6 @@
-import { hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent } from './noteGuards';
+import {
+  hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent, isSummaryGenerated, isSummaryPlan,
+} from './noteGuards';
 import { prepareEpubImport } from '../notes/epubImport';
 import { readFileBytes } from '../notes/pictures';
 
@@ -1034,6 +1036,19 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     abandonSessionSummary: async (runId, reason) => {
       await call('sessionSummary.abandon', { run_id: runId, reason }, isEmptyResult);
     },
+    summaryPlan: id => call('notes.summaryPlan', { id }, isSummaryPlan),
+    summaryGenerate: async (id, part, text) => (await call('notes.summaryGenerate',
+      { id, part, ...(text === undefined ? {} : { text }) }, isSummaryGenerated)).markdown,
+    summaryCommit: async (id, part, document) => {
+      await call('notes.summaryCommit', { id, part, document }, isEmptyResult);
+    },
+    summaryAbandon: async (id, part) => {
+      await call('notes.summaryAbandon', { id, part }, isEmptyResult);
+    },
+    summaryCancel: async () => {
+      await call('notes.summaryCancel', {}, isEmptyResult);
+    },
+    setNoteSummaryExcluded: (id, excluded) => call('notes.setSummaryExcluded', { id, excluded }, isNoteItem),
     readNotePage: (url, onProgress) => call('notes.readPage', { url }, (value): value is NotePage => (
       isRecord(value)
       && Object.keys(value).length === 3

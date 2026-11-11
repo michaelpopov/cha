@@ -206,6 +206,9 @@ function ToolbarMenu({
 }
 
 const noteTextLabels = { full_text: 'Full text', compressed: 'Compressed' } as const;
+function noteTextLabel(mode: NoteTextMode) {
+  return mode === 'compressed' ? noteTextLabels.compressed : noteTextLabels.full_text;
+}
 const noteTextModes = ['full_text', 'compressed'] as const;
 
 function FormatBar({
@@ -351,7 +354,7 @@ function FormatBar({
           editor={editor}
           icon={<NoteTextModeIcon />}
           label="Note text mode"
-          title={`${noteTextLabels[noteTextMode]} mode; showing ${noteTextLabels[loadedTextMode].toLowerCase()}`}
+          title={`${noteTextLabel(noteTextMode)} mode; showing ${noteTextLabel(loadedTextMode).toLowerCase()}`}
           onOpenChange={(open) => setFormatMenu(open ? 'mode' : null)}
           open={formatMenu === 'mode'}
         >

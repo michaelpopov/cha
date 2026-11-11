@@ -183,11 +183,14 @@ TEST(WebWireFixtures, SerializesNotesContract) {
     const auto fixture = load_fixture("notes-contract.json");
     const nlohmann::json items = std::vector<NoteItem>{
         {.id = 1, .kind = NoteItemKind::folder, .name = "Plan"},
-        {.id = 4, .parent_id = 1, .kind = NoteItemKind::note, .name = "Draft", .has_compressed = true},
+        {.id = 4, .parent_id = 1, .kind = NoteItemKind::note, .name = "Draft", .has_compressed = true, .has_l1 = true},
         {.id = 5, .parent_id = 1, .kind = NoteItemKind::annotation, .name = "Annotation", .read_only = true},
         {.id = 6, .parent_id = 1, .kind = NoteItemKind::note, .name = "Summary", .read_only = true,
          .is_summary = true, .summary_linked = true},
         {.id = 7, .kind = NoteItemKind::folder, .name = "Forum", .forum_id = "research"},
+        {.id = 8, .parent_id = 9, .kind = NoteItemKind::note, .name = "Summary", .read_only = true,
+         .is_summary = true, .folder_summary = true},
+        {.id = 9, .kind = NoteItemKind::folder, .name = "Archive"},
     };
     const nlohmann::json contents = std::vector<NoteContent>{
         {.id = 4, .document_id = 4, .document = {{"type", "doc"}, {"content", {{{"type", "paragraph"}}}}}, .scroll_top = 1200},
@@ -195,6 +198,12 @@ TEST(WebWireFixtures, SerializesNotesContract) {
     };
     EXPECT_EQ(items, fixture.at("items"));
     EXPECT_EQ(contents, fixture.at("contents"));
+    const nlohmann::json plan{{"notes", nlohmann::json::array({
+        {{"id", 4}, {"name", "Draft"}, {"has_l1", true}, {"has_l2", false}},
+    })}};
+    const nlohmann::json generated{{"markdown", "## Draft\n\nOverview."}};
+    EXPECT_EQ(plan, fixture.at("summary_plan"));
+    EXPECT_EQ(generated, fixture.at("summary_generated"));
 }
 
 } // namespace
