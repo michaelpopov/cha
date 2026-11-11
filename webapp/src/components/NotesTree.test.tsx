@@ -7,9 +7,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   ChaError,
   type NoteItem,
-  type NotesClient,
+  type NotesClient, type NoteTextMode,
 } from '../api/client';
-import { NotesTree, type DeleteNoteItem, type NoteActions } from './NotesTree';
+import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions } from './NotesTree';
 
 const study: NoteItem = { id: 1, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'folder', name: 'Study' };
 const aardvark: NoteItem = { id: 2, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Aardvark' };
@@ -70,14 +70,16 @@ function renderTree({
   onOpenNote = vi.fn(),
   onBeforeCreateNote = vi.fn(async () => true),
   onDeleteItem,
+  onCompressNote,
   getNoteLength = vi.fn(async () => 16),
 }: {
   items?: NoteItem[];
   notes?: NotesClient;
   activeNoteId?: number | null;
-  onOpenNote?: (id: number, importSource?: NoteImportSource) => void;
+  onOpenNote?: (id: number, importSource?: NoteImportSource, mode?: NoteTextMode) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
   onDeleteItem?: DeleteNoteItem;
+  onCompressNote?: CompressNote;
   getNoteLength?: (id: number) => Promise<number>;
 } = {}) {
   const onNoteItems = vi.fn();
@@ -98,10 +100,13 @@ function renderTree({
         getNoteLength={getNoteLength}
         onBeforeCreateNote={onBeforeCreateNote}
         onDeleteItem={deleteItem}
-        onCompressNote={notesClient.compressNote}
+        onCompressNote={onCompressNote ?? (async ([target], epoch, folder, refresh) => {
+          await notesClient.compressNote(target.id, epoch, folder);
+          await refresh();
+        })}
         onSetNoteReadOnly={notesClient.setNoteReadOnly}
         onNoteItems={onNoteItems}
-        onOpenNote={(id, importSource) => { setActive(id); if (importSource) onOpenNote(id, importSource); else onOpenNote(id); }}
+        onOpenNote={(id, importSource, mode) => { setActive(id); if (mode) onOpenNote(id, importSource, mode); else if (importSource) onOpenNote(id, importSource); else onOpenNote(id); }}
         vaultName="Personal"
       />
     );
@@ -135,56 +140,16 @@ describe('Notes tree', () => {
     expect(screen.queryByRole('menuitem', { name: 'Make editable' })).not.toBeInTheDocument();
   });
 
-  it('accepts recursive folder notes sequentially, skips annotations, and stops on a local error', async () => {
+  it('passes recursive folder note targets to one compression action', async () => {
     const next = { ...aardvark, parent_id: study.id };
     const annotation: NoteItem = { ...plan, id: 9, kind: 'annotation', name: 'ANNOTATIONS' };
-    const compressNote = vi.fn<NotesClient['compressNote']>()
-      .mockResolvedValueOnce({ accepted: true })
-      .mockRejectedValueOnce(new ChaError('invalid_argument', 'Missing key'));
-    renderTree({ notes: client({ listNoteItems: async () => [study, philosophy, plan, next, annotation], compressNote }) });
+    const onCompressNote = vi.fn(async () => undefined);
+    renderTree({ items: [study, philosophy, plan, next, annotation], onCompressNote });
     await screen.findByRole('treeitem', { name: 'Study' });
     await chooseAction('Study', 'Compress');
-    await waitFor(() => expect(compressNote).toHaveBeenCalledTimes(2));
-    expect(compressNote.mock.calls).toEqual([[plan.id, 1, true], [next.id, 1, true]]);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Missing key Jobs already accepted continue in the background.');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it('stops remaining folder acceptance after unmount without cancelling accepted jobs', async () => {
-    const acceptance = deferred<{ accepted: true }>();
-    const compressNote = vi.fn<NotesClient['compressNote']>(() => acceptance.promise);
-    const cancelCompression = vi.fn();
-    renderTree({ notes: client({ listNoteItems: async () => [study, philosophy, plan, { ...aardvark, parent_id: study.id }], compressNote, cancelCompression }) });
-    await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'Compress');
-    cleanup();
-    await act(async () => acceptance.resolve({ accepted: true }));
-    expect(compressNote).toHaveBeenCalledOnce();
-    expect(cancelCompression).not.toHaveBeenCalled();
-  });
-
-  it('does not submit IDs from a menu opened in a previous vault context', async () => {
-    let epoch = 1;
-    const compressNote = vi.fn<NotesClient['compressNote']>();
-    renderTree({ notes: client({ contextEpoch: () => epoch, listNoteItems: async () => [aardvark], compressNote }) });
-    await screen.findByRole('treeitem', { name: 'Aardvark' });
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Aardvark' }));
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
-    epoch = 2;
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    expect(compressNote).not.toHaveBeenCalled();
-  });
-
-  it('stops captured folder IDs after a vault epoch changes', async () => {
-    let epoch = 1;
-    const acceptance = deferred<{ accepted: true }>();
-    const compressNote = vi.fn<NotesClient['compressNote']>(() => acceptance.promise);
-    renderTree({ notes: client({ contextEpoch: () => epoch, listNoteItems: async () => [study, philosophy, plan, { ...aardvark, parent_id: study.id }], compressNote }) });
-    await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'Compress');
-    epoch = 2;
-    await act(async () => acceptance.resolve({ accepted: true }));
-    expect(compressNote).toHaveBeenCalledExactlyOnceWith(plan.id, 1, true);
+    expect(onCompressNote).toHaveBeenCalledExactlyOnceWith([
+      { id: plan.id, name: plan.name }, { id: next.id, name: next.name },
+    ], 1, true, expect.any(Function));
   });
 
   it('disables Show compressed without stored text and skips it with the arrow keys', async () => {
@@ -203,71 +168,11 @@ describe('Notes tree', () => {
     expect(screen.queryByRole('menuitem', { name: 'Show compressed' })).not.toBeInTheDocument();
   });
 
-  it('loads the saved compressed text in a read-only dialog and restores focus on close', async () => {
-    const content = deferred<{ id: number; document: {}; compressed_text: string }>();
-    const getNote = vi.fn(() => content.promise);
-    const onOpenNote = vi.fn();
-    renderTree({ notes: client({
-      listNoteItems: async () => [{ ...aardvark, read_only: false, is_summary: false, summary_linked: false, has_compressed: true }], getNote,
-    }), onOpenNote });
+  it('opens the logical note in compressed mode', async () => {
+    const { onOpenNote } = renderTree({ items: [{ ...aardvark, has_compressed: true }] });
     await screen.findByRole('treeitem', { name: 'Aardvark' });
     await chooseAction('Aardvark', 'Show compressed');
-    const dialog = screen.getByRole('dialog', { name: 'Compressed version of “Aardvark”' });
-    expect(within(dialog).getByRole('status')).toHaveTextContent('Loading…');
-    expect(within(dialog).queryByText(/^Compression:/)).not.toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus();
-    expect(getNote).toHaveBeenCalledExactlyOnceWith(aardvark.id);
-    await act(async () => content.resolve({
-      id: aardvark.id, document: {}, compressed_text: 'Stored summary\n<script>plain text</script>',
-    }));
-    const text = within(dialog).getByLabelText('Compressed note text');
-    expect(text.textContent).toBe('Stored summary\n<script>plain text</script>');
-    expect(dialog.querySelector('script')).toBeNull();
-    expect(within(dialog).queryByRole('textbox')).not.toBeInTheDocument();
-    expect(onOpenNote).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toHaveFocus();
-    await chooseAction('Aardvark', 'Show compressed');
-    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it.each([false, true])('shows a closable error if compressed text cannot be read (missing=%s)', async (missing) => {
-    renderTree({ notes: client({
-      listNoteItems: async () => [{ ...aardvark, read_only: false, is_summary: false, summary_linked: false, has_compressed: true }],
-      getNote: async () => {
-        if (missing) return { id: aardvark.id, document: {} };
-        throw new ChaError('not_found', 'That note was not found.');
-      },
-    }) });
-    await screen.findByRole('treeitem', { name: 'Aardvark' });
-    await chooseAction('Aardvark', 'Show compressed');
-    expect(await screen.findByRole('alert')).toHaveTextContent(missing
-      ? 'No compressed version is stored for this note.' : 'That note was not found.');
-    expect(screen.queryByText(/^Compression:/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
-
-  it.each([
-    ['Original text has twenty chars.', 'Short', '6.2:1'],
-    ['😀😀😀😀', '😀', '4.0:1'],
-    ['Short', 'Longer summary', '0.4:1'],
-    ['', 'Summary', '0.0:1'],
-    ['Original', '', 'N/A'],
-  ])('shows the compression ratio for original %j and compressed %j', async (original, compressed, ratio) => {
-    renderTree({ notes: client({
-      listNoteItems: async () => [{ ...aardvark, read_only: false, is_summary: false, summary_linked: false, has_compressed: true }],
-      getNote: async () => ({ id: aardvark.id, compressed_text: compressed,
-        document: { type: 'doc', content: [{ type: 'paragraph',
-          ...(original ? { content: [{ type: 'text', text: original }] } : {}),
-        }] },
-      }),
-    }) });
-    await screen.findByRole('treeitem', { name: 'Aardvark' });
-    await chooseAction('Aardvark', 'Show compressed');
-    expect(await screen.findByText(`Compression: ${ratio}`)).toBeInTheDocument();
+    expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(aardvark.id, undefined, 'compressed');
   });
 
   it('reads status on every menu opening and cancels by note ID without a dialog', async () => {
@@ -281,92 +186,6 @@ describe('Notes tree', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Aardvark' })).toBeEnabled());
     await chooseAction('Aardvark', 'Cancel compression');
     expect(compressionStatus).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([false, true])('releases disabled note menus after compression acceptance settles (failed=%s)', async failed => {
-    const acceptance = deferred<{ accepted: true }>();
-    const compressNote = vi.fn<NotesClient['compressNote']>(() => acceptance.promise);
-    renderTree({ notes: client({ listNoteItems: async () => [aardvark], compressNote }) });
-    await screen.findByRole('treeitem', { name: 'Aardvark' });
-    await chooseAction('Aardvark', 'Compress');
-    expect(screen.getByRole('button', { name: 'Actions for Aardvark' })).toBeDisabled();
-    await act(async () => {
-      if (failed) acceptance.reject(new ChaError('invalid_argument', 'Missing key'));
-      else acceptance.resolve({ accepted: true });
-    });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Aardvark' })).toBeEnabled());
-    expect(compressNote).toHaveBeenCalledOnce();
-    if (failed) expect(screen.getByRole('alert')).toHaveTextContent('Missing key');
-  });
-
-  it.each([false, true])('disables folder Compress during acceptance and restores it afterward (failed=%s)', async failed => {
-    const acceptance = deferred<{ accepted: true }>();
-    const compressNote = vi.fn<NotesClient['compressNote']>(() => acceptance.promise);
-    renderTree({ notes: client({ listNoteItems: async () => [study, philosophy, plan], compressNote }) });
-    await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'Compress');
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
-    expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    expect(compressNote).toHaveBeenCalledOnce();
-    await act(async () => {
-      if (failed) acceptance.reject(new ChaError('invalid_argument', 'Missing key'));
-      else acceptance.resolve({ accepted: true });
-    });
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
-    expect(compressNote).toHaveBeenCalledOnce();
-  });
-
-  it.each([false, true])('blocks another start during folder acceptance while keeping Cancel available (running=%s)', async running => {
-    const acceptance = deferred<{ accepted: true }>();
-    const compressNote = vi.fn<NotesClient['compressNote']>(() => acceptance.promise);
-    const cancelCompression = vi.fn().mockResolvedValue(undefined);
-    const compressionStatus = vi.fn(async (id: number) => ({ pending: id === aardvark.id && running }));
-    renderTree({ notes: client({
-      listNoteItems: async () => [study, philosophy, plan, { ...aardvark, is_summary: false, summary_linked: false, has_compressed: true }],
-      compressNote, compressionStatus, cancelCompression,
-    }) });
-    await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'Compress');
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Actions for Aardvark' })); });
-    expect(compressionStatus).toHaveBeenNthCalledWith(1, study.id, 1);
-    expect(compressionStatus).toHaveBeenLastCalledWith(aardvark.id, 1);
-    const action = screen.getByRole('menuitem', { name: running ? 'Cancel compression' : 'Compress' });
-    if (running) {
-      expect(action).toBeEnabled();
-      fireEvent.click(action);
-      expect(cancelCompression).toHaveBeenCalledExactlyOnceWith(aardvark.id, 1);
-    } else {
-      expect(action).toBeDisabled();
-      // Safe actions and the previous compressed result remain usable.
-      expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeEnabled();
-      expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled();
-      expect(screen.getByRole('menuitem', { name: 'Show compressed' })).toBeEnabled();
-    }
-    expect(compressNote).toHaveBeenCalledOnce();
-    await act(async () => acceptance.resolve({ accepted: true }));
-    if (!running) await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
-  });
-
-  it('keeps folder Compress disabled after acceptance while background jobs run', async () => {
-    let pending = false;
-    const compressionStatus = vi.fn(async () => ({ pending }));
-    const compressNote = vi.fn<NotesClient['compressNote']>(async () => {
-      pending = true;
-      return { accepted: true };
-    });
-    renderTree({ notes: client({ listNoteItems: async () => [study, philosophy, plan], compressNote, compressionStatus }) });
-    await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'Compress');
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' })); });
-    expect(compressionStatus).toHaveBeenLastCalledWith(study.id, 1);
-    expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    expect(compressNote).toHaveBeenCalledOnce();
-    pending = false;
-    act(() => window.dispatchEvent(new CustomEvent('cha-note-compression-changed', { detail: { id: plan.id, epoch: 1 } })));
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
-    expect(compressionStatus).toHaveBeenCalledTimes(3);
   });
 
   it('disables a folder for nested running jobs and waits for the last job to retire', async () => {
@@ -465,23 +284,6 @@ describe('Notes tree', () => {
     if (action === 'Compress') await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
     else if (action === 'Make read-only') await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledOnce());
     else expect(await screen.findByRole('dialog')).toBeInTheDocument();
-  });
-
-  it('does not release an EPUB import when folder acceptance ends', async () => {
-    const acceptance = deferred<{ accepted: true }>();
-    const imported = deferred<number>();
-    const listNoteItems = vi.fn(async () => [study, philosophy, plan, aardvark]);
-    renderTree({ notes: client({ listNoteItems, compressNote: () => acceptance.promise, importEpub: () => imported.promise }) });
-    await screen.findByRole('treeitem', { name: 'Study' });
-    await chooseAction('Study', 'Compress');
-    await chooseAction('Personal', 'Import EPUB…');
-    fireEvent.change(screen.getByLabelText('EPUB file'), { target: { files: [new File(['epub'], 'book.epub')] } });
-    act(() => window.dispatchEvent(new CustomEvent('cha-note-compression-changed', { detail: { id: plan.id, epoch: 1 } })));
-    await act(async () => acceptance.resolve({ accepted: true }));
-    expect(listNoteItems).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: 'Actions for Personal' })).toBeDisabled();
-    await act(async () => imported.resolve(study.id));
-    await waitFor(() => expect(screen.queryByText('Importing EPUB…')).not.toBeInTheDocument());
   });
 
   it('defers a refresh through rename submission without invalidating the mutation', async () => {

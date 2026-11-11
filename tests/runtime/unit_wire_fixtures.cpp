@@ -190,9 +190,8 @@ TEST(WebWireFixtures, SerializesNotesContract) {
         {.id = 7, .kind = NoteItemKind::folder, .name = "Forum", .forum_id = "research"},
     };
     const nlohmann::json contents = std::vector<NoteContent>{
-        {.id = 4, .document = {{"type", "doc"}, {"content", {{{"type", "paragraph"}}}}}, .scroll_top = 1200},
-        {.id = 6, .document = {{"type", "doc"}, {"content", nlohmann::json::array()}},
-         .compressed_text = "Stored summary\nSecond line"},
+        {.id = 4, .document_id = 4, .document = {{"type", "doc"}, {"content", {{{"type", "paragraph"}}}}}, .scroll_top = 1200},
+        {.id = 6, .document_id = 8, .document = note_document_from_text("Stored summary\nSecond line")},
     };
     EXPECT_EQ(items, fixture.at("items"));
     EXPECT_EQ(contents, fixture.at("contents"));

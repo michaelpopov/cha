@@ -58,11 +58,11 @@ std::vector<NoteItem> NotesService::list_note_items(std::uint64_t epoch) {
     }
 }
 
-NoteContent NotesService::get_note(std::int64_t id, std::uint64_t epoch) {
+NoteContent NotesService::get_note(std::int64_t id, std::uint64_t epoch, NoteTextMode mode) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        return impl_->store->get_note(id);
+        return impl_->store->get_note(id, mode);
     } catch (const NoteError& error) {
         rethrow_note(error);
     }

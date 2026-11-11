@@ -2070,15 +2070,17 @@ components:
       properties:
         pending:
           type: boolean
+    NoteTextMode:
+      type: string
+      enum: [full_text, compressed]
     NoteContent:
       type: object
       additionalProperties: false
-      required: [id, document]
+      required: [id, document_id, document]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
+        document_id: {$ref: "#/components/schemas/NoteId"}
         document: {$ref: "#/components/schemas/NoteDocument"}
-        compressed_text:
-          type: string
         scroll_top:
           type: integer
           minimum: 0

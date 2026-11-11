@@ -58,10 +58,12 @@ struct NoteItem {
     bool summary_linked{};
 };
 
+enum class NoteTextMode { full_text, compressed };
+
 struct NoteContent {
     std::int64_t id{};
+    std::int64_t document_id{};
     nlohmann::json document = nlohmann::json::object();
-    std::optional<std::string> compressed_text;
     std::int64_t scroll_top{};
 };
 
@@ -81,6 +83,8 @@ void to_json(nlohmann::json& json, const NoteContent& content);
 
 // Caller owns the transaction. The statements are idempotent.
 void create_note_items_schema(storage::SqliteDatabase& database);
+// Owns the migration transaction. Call before creating the runtime schema.
+void migrate_compressed_notes(storage::SqliteDatabase& database);
 
 // Caller owns the transaction; names come from a validated configured catalog.
 void note_sync_forums(storage::SqliteDatabase& database,
@@ -114,6 +118,7 @@ struct SummaryChapters {
 
 // Markdown for chat context, retaining headings, lists, links, emphasis, and code blocks.
 [[nodiscard]] std::string note_document_markdown(const nlohmann::json& document);
+[[nodiscard]] nlohmann::json note_document_from_text(std::string_view text);
 [[nodiscard]] nlohmann::json note_parse_saved_document(
     std::string_view bytes, std::int64_t id);
 [[nodiscard]] NoteText note_get_text(
@@ -135,7 +140,7 @@ struct SummaryChapters {
     std::string_view sync_machine = {});
 [[nodiscard]] NoteContent note_get(
     storage::SqliteDatabase& database,
-    std::int64_t id);
+    std::int64_t id, NoteTextMode mode = NoteTextMode::full_text);
 bool note_save(
     storage::SqliteDatabase& database,
     std::int64_t id,

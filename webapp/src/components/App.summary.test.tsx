@@ -61,7 +61,7 @@ describe('saving session summaries', () => {
     const ready = deferred<SessionSummaryGenerated>();
     const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
-      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }) })} />);
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }) })} />);
     await startSummary();
     await openTarget();
     act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('split'));
@@ -85,7 +85,7 @@ describe('saving session summaries', () => {
     let item = summary;
     const commitSessionSummary = vi.fn(async () => { saved = documentFor('New summary'); item = { ...summary, read_only: true }; return item; });
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
-      listNoteItems: async () => [item], getNote: async id => ({ id, document: saved }), saveNote })} />);
+      listNoteItems: async () => [item], getNote: async id => ({ id, document_id: id, document: saved }), saveNote })} />);
     await startSummary();
     await openTarget();
     const oldEditor = editor();
@@ -109,7 +109,7 @@ describe('saving session summaries', () => {
     const saveNote = vi.fn(async () => undefined);
     const commitSessionSummary = vi.fn(async () => { throw new ChaError('invalid_argument', 'The summary target changed.'); });
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
-      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }), saveNote })} />);
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }), saveNote })} />);
     await startSummary();
     await openTarget();
     const oldEditor = editor();
@@ -129,7 +129,7 @@ describe('saving session summaries', () => {
     let item = summary;
     const abandonSessionSummary = vi.fn(() => barrier.promise);
     const saveNote = vi.fn(async () => undefined);
-    const getNote = vi.fn(async id => ({ id, document: documentFor(body) }));
+    const getNote = vi.fn(async id => ({ id, document_id: id, document: documentFor(body) }));
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise,
       commitSessionSummary: async () => { body = 'New summary'; item = { ...summary, read_only: true }; throw new TypeError('Lost transport reply'); },
       abandonSessionSummary, listNoteItems: async () => [item], getNote, saveNote })} />);
@@ -158,7 +158,7 @@ describe('saving session summaries', () => {
         epoch = 2; // The bridge sees the new epoch before App has rendered the new vault.
         throw new ChaError('vault_changed', 'The active vault changed.');
       },
-      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }), saveNote })} />);
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }), saveNote })} />);
     await startSummary();
     await openTarget();
     const oldEditor = editor();
@@ -176,7 +176,7 @@ describe('saving session summaries', () => {
     const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
       contextEpoch: () => epoch,
-      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }), saveNote })} />);
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }), saveNote })} />);
     await startSummary();
     await openTarget();
     const oldEditor = editor();
@@ -197,7 +197,7 @@ describe('saving session summaries', () => {
   it('recovers the connection if the unknown-commit barrier also fails', async () => {
     const ready = deferred<SessionSummaryGenerated>();
     const reload = vi.fn();
-    const getNote = vi.fn(async id => ({ id, document: documentFor('Old body') }));
+    const getNote = vi.fn(async id => ({ id, document_id: id, document: documentFor('Old body') }));
     render(<App reload={reload} client={fixtureClient({ generateSessionSummary: () => ready.promise,
       commitSessionSummary: async () => { throw new ChaError('command_timeout', 'Commit timed out.'); },
       abandonSessionSummary: async () => { throw new ChaError('command_timeout', 'Barrier timed out.'); },
@@ -215,10 +215,10 @@ describe('saving session summaries', () => {
 
   it('cancels a slow pre-commit note load so its late reply cannot construct an editor', async () => {
     const ready = deferred<SessionSummaryGenerated>();
-    const staleLoad = deferred<{ id: number; document: ReturnType<typeof documentFor> }>();
+    const staleLoad = deferred<{ id: number; document_id: number; document: ReturnType<typeof documentFor> }>();
     const commit = deferred<NoteItem>();
     const getNote = vi.fn().mockImplementationOnce(() => staleLoad.promise)
-      .mockImplementation(async id => ({ id, document: documentFor('New summary') }));
+      .mockImplementation(async id => ({ id, document_id: id, document: documentFor('New summary') }));
     const commitSessionSummary = vi.fn(() => commit.promise);
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
       listNoteItems: async () => [summary], getNote })} />);
@@ -227,7 +227,7 @@ describe('saving session summaries', () => {
     await waitFor(() => expect(getNote).toHaveBeenCalledOnce());
     await act(async () => ready.resolve(generated));
     await waitFor(() => expect(commitSessionSummary).toHaveBeenCalledOnce());
-    await act(async () => staleLoad.resolve({ id: 4, document: documentFor('Stale loaded body') }));
+    await act(async () => staleLoad.resolve({ id: 4, document_id: 4, document: documentFor('Stale loaded body') }));
     expect(screen.queryByText('Stale loaded body')).not.toBeInTheDocument();
     expect(document.querySelector('.ProseMirror')).toBeNull();
     await act(async () => commit.resolve({ ...summary, read_only: true }));
@@ -240,7 +240,7 @@ describe('saving session summaries', () => {
     const setNoteReadOnly = vi.fn(() => action.promise);
     const commitSessionSummary = vi.fn(async () => ({ ...summary, read_only: true }));
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, commitSessionSummary,
-      setNoteReadOnly, listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }) })} />);
+      setNoteReadOnly, listNoteItems: async () => [summary], getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }) })} />);
     await startSummary();
     await openTarget();
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
@@ -257,7 +257,7 @@ describe('saving session summaries', () => {
     const abandonSessionSummary = vi.fn(async () => undefined);
     const commitSessionSummary = vi.fn(async () => summary);
     render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise, abandonSessionSummary, commitSessionSummary,
-      listNoteItems: async () => [summary], getNote: async id => ({ id, document: documentFor('Old body') }) })} />);
+      listNoteItems: async () => [summary], getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }) })} />);
     await startSummary();
     await openTarget();
     const oldEditor = editor();
@@ -275,7 +275,7 @@ it('refreshes an annotations document opened after generation started', async ()
   const annotation: NoteItem = { ...summary, id: 9, name: 'ANNOTATIONS', kind: 'annotation',
     is_summary: false, summary_linked: false, parent_id: 10, read_only: true };
   const folder: NoteItem = { ...summary, id: 10, name: 'Forum folder', kind: 'folder', is_summary: false, summary_linked: false };
-  const getNote = vi.fn(async id => ({ id, document: documentFor(body) }));
+  const getNote = vi.fn(async id => ({ id, document_id: id, document: documentFor(body) }));
   render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise,
     commitSessionSummary: async () => { body = 'Fresh annotations'; return { ...summary, read_only: true }; },
     listNoteItems: async () => [folder, annotation], getNote })} />);

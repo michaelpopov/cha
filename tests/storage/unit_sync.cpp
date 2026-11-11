@@ -533,6 +533,7 @@ TEST_F(SyncNotesTest, StructuralOperationsRecordImmediately) {
     EXPECT_EQ(records[1]["path"], nlohmann::json::array({"Books", "Note"}));
     EXPECT_EQ(records[1]["item"], "note");
     EXPECT_TRUE(records[1].contains("content"));
+    EXPECT_TRUE(records[1]["compressed_content"].is_null());
 
     (void)note_rename(*database_, note.id, "Renamed", sync_machine);
     records = this->records();
@@ -566,7 +567,83 @@ TEST_F(SyncNotesTest, BothCompressionCommitPathsRecord) {
     auto records = this->records();
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(records.back()["kind"], "note.compress");
-    EXPECT_EQ(records.back()["compressed_text"], "summary");
+    const auto bytes = decode_base64(records.back()["compressed_content"].get<std::string>());
+    EXPECT_EQ(note_parse_saved_document(bytes, note.id), note_document_from_text("summary"));
+}
+
+TEST_F(SyncNotesTest, IncomingCompressionAcceptsBothFormatsAndClearsMissingOrNullContent) {
+    const auto source = note_create(*database_, {}, NoteItemKind::note, "Source", sync_machine);
+    note_save_compressed(*database_, source.id, "Current\r\nText", sync_machine);
+    const auto outgoing = records();
+    const auto& wire = outgoing.back()["compressed_content"];
+    auto create = outgoing.front();
+    create["path"] = {"Target"};
+    create.erase("compressed_content");
+    create["compressed_text"] = "Legacy";
+    ASSERT_TRUE(note_apply_record(*database_, create));
+    const auto target = sync_note_find(*database_, {"Target"});
+    ASSERT_TRUE(target);
+    const auto compressed_id = database_->last_insert_rowid();
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document, note_document_from_text("Legacy"));
+
+    auto compress = outgoing.back();
+    compress["path"] = {"Target"};
+    compress["compressed_text"] = "Ignored";
+    EXPECT_TRUE(note_apply_record(*database_, compress));
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document, note_document_from_text("Current\r\nText"));
+    {
+        auto row = database_->prepare("SELECT parent_id FROM note_items WHERE id=? AND compressed=1", compressed_id);
+        ASSERT_TRUE(row.step());
+        EXPECT_EQ(row.integer(0), *target);
+    }
+    for (const auto& value : {nlohmann::json(encode_base64("invalid zlib")), nlohmann::json(nullptr)}) {
+        compress["compressed_content"] = value;
+        EXPECT_THROW((void)note_apply_record(*database_, compress), NoteError);
+    }
+    compress.erase("compressed_content");
+    for (const auto& value : {nlohmann::json(" \n"), nlohmann::json(nullptr)}) {
+        compress["compressed_text"] = value;
+        EXPECT_THROW((void)note_apply_record(*database_, compress), NoteError);
+    }
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document, note_document_from_text("Current\r\nText"));
+
+    auto update = create;
+    update["kind"] = "note.update";
+    update["compressed_content"] = nullptr;
+    EXPECT_TRUE(note_apply_record(*database_, update));
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document_id, *target);
+    update.erase("compressed_content");
+    EXPECT_TRUE(note_apply_record(*database_, update));
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document, note_document_from_text("Legacy"));
+    update.erase("compressed_text");
+    EXPECT_TRUE(note_apply_record(*database_, update));
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document_id, *target);
+    update["compressed_content"] = wire;
+    EXPECT_TRUE(note_apply_record(*database_, update));
+    EXPECT_EQ(note_get(*database_, *target, NoteTextMode::compressed).document, note_document_from_text("Current\r\nText"));
+    create["path"] = {"Second target"};
+    create["compressed_content"] = wire;
+    EXPECT_TRUE(note_apply_record(*database_, create));
+    const auto second = sync_note_find(*database_, {"Second target"});
+    ASSERT_TRUE(second);
+    EXPECT_EQ(note_get(*database_, *second, NoteTextMode::compressed).document, note_document_from_text("Current\r\nText"));
+    EXPECT_EQ(records(), outgoing);
+}
+
+TEST_F(SyncNotesTest, FolderImportQueuesOnlyOriginalsWithTheirCompressedContent) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Export");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Note");
+    note_save_compressed(*database_, note.id, "Summary");
+    const auto file = workspace_.root() / "folder.sqlite3";
+    note_export_folder(*database_, folder.id, file);
+    const auto parent = note_create(*database_, {}, NoteItemKind::folder, "Imported");
+    (void)note_import_folder(*database_, parent.id, file, sync_machine);
+    const auto queued = records();
+    ASSERT_EQ(queued.size(), 2u);
+    EXPECT_EQ(queued[0]["path"], nlohmann::json::array({"Imported", "Export"}));
+    EXPECT_EQ(queued[1]["path"], nlohmann::json::array({"Imported", "Export", "Note"}));
+    const auto bytes = decode_base64(queued[1]["compressed_content"].get<std::string>());
+    EXPECT_EQ(note_parse_saved_document(bytes, 0), note_document_from_text("Summary"));
 }
 
 TEST_F(SyncNotesTest, TextSaveSetsFlagAndCollectsLatestContent) {
@@ -595,6 +672,25 @@ TEST_F(SyncNotesTest, ScrollSaveWritesNeitherRecordNorFlag) {
     note_save_scroll_position(*database_, note.id, 12);
     EXPECT_EQ(this->records().size(), 1u);
     EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 0u);
+}
+
+TEST_F(SyncNotesTest, CompressedEditRecordsAnUpdateForTheOriginalPath) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
+    note_save_compressed(*database_, note.id, "Generated", sync_machine);
+    const auto compressed = note_get(*database_, note.id, NoteTextMode::compressed);
+    const auto edited = text_document("Manually edited");
+    ASSERT_NE(compressed.document_id, note.id);
+    EXPECT_EQ(sync_note_find(*database_, {"Note"}), note.id);
+    EXPECT_FALSE(sync_note_find(*database_, {"Note", "Note"}));
+    EXPECT_THROW((void)sync_note_path(*database_, compressed.document_id), std::runtime_error);
+    EXPECT_FALSE(note_save(*database_, compressed.document_id, edited, sync_machine));
+    note_save_scroll_position(*database_, compressed.document_id, 35);
+    EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 1u);
+    const auto record = records().back();
+    EXPECT_EQ(record["kind"], "note.update");
+    EXPECT_EQ(record["path"], nlohmann::json::array({"Note"}));
+    EXPECT_EQ(note_parse_saved_document(decode_base64(record["compressed_content"].get<std::string>()), 0), edited);
+    EXPECT_EQ(record["scroll_top"], 0);
 }
 
 TEST_F(SyncNotesTest, BookImportRecordsParentsFirst) {
@@ -815,6 +911,7 @@ TEST_F(SyncNotesTest, LargeContentRoundTrip) {
     const auto note =
         note_create(*database_, std::nullopt, NoteItemKind::note, "Big", sync_machine);
     (void)note_save(*database_, note.id, text_document(text), sync_machine);
+    note_save_compressed(*database_, note.id, text, sync_machine);
     EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 1u);
     const auto record = queue_json(*database_).back();
     EXPECT_EQ(record["kind"], "note.update");
@@ -835,6 +932,7 @@ TEST_F(SyncNotesTest, LargeContentRoundTrip) {
     auto stored = second.prepare("SELECT content_json FROM note_items WHERE id=?1", *target);
     ASSERT_TRUE(stored.step());
     EXPECT_EQ(stored.blob(0), original_bytes);
+    EXPECT_EQ(note_get_text(second, *target, true).text, text);
 }
 
 void write_key_file(

@@ -54,7 +54,7 @@ function Harness({
   onNavigate = () => undefined,
   onSetNoteReadOnly = async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }),
   items = [plan],
-  getNote = async (id: number) => ({ id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
+  getNote = async (id: number) => ({ id, document_id: id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
   saveNoteScrollPosition = async () => undefined,
   readNotePage = async () => { throw new Error('Page reading is unavailable.'); },
@@ -91,6 +91,8 @@ function Harness({
   const editorLiveRef = useRef<Editor | null>(null);
   liveEditor = editorLiveRef;
   const saveRef = useRef<NoteSaveHandle | null>(null);
+  const documentIdRef = useRef<number | null>(null);
+  const noteLoadRef = useRef<Promise<void> | null>(null);
   const disposeRef = useRef<() => void>(() => undefined);
   const getNoteRef = useRef(getNote);
   const saveNoteRef = useRef(saveNote);
@@ -115,11 +117,10 @@ function Harness({
   });
   const imports = useNoteImports({
     client, epoch: 1, leave,
-    openNote: () => ({ id: noteId, editor: editorLiveRef.current, save: saveRef.current }),
+    openNote: () => ({ noteId, documentId: documentIdRef.current, editor: editorLiveRef.current, save: saveRef.current }),
+    waitForOpen: () => noteLoadRef.current,
     updated: () => undefined,
     refresh: () => undefined,
-    cancelOpen: () => disposeRef.current(),
-    reload: id => dispatch({ type: 'open-note', noteId: id }),
   });
   function dispatch(action: AppAction) {
     onNavigate(action);
@@ -145,11 +146,15 @@ function Harness({
         leave={leave}
         noteItems={noteId === 5 ? [plan, essay] : items}
         noteRequest={request + extraRequest}
+        noteTextMode="full_text"
+        noteActionPending={leave.pendingKind !== null}
+        onNoteTextModeChange={() => undefined}
         notesEpoch={1}
         onDraftChange={setText}
         imports={imports}
         onRegisterDispose={(dispose) => { disposeRef.current = dispose; }}
-        onRegisterSave={(save) => { saveRef.current = save; }}
+        onRegisterSave={(save, documentId) => { saveRef.current = save; documentIdRef.current = documentId; }}
+        onRegisterLoad={(load) => { noteLoadRef.current = load; }}
       />
       {after?.(noteId)}
     </div>
@@ -185,7 +190,7 @@ describe('Notes screen', () => {
     let finishLock!: (note: NoteItem) => void;
     const lock = vi.fn(() => new Promise<NoteItem>(resolve => { finishLock = resolve; }));
     render(<Harness importUrl="https://example.org/article" promptVisible={false}
-      getNote={async id => ({ id, document: documentWith('') })}
+      getNote={async id => ({ id, document_id: id, document: documentWith('') })}
       readNotePage={readNotePage} readNotePicture={readNotePicture} onSetNoteReadOnly={lock} draft="Keep this" />);
     await openedEditor();
     const loading = await screen.findByText('Loading content…');
@@ -211,7 +216,7 @@ describe('Notes screen', () => {
       return new Promise(resolve => { finishes.push(resolve); });
     });
     render(<Harness importUrl="https://example.org/first" readNotePage={readNotePage}
-      getNote={async id => ({ id, document: documentWith('') })} />);
+      getNote={async id => ({ id, document_id: id, document: documentWith('') })} />);
     await openedEditor();
     await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
@@ -241,7 +246,7 @@ describe('Notes screen', () => {
       draft: 'Keep this draft', promptVisible: !hidden };
     const view = render(<StrictMode><Harness {...props} /></StrictMode>);
     expect(readNotePage).not.toHaveBeenCalled();
-    await act(async () => open({ id: plan.id, document: documentWith('') }));
+    await act(async () => open({ id: plan.id, document_id: plan.id, document: documentWith('') }));
     const editor = await openedEditor();
     await waitFor(() => expect(readNotePage).toHaveBeenCalledExactlyOnceWith(props.importUrl, expect.any(Function)));
     expect(screen.getByText('Loading content…')).toHaveAttribute('role', 'status');
@@ -275,7 +280,7 @@ describe('Notes screen', () => {
     const readNotePage = vi.fn().mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue({ url: 'https://example.org/article', title: '', markdown: 'Recovered article' });
     const props = { importUrl: 'https://example.org/article', readNotePage,
-      getNote: async (id: number) => ({ id, document: documentWith('') }), draft: 'Keep this' };
+      getNote: async (id: number) => ({ id, document_id: id, document: documentWith('') }), draft: 'Keep this' };
     const view = render(<Harness {...props} />);
     const editor = await openedEditor();
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not retrieve the web page. Try again.');
@@ -293,7 +298,7 @@ describe('Notes screen', () => {
 
   it.each(['page', 'file'] as const)('preserves the %s source through the existing opening Retry', async kind => {
     const getNote = vi.fn().mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue({ id: plan.id, document: documentWith('') });
+      .mockResolvedValue({ id: plan.id, document_id: plan.id, document: documentWith('') });
     const readNotePage = vi.fn().mockResolvedValue({ url: 'https://example.org/article', title: '', markdown: 'Article' });
     const readNoteTextFile = vi.fn().mockResolvedValue({ name: '/plan.txt', text: 'Article' });
     const onNavigate = vi.fn();
@@ -318,7 +323,7 @@ describe('Notes screen', () => {
     const renameNoteItem = vi.fn();
     render(<Harness importUrl="https://example.org/article" readNotePage={readNotePage}
       items={[{ ...plan, name: 'New note' }]} renameNoteItem={renameNoteItem}
-      getNote={async id => ({ id, document: documentWith(id === plan.id ? '' : 'Essay text') })} draft="Keep this" />);
+      getNote={async id => ({ id, document_id: id, document: documentWith(id === plan.id ? '' : 'Essay text') })} draft="Keep this" />);
     await openedEditor();
     await waitFor(() => expect(readNotePage).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
@@ -395,7 +400,7 @@ describe('Notes screen', () => {
     Object.defineProperty(document, 'execCommand', { configurable: true, value: exec });
     try {
       const content = screen.getByRole('button', { name: 'Content' });
-      expect(document.querySelector('.cha-notes-toolbar button')).toBe(content);
+      expect(document.querySelectorAll('.cha-notes-toolbar button')[1]).toBe(content);
       await user.click(content);
       expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Upload', 'Copy All']);
       expect(screen.getByRole('menuitem', { name: 'Upload' }).hasAttribute('disabled')).toBe(readOnly);
@@ -418,7 +423,7 @@ describe('Notes screen', () => {
 
   it('restores a note position and opens a note without one at the top', async () => {
     render(<Harness getNote={async (id) => ({
-      id, document: documentWith('Reading'), ...(id === 4 ? { scroll_top: 680 } : {}),
+      id, document_id: id, document: documentWith('Reading'), ...(id === 4 ? { scroll_top: 680 } : {}),
     })} />);
     await openedEditor();
     const host = document.querySelector('.cha-notes-document')!;
@@ -449,7 +454,7 @@ describe('Notes screen', () => {
   it.each([false, true])('restores after a picture loads unless the reader has moved (moved: %s)', async (moved) => {
     vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(false);
     render(<Harness getNote={async (id) => ({
-      id, scroll_top: 680, document: { type: 'doc', content: [
+      id, document_id: id, scroll_top: 680, document: { type: 'doc', content: [
         { type: 'image', attrs: { src: 'data:image/png;base64,iVBORw0KGgo=' } },
         ...documentWith('Reading').content,
       ] },
@@ -465,7 +470,7 @@ describe('Notes screen', () => {
 
   it('toggles code on the selected text and supports undo and redo', async () => {
     const user = userEvent.setup();
-    render(<Harness getNote={async (id) => ({ id, document: documentWith('Alpha beta') })} />);
+    render(<Harness getNote={async (id) => ({ id, document_id: id, document: documentWith('Alpha beta') })} />);
     const editor = await openedEditor();
     act(() => { editor.commands.setTextSelection({ from: 7, to: 11 }); });
     const insert = screen.getByRole('button', { name: 'Insert' });
@@ -521,7 +526,7 @@ describe('Notes screen', () => {
     const lock = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
     render(<Harness importPath="/plan.md" saveNote={saveNote} onSetNoteReadOnly={lock} readNotePicture={readNotePicture}
       readNoteTextFile={async () => ({ name: '/plan.md', text: 'File body\n\n![Photo](https://example.org/photo.png)' })}
-      getNote={async id => ({ id, document: documentWith('') })} />);
+      getNote={async id => ({ id, document_id: id, document: documentWith('') })} />);
     const editor = await openedEditor();
     await waitFor(() => expect(readNotePicture).toHaveBeenCalledOnce());
     expect(screen.getByText('Loading content…')).toHaveTextContent('Loading pictures…');
@@ -542,7 +547,7 @@ describe('Notes screen', () => {
   it('automatically imports a file into a new note without changing the prompt', async () => {
     const readNoteTextFile = vi.fn(async () => ({ name: '/tmp/a.md', text: '# File title\n\nBody' }));
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...plan, id, name }));
-    render(<Harness items={[{ ...plan, name: 'New note' }]} getNote={async id => ({ id, document: documentWith('') })}
+    render(<Harness items={[{ ...plan, name: 'New note' }]} getNote={async id => ({ id, document_id: id, document: documentWith('') })}
       importPath="/tmp/a.md" readNoteTextFile={readNoteTextFile} renameNoteItem={renameNoteItem} draft="Keep draft" />);
     const editor = await openedEditor();
     await waitFor(() => expect(renameNoteItem).toHaveBeenCalledWith(plan.id, 'File title'));
@@ -554,7 +559,7 @@ describe('Notes screen', () => {
   it('reports a missing explicit file without inserting the path or automatically retrying', async () => {
     const readNoteTextFile = vi.fn(async () => null);
     const props = { items: [{ ...plan, name: 'New note' }],
-      getNote: async (id: number) => ({ id, document: documentWith('') }),
+      getNote: async (id: number) => ({ id, document_id: id, document: documentWith('') }),
       importPath: '/tmp/missing file.md', readNoteTextFile, draft: 'Keep draft' };
     const view = render(<Harness {...props} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('The file could not be loaded. Check the path and permissions.');
@@ -576,7 +581,7 @@ describe('Notes screen', () => {
     const onSetNoteReadOnly = vi.fn();
     render(<Harness importPath="/tmp/plan.md" readNoteTextFile={readNoteTextFile}
       items={[{ ...plan, name: 'New note' }]} renameNoteItem={renameNoteItem} onSetNoteReadOnly={onSetNoteReadOnly}
-      getNote={async id => ({ id, document: documentWith(id === plan.id ? '' : 'Essay text') })} draft="Keep draft" />);
+      getNote={async id => ({ id, document_id: id, document: documentWith(id === plan.id ? '' : 'Essay text') })} draft="Keep draft" />);
     await openedEditor();
     await waitFor(() => expect(readNoteTextFile).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
@@ -725,7 +730,7 @@ describe('Notes screen', () => {
     const renameNoteItem = vi.fn();
     const lock = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
     render(<Harness items={[{ ...plan, name: 'New note' }]} draft={sent} onSetNoteReadOnly={lock}
-      getNote={async id => ({ id, document: documentWith(id === essay.id ? 'Essay text' : '') })}
+      getNote={async id => ({ id, document_id: id, document: documentWith(id === essay.id ? 'Essay text' : '') })}
       readNoteTextFile={readNoteTextFile} readNotePage={readNotePage} renameNoteItem={renameNoteItem} />);
     await openedEditor();
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Prompt' }), { key: 'Enter' });
@@ -758,7 +763,7 @@ describe('Notes screen', () => {
       const renameNoteItem = vi.fn(async (id: number, next: string) => ({ ...plan, id, name: next }));
       render(<Harness
         items={[{ ...plan, name }]}
-        getNote={async (id) => ({ id, document: documentWith(text) })}
+        getNote={async (id) => ({ id, document_id: id, document: documentWith(text) })}
         readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
         renameNoteItem={renameNoteItem}
         draft="https://example.org"
@@ -786,7 +791,7 @@ describe('Notes screen', () => {
         { id: 20, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Title' },
         ...names.map((name, index) => ({ id: 30 + index, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: folder.id, kind: 'note' as const, name })),
       ]}
-      getNote={async (id) => ({ id, document: documentWith('') })}
+      getNote={async (id) => ({ id, document_id: id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title, markdown: 'Article' })}
       renameNoteItem={renameNoteItem}
       draft="https://example.org"
@@ -805,7 +810,7 @@ describe('Notes screen', () => {
     const renameNoteItem = vi.fn();
     const props = {
       items: [{ ...plan, name: 'New note' }],
-      getNote: async (id: number) => ({ id, document: documentWith('') }),
+      getNote: async (id: number) => ({ id, document_id: id, document: documentWith('') }),
       readNotePage, renameNoteItem, draft: 'https://example.org',
     };
     const { rerender } = render(<Harness {...props} />);
@@ -825,7 +830,7 @@ describe('Notes screen', () => {
     const renameNoteItem = vi.fn().mockRejectedValue(new ChaError('internal_error', 'The item could not be changed.'));
     render(<Harness
       items={[{ ...plan, name: 'New note' }]}
-      getNote={async (id) => ({ id, document: documentWith('') })}
+      getNote={async (id) => ({ id, document_id: id, document: documentWith('') })}
       readNotePage={async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Article' })}
       renameNoteItem={renameNoteItem}
       draft="https://example.org"
@@ -965,7 +970,7 @@ describe('Notes screen', () => {
   it('shows Retry for an opening failure and does not leave an editable document', async () => {
     const getNote = vi.fn()
       .mockRejectedValueOnce(new ChaError('not_found', 'The note is missing.'))
-      .mockResolvedValueOnce({ id: 4, document: documentWith('Alpha') });
+      .mockResolvedValueOnce({ id: 4, document_id: 4, document: documentWith('Alpha') });
     render(<Harness getNote={getNote} />);
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not open “Plan”. The note is missing.');
     expect(document.querySelector('[contenteditable="true"]')).toBeNull();
@@ -1010,7 +1015,7 @@ describe('Notes screen', () => {
   });
 
   it('keeps history when the same open note is shown again', async () => {
-    const getNote = vi.fn(async () => ({ id: 4, document: documentWith('Alpha') }));
+    const getNote = vi.fn(async () => ({ id: 4, document_id: 4, document: documentWith('Alpha') }));
     const view = render(<Harness getNote={getNote} />);
     const editor = await screen.findByText('Alpha').then(() => openedEditor());
     act(() => insertText(editor, ' beta'));
@@ -1024,8 +1029,8 @@ describe('Notes screen', () => {
   it('replaces the open note with incoming content without echoing an unsaved edit', async () => {
     vi.useFakeTimers();
     const getNote = vi.fn()
-      .mockResolvedValueOnce({ id: 4, document: documentWith('Alpha') })
-      .mockResolvedValue({ id: 4, document: documentWith('Incoming') });
+      .mockResolvedValueOnce({ id: 4, document_id: 4, document: documentWith('Alpha') })
+      .mockResolvedValue({ id: 4, document_id: 4, document: documentWith('Incoming') });
     const saveNote = vi.fn(async () => undefined);
     const view = render(<Harness getNote={getNote} saveNote={saveNote} />);
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
@@ -1091,7 +1096,7 @@ describe('Notes screen', () => {
   it('jumps to the selected duplicate heading, focuses and scrolls it, without saving', async () => {
     const saveNote = vi.fn();
     render(<Harness saveNote={saveNote} getNote={async (id) => ({
-      id, document: {
+      id, document_id: id, document: {
         type: 'doc', content: [
           { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: 'Repeat' }] },
           { type: 'paragraph', content: [{ type: 'text', text: 'Body' }] },
@@ -1123,7 +1128,7 @@ describe('Notes screen', () => {
 
   it('jumps to the selected duplicate highlight in a read-only note without saving', async () => {
     const saveNote = vi.fn();
-    const getNote = vi.fn(async (id: number) => ({ id, document: {
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: {
       type: 'doc', content: [{ type: 'paragraph', content: [
         { type: 'text', text: 'Repeat', marks: [{ type: 'highlight' }] },
         { type: 'text', text: ' gap ' },
@@ -1154,7 +1159,7 @@ describe('Notes screen', () => {
   });
 
   it('lists only the current note in document order without fetching other notes, and refreshes on note changes', async () => {
-    const getNote = vi.fn(async (id: number) => ({ id, document: {
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: {
       type: 'doc', content: (id === 4 ? ['Zebra', 'Alpha'] : ['Other']).map((text) => ({
         type: 'paragraph', content: [{ type: 'text', text, marks: [{ type: 'highlight' }] }],
       })),
@@ -1208,7 +1213,7 @@ describe('Notes screen', () => {
   it('derives the heading menu after edits and Undo, and hides it while frozen', async () => {
     let finishSave!: () => void;
     render(<Harness saveNote={() => new Promise<void>((resolve) => { finishSave = resolve; })} getNote={async (id) => ({
-      id, document: {
+      id, document_id: id, document: {
         type: 'doc', content: ['First', 'Second', 'Third'].map((text, index) => ({
           type: 'heading', attrs: { level: index + 1 }, content: [{ type: 'text', text }],
         })),
@@ -1540,7 +1545,7 @@ describe('Notes screen', () => {
 
   it.each([false, true])('shows the context actions, including on links (read-only: %s)', async (readOnly) => {
     render(<Harness items={[{ ...plan, read_only: readOnly }]} getNote={async (id) => ({
-      id, document: { type: 'doc', content: [{ type: 'paragraph', content: [
+      id, document_id: id, document: { type: 'doc', content: [{ type: 'paragraph', content: [
         { type: 'text', text: 'Alpha' },
         { type: 'text', text: ' link', marks: [{ type: 'link', attrs: { href: 'https://example.com/' } }] },
       ] }] },
@@ -1607,7 +1612,7 @@ describe('Notes screen', () => {
     ] };
     const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
     const props = { items: [{ ...plan, read_only: readOnly }], saveNote,
-      getNote: async (id: number) => ({ id, document: saved }) };
+      getNote: async (id: number) => ({ id, document_id: id, document: saved }) };
     const first = render(<Harness {...props} draft="My comment" />);
     const editor = await openedEditor();
     vi.useFakeTimers();
@@ -1647,7 +1652,7 @@ describe('Notes screen', () => {
     ] };
     const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
     const props = { items: [{ ...plan, read_only: readOnly }], saveNote,
-      getNote: async (id: number) => ({ id, document: saved }), draft: 'Keep this prompt' };
+      getNote: async (id: number) => ({ id, document_id: id, document: saved }), draft: 'Keep this prompt' };
     const first = render(<Harness {...props} />);
     const editor = await openedEditor();
     vi.useFakeTimers();
@@ -1681,7 +1686,7 @@ describe('Notes screen', () => {
   });
 
   it('keeps Add comment on an ordinary highlighted paragraph', async () => {
-    render(<Harness items={[{ ...plan, read_only: true }]} getNote={async (id) => ({ id,
+    render(<Harness items={[{ ...plan, read_only: true }]} getNote={async (id) => ({ id, document_id: id,
       document: { type: 'doc', content: [{ type: 'paragraph', content: [
         { type: 'text', text: 'Highlighted note', marks: [{ type: 'highlight' }] },
       ] }] },
@@ -1694,7 +1699,7 @@ describe('Notes screen', () => {
 
   it('adds a comment before the paragraph nearest to a click between paragraphs', async () => {
     render(<Harness items={[{ ...plan, read_only: true }]} draft="Gap comment" getNote={async (id) => ({
-      id, document: { type: 'doc', content: [...documentWith('First').content, ...documentWith('Second').content] },
+      id, document_id: id, document: { type: 'doc', content: [...documentWith('First').content, ...documentWith('Second').content] },
     })} />);
     const editor = await openedEditor();
     const posAtCoords = vi.spyOn(editor.view, 'posAtCoords').mockReturnValue({ pos: 8, inside: -1 });
@@ -1768,7 +1773,7 @@ describe('Notes screen', () => {
     let saved: Record<string, unknown> = documentWith('Alpha');
     const saveNote = vi.fn(async (_id: number, document: Record<string, unknown>) => { saved = document; });
     const props = { items: [{ ...plan, read_only: true }], saveNote,
-      getNote: async (id: number) => ({ id, document: saved }) };
+      getNote: async (id: number) => ({ id, document_id: id, document: saved }) };
     const first = render(<Harness {...props} />);
     const editor = await openedEditor();
     vi.useFakeTimers();
@@ -1794,7 +1799,7 @@ describe('Notes screen', () => {
 
 it('applies a source destination once and preserves later selection when read-only metadata changes', async () => {
   const destination: AnnotationDestination = { entryType: 'highlight', ordinal: 1, prefix: 'Target' };
-  const getNote = async (id: number) => ({ id, document: { type: 'doc', content: [
+  const getNote = async (id: number) => ({ id, document_id: id, document: { type: 'doc', content: [
     { type: 'paragraph', content: [{ type: 'text', text: 'Target', marks: [{ type: 'highlight' }] }] },
     { type: 'paragraph', content: [{ type: 'text', text: 'Other' }] },
   ] } });
@@ -1812,7 +1817,7 @@ it.each([false, true])('keeps the source target visible as pictures load until t
   vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(false);
   const destination: AnnotationDestination = { entryType: 'highlight', ordinal: 1, prefix: 'Target' };
   render(<Harness destination={destination} getNote={async (id) => ({
-    id, scroll_top: 680, document: { type: 'doc', content: [
+    id, document_id: id, scroll_top: 680, document: { type: 'doc', content: [
       { type: 'image', attrs: { src: 'data:image/png;base64,iVBORw0KGgo=' } },
       { type: 'paragraph', content: [{ type: 'text', text: 'Target', marks: [{ type: 'highlight' }] }] },
       ...documentWith('Other').content,

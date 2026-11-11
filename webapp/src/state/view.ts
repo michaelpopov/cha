@@ -4,6 +4,7 @@ import type {
   Bootstrap,
   CharacterDetail,
   ForumDetail,
+  NoteTextMode,
   PersonaDetail,
   SessionSnapshot,
   VaultDetail,
@@ -120,6 +121,7 @@ export interface AppState {
   layoutMode: LayoutMode;
   sidebarTab: 'chat' | 'notes';
   activeNoteId: number | null;
+  noteTextMode: NoteTextMode;
   notesEpoch: number;
   noteRequest: number;
   noteAutoFocus: boolean;
@@ -174,7 +176,7 @@ export const initialAppState: AppState = {
   mainView: 'chat',
   layoutMode: 'single',
   sidebarTab: 'chat',
-  activeNoteId: null, noteDestination: undefined, noteImportSource: undefined,
+  activeNoteId: null, noteTextMode: 'full_text', noteDestination: undefined, noteImportSource: undefined,
   notesEpoch: 0,
   noteRequest: 0,
   noteAutoFocus: true,
@@ -228,7 +230,8 @@ export type AppAction =
   | { type: 'toggle-sidebar' }
   | { type: 'show-chat-tab' }
   | { type: 'show-notes-tab' }
-  | { type: 'open-note'; noteId: number; destination?: AnnotationDestination; importSource?: NoteImportSource }
+  | { type: 'open-note'; noteId: number; mode?: NoteTextMode; destination?: AnnotationDestination; importSource?: NoteImportSource }
+  | { type: 'set-note-text-mode'; mode: NoteTextMode; noteId: number | null }
   | { type: 'reload-note' }
   | { type: 'close-note' }
   | { type: 'toggle-picture' }
@@ -575,6 +578,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ...state,
         mainView: 'notes',
         activeNoteId: action.noteId,
+        noteTextMode: action.mode ?? state.noteTextMode,
         noteDestination: action.destination,
         noteImportSource: action.importSource,
         noteRequest: state.noteRequest + 1,
@@ -582,10 +586,13 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ...(notesVisible && chatVisible ? {} : idleSessionOperation()),
       };
     }
+    case 'set-note-text-mode':
     case 'reload-note':
-      if (state.activeNoteId === null) return state;
+      if (action.type === 'set-note-text-mode' ? action.mode === state.noteTextMode : state.activeNoteId === null) return state;
       return {
         ...state,
+        noteTextMode: action.type === 'set-note-text-mode' ? action.mode : state.noteTextMode,
+        activeNoteId: action.type === 'set-note-text-mode' ? action.noteId : state.activeNoteId,
         noteDestination: undefined,
         noteImportSource: undefined,
         noteRequest: state.noteRequest + 1,

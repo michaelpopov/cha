@@ -7,7 +7,7 @@
     { "id": 7, "parent_id": null, "kind": "folder", "name": "Forum", "has_compressed": false, "has_audio": false, "read_only": false, "is_summary": false, "summary_linked": false, "forum_id": "research" }
   ],
   "contents": [
-    { "id": 4, "document": { "type": "doc", "content": [{ "type": "paragraph" }] }, "scroll_top": 1200 },
-    { "id": 6, "document": { "type": "doc", "content": [] }, "compressed_text": "Stored summary\nSecond line", "scroll_top": 0 }
+    { "id": 4, "document_id": 4, "document": { "type": "doc", "content": [{ "type": "paragraph" }] }, "scroll_top": 1200 },
+    { "id": 6, "document_id": 8, "document": { "type": "doc", "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Stored summary\nSecond line" }] }] }, "scroll_top": 0 }
   ]
 }

@@ -1,9 +1,10 @@
-import type { JSONContent } from '@tiptap/core';
+import { getSchema, type JSONContent } from '@tiptap/core';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import { redoDepth, undoDepth } from '@tiptap/pm/history';
 import { DOMParser as PmDOMParser, Fragment, Slice } from '@tiptap/pm/model';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import compressedNote from '../../../tests/fixtures/notes/compressed-note.json';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import {
   addNoteComment,
@@ -17,6 +18,7 @@ import {
   isAllowedNoteLink,
   noteHeadings,
   noteCommentRange,
+  notesExtensions,
   selectNoteEnd,
   selectNoteHeading,
   storedWebDestination,
@@ -56,6 +58,17 @@ afterEach(() => {
   open.length = 0;
   document.body.replaceChildren();
   vi.restoreAllMocks();
+});
+
+it('loads the literal compressed note document with the Notes schema', () => {
+  const schema = getSchema(notesExtensions());
+  const document = schema.nodeFromJSON(compressedNote.document);
+  document.check();
+  expect(document.textContent).toBe(compressedNote.text);
+  expect(document.toJSON()).toEqual(compressedNote.document);
+  const empty = schema.nodeFromJSON({ type: 'doc', content: [{ type: 'paragraph' }] });
+  empty.check();
+  expect(empty.textContent).toBe('');
 });
 
 function simplify(node: JSONContent): unknown {

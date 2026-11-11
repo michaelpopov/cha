@@ -6,8 +6,8 @@ std::vector<NoteItem> Application::list_note_items(std::uint64_t epoch) {
     return impl_->notes->list_note_items(epoch);
 }
 
-NoteContent Application::get_note(std::int64_t id, std::uint64_t epoch) {
-    return impl_->notes->get_note(id, epoch);
+NoteContent Application::get_note(std::int64_t id, std::uint64_t epoch, NoteTextMode mode) {
+    return impl_->notes->get_note(id, epoch, mode);
 }
 
 bool Application::save_note(std::int64_t id, const nlohmann::json& document, std::uint64_t epoch) {

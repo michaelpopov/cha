@@ -672,10 +672,14 @@ describe('notes native client', () => {
   const note = { id: 4, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: 1, kind: 'note', name: 'Draft' };
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
-  it('reads compressed text with the original note document', async () => {
-    const content = { id: 4, document, compressed_text: 'Stored summary\nSecond line' };
-    const client = clientFor({ 'notes.get': () => content });
-    expect(await client.getNote(4)).toEqual(content);
+  it('requests a compressed document by the logical note ID', async () => {
+    const content = { id: 4, document_id: 8, document };
+    const getNote = vi.fn(() => content);
+    const client = clientFor({ 'notes.get': getNote });
+    expect(await client.getNote(4, 'compressed')).toEqual(content);
+    expect(getNote).toHaveBeenCalledExactlyOnceWith({ id: 4, mode: 'compressed' });
+    await expect(client.getNote(4)).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.getNote(5, 'compressed')).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   function clientFor(handlers: Record<string, (params: unknown) => unknown>) {
@@ -892,7 +896,7 @@ describe('notes native client', () => {
       },
       'notes.get': (params) => {
         calls.push(['get', params]);
-        return { id: 4, document };
+        return { id: 4, document_id: 4, document };
       },
       'notes.save': (params) => {
         calls.push(['save', params]);
@@ -918,7 +922,7 @@ describe('notes native client', () => {
 
     expect(await client.listNoteItems()).toEqual([folder, note]);
     expect(await client.createNoteItem(1, 'note', 'Draft')).toEqual(note);
-    expect(await client.getNote(4)).toEqual({ id: 4, document });
+    expect(await client.getNote(4)).toEqual({ id: 4, document_id: 4, document });
     await client.saveNote(4, document);
     await client.saveNote(4, { type: 'doc', extra: true });
     await client.saveNoteScrollPosition(4, 1200);
@@ -939,14 +943,14 @@ describe('notes native client', () => {
   });
 
   it('accepts the shared notes wire contract', async () => {
-    const contract = loadFixture('notes-contract.json') as { items: unknown[]; contents: { id: number }[] };
+    const contract = loadFixture('notes-contract.json') as { items: unknown[]; contents: { id: number; document_id: number }[] };
     const client = clientFor({
       'notes.list': () => ({ items: contract.items }),
       'notes.get': params => contract.contents.find(content => content.id === (params as { id: number }).id),
     });
     expect(await client.listNoteItems()).toEqual(contract.items);
     for (const content of contract.contents) {
-      expect(await client.getNote(content.id)).toEqual(content);
+      expect(await client.getNote(content.id, content.document_id === content.id ? 'full_text' : 'compressed')).toEqual(content);
     }
   });
 
@@ -967,14 +971,16 @@ describe('notes native client', () => {
     ['notes.list', { items: [{ ...folder, forum_id: 1 }] }],
     ['notes.list', { items: [{ ...note, forum_id: '' }] }],
     ['notes.list', { item: [] }],
-    ['notes.get', { id: 4, document: [] }],
-    ['notes.get', { id: 4, document, compressed_text: null }],
-    ['notes.get', { id: 4, document, compressed_text: 42 }],
-    ['notes.get', { id: 4, document, scroll_top: -1 }],
-    ['notes.get', { id: 4, document, scroll_top: 0.5 }],
-    ['notes.get', { id: 4, document, scroll_top: 9007199254740992 }],
-    ['notes.get', { id: 4, document, scroll_top: '100' }],
-    ['notes.get', { id: 4, document, extra: true }],
+    ['notes.get', { id: 4, document_id: 4, document: [] }],
+    ['notes.get', { id: 4, document_id: 4, document, compressed_text: null }],
+    ['notes.get', { id: 4, document_id: 0, document }],
+    ['notes.get', { id: 4, document_id: 1.5, document }],
+    ['notes.get', { id: 4, document }],
+    ['notes.get', { id: 4, document_id: 4, document, scroll_top: -1 }],
+    ['notes.get', { id: 4, document_id: 4, document, scroll_top: 0.5 }],
+    ['notes.get', { id: 4, document_id: 4, document, scroll_top: 9007199254740992 }],
+    ['notes.get', { id: 4, document_id: 4, document, scroll_top: '100' }],
+    ['notes.get', { id: 4, document_id: 4, document, extra: true }],
     ['notes.get', { id: 4 }],
     ['notes.save', { ok: true }],
     ['notes.saveScrollPosition', { ok: true }],

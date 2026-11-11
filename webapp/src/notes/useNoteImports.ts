@@ -11,17 +11,17 @@ import type { useNoteLeave } from './useNoteLeave';
 import type { NoteSaveHandle } from './useNoteSave';
 
 type ImportState = { stage: string | null; error: string | null; replacing: boolean };
+type ImportTarget = { noteId: number; documentId: number };
 type Source = { kind: 'page'; url: string } | { kind: 'file'; file: File | string; explicit: boolean };
 
 type Options = {
   client: NotesClient;
   epoch: number;
   leave: Pick<ReturnType<typeof useNoteLeave>, 'beginNoteAction' | 'endNoteAction' | 'whenIdle'>;
-  openNote(): { id: number | null; editor: Editor | null; save: NoteSaveHandle | null };
+  openNote(): { noteId: number | null; documentId: number | null; editor: Editor | null; save: NoteSaveHandle | null };
+  waitForOpen(): Promise<void> | null;
   updated(item: NoteItem): void;
   refresh(): void;
-  cancelOpen(): void;
-  reload(id: number): void;
 };
 
 // The app owns these runs; opening or hiding an editor does not retire them.
@@ -36,8 +36,9 @@ export function useNoteImports(options: Options) {
     scope.current = { epoch: options.epoch, cancel: new AbortController(), runs: new Map() };
   }
 
-  function start(id: number, source: Source): Promise<boolean | null> {
+  function start({ noteId, documentId }: ImportTarget, source: Source): Promise<boolean | null> {
     const owner = scope.current;
+    if (owner.runs.get(documentId)?.stage != null) return Promise.resolve(false);
     const { client } = latest.current;
     const wireEpoch = client.contextEpoch();
     const current = () => {
@@ -45,7 +46,7 @@ export function useNoteImports(options: Options) {
       catch { return false; }
     };
     const run: ImportState = { stage: 'Retrieving content…', error: null, replacing: false };
-    owner.runs.set(id, run);
+    owner.runs.set(documentId, run);
     const stage = (text: string) => { if (current()) { run.stage = text; render(); } };
     const warning = (text: string) => { if (current()) { run.error = text; render(); } };
     render();
@@ -56,7 +57,7 @@ export function useNoteImports(options: Options) {
       let canceledSave = false;
       let guarded = false;
       let locked = false;
-      let reload = false;
+      const liveTarget = () => target && !target.isDestroyed && latest.current.openNote().editor === target;
       try {
         let html: string;
         let title: string;
@@ -103,24 +104,31 @@ export function useNoteImports(options: Options) {
         if (!current()) return false;
         const items = await client.listNoteItems();
         if (!current()) return false;
-        const note = items.find(item => item.id === id);
+        const note = items.find(item => item.id === noteId);
         if (!note) throw new ChaError('not_found', 'This note is no longer available.');
         if (note.read_only) throw new ChaError('invalid_argument', 'The note is read-only.');
+        // An opening may resolve to either row. Let it settle before deciding
+        // whether to merge through the live editor.
+        if (latest.current.openNote().noteId === noteId) await latest.current.waitForOpen();
+        if (!current()) return false;
         const open = latest.current.openNote();
-        if (open.id === id && open.editor && !open.editor.isDestroyed && open.save?.isOpen) {
+        if (open.documentId === documentId && open.editor && !open.editor.isDestroyed && open.save?.isOpen) {
           target = open.editor;
           save = open.save;
           canceledSave = save.freeze();
           await save.waitInFlight();
           if (!current()) return false;
           // The insertion must reach the normal save tracker before it is frozen again.
-          save.unfreeze(true);
-        } else {
-          // Retire a pending editor load before it can show a pre-import snapshot.
-          reload = open.id === id;
-          if (reload) latest.current.cancelOpen();
-          const content = await client.getNote(id);
+          if (liveTarget()) save.unfreeze(true);
+          else {
+            target = undefined;
+            save = null;
+          }
+        }
+        if (!target) {
+          const content = await client.getNote(noteId, documentId === noteId ? 'full_text' : 'compressed');
           if (!current()) return false;
+          if (content.document_id !== documentId) throw new ChaError('not_found', 'This note document is no longer available.');
           target = createNotesEditor({ content: content.document, readPicture: client.readNotePicture, onCommandError: rejected });
         }
         const wasEmpty = target.isEmpty;
@@ -134,13 +142,13 @@ export function useNoteImports(options: Options) {
         if (save) {
           if (!await save.flushRemaining()) throw new ChaError('internal_error', 'The note could not be saved.');
         } else {
-          const result = await client.saveNote(id, target.getJSON());
+          const result = await client.saveNote(documentId, target.getJSON());
           if (current() && result?.annotation_created) latest.current.refresh();
         }
         if (!current()) return false;
         if (title && /^New note(?: [1-9]\d*)?$/u.test(note.name) && (source.kind === 'file' || wasEmpty)) {
           try {
-            const renamed = await client.renameNoteItem(id, availableNoteName(items, note.parent_id, title, id));
+            const renamed = await client.renameNoteItem(noteId, availableNoteName(items, note.parent_id, title, noteId));
             if (!current()) return false;
             latest.current.updated(renamed);
           } catch (failure) {
@@ -151,7 +159,7 @@ export function useNoteImports(options: Options) {
         if (!current()) return false;
         if (source.kind === 'file' || wasEmpty) {
           try {
-            const item = await client.setNoteReadOnly(id, true);
+            const item = await client.setNoteReadOnly(noteId, true);
             if (!current()) return false;
             locked = true;
             latest.current.updated(item);
@@ -167,17 +175,16 @@ export function useNoteImports(options: Options) {
         return false;
       } finally {
         prepared?.destroy();
-        if (save && current()) {
+        if (save && current() && liveTarget()) {
           save.unfreeze(!locked);
           // A failed merge must not leave earlier edits without their canceled save.
           if (canceledSave && save.hasUnsaved() && !save.saveError) save.submitNow();
         }
         if (target && !save) target.destroy();
-        if (reload && current()) latest.current.reload(id);
         if (guarded) latest.current.leave.endNoteAction();
         if (!owner.cancel.signal.aborted) {
           run.stage = null;
-          if (!run.error) owner.runs.delete(id);
+          if (!run.error) owner.runs.delete(documentId);
           render();
         }
       }
@@ -194,8 +201,8 @@ export function useNoteImports(options: Options) {
         render();
       }
     },
-    page: (id: number, url: string) => start(id, { kind: 'page', url }),
-    file: (id: number, file: File | string, explicit = false) => start(id, { kind: 'file', file, explicit }),
+    page: (target: ImportTarget, url: string) => start(target, { kind: 'page', url }),
+    file: (target: ImportTarget, file: File | string, explicit = false) => start(target, { kind: 'file', file, explicit }),
   };
 }
 

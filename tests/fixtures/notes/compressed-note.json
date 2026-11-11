@@ -1,0 +1,13 @@
+{
+  "text": " \t# Café 😀\r\n\r\n**literal** \"quotes\" \\ path\n\n\nlast line\t ",
+  "document": {
+    "type": "doc",
+    "content": [{
+      "type": "paragraph",
+      "content": [{
+        "type": "text",
+        "text": " \t# Café 😀\r\n\r\n**literal** \"quotes\" \\ path\n\n\nlast line\t "
+      }]
+    }]
+  }
+}

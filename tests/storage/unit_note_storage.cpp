@@ -263,6 +263,7 @@ TEST_F(NoteStorageTest, SummaryReplacementKeepsIdentityAndClearsAudioCommentsAnd
     EXPECT_EQ(saved.name, first.name);
     EXPECT_TRUE(saved.read_only);
     EXPECT_FALSE(saved.has_compressed);
+    EXPECT_FALSE(database_->prepare("SELECT 1 FROM note_items WHERE parent_id=? AND compressed=1", saved.id).step());
     EXPECT_EQ(note_get(*database_, saved.id).scroll_top, 0);
     EXPECT_EQ(note_get(*database_, saved.id).document, summary_document("Replacement"));
     EXPECT_EQ(note_audio_info(*database_, saved.id)["count"], 0);
@@ -603,7 +604,7 @@ TEST_F(NoteStorageTest, ForumsPreserveLegacyNoteContentAndAnnotationsAtomically)
     }
     EXPECT_EQ(note_find_item(*database_, legacy.id)->name, "Forums (saved)");
     EXPECT_EQ(raw_content(*database_, legacy.id), blob);
-    EXPECT_EQ(note_get(*database_, legacy.id).compressed_text, "Compressed");
+    EXPECT_EQ(note_get(*database_, legacy.id, NoteTextMode::compressed).document, note_document_from_text("Compressed"));
     const auto items = note_list(*database_);
     const auto annotation = std::ranges::find_if(items, [](const auto& i) { return i.kind == NoteItemKind::annotation; });
     ASSERT_NE(annotation, items.end());
@@ -797,9 +798,10 @@ TEST_F(NoteStorageTest, AnnotationsLifecycleAndSharedRecognition) {
         [&] { note_save(*database_, annotation.id, fixture["document"]); },
         [&] { (void)note_rename(*database_, annotation.id, "Other"); },
         [&] { note_delete(*database_, annotation.id); },
-        [&] { (void)note_set_read_only(*database_, annotation.id, false); },
-        [&] { note_save_compressed(*database_, annotation.id, "text"); }
+        [&] { (void)note_set_read_only(*database_, annotation.id, false); }
     }) expect_note_error(NoteFailure::invalid, "That item is not a note.", operation);
+    expect_note_error(NoteFailure::not_found, "That note was not found.",
+        [&] { note_save_compressed(*database_, annotation.id, "text"); });
     EXPECT_NE(note_get_text(*database_, annotation.id).text.find("Comment"), std::string::npos);
     note_delete(*database_, source.id);
     EXPECT_EQ(note_get(*database_, annotation.id).document["content"][0]["content"][0]["text"], "No comments or highlights.");
@@ -865,7 +867,13 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     (void)note_create(*database_, {}, NoteItemKind::note, "Outside");
     const auto document = annotation_fixture()["document"];
     ASSERT_TRUE(note_save(*database_, seneca.id, document));
-    note_save_compressed(*database_, seneca.id, "Short text");
+    note_save_compressed(*database_, seneca.id, "Generated");
+    const auto compressed_id = note_get(*database_, seneca.id, NoteTextMode::compressed).document_id;
+    auto edited = note_document_from_text("Short text");
+    edited["content"][0]["content"].push_back({{"type", "hardBreak"}});
+    edited["content"][0]["content"].push_back({{"type", "text"}, {"text", "Revised"}});
+    EXPECT_FALSE(note_save(*database_, compressed_id, edited));
+    EXPECT_EQ(note_get_text(*database_, seneca.id, true).text, "Short text\\\nRevised");
     note_save_scroll_position(*database_, seneca.id, 42);
     (void)note_set_read_only(*database_, seneca.id, true);
     const auto first = workspace_.root() / "first.m4a", second = workspace_.root() / "second.m4a";
@@ -892,7 +900,7 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     EXPECT_TRUE(copied->read_only);
     const auto content = note_get(*target_, copied->id);
     EXPECT_EQ(content.document, document);
-    EXPECT_EQ(content.compressed_text, "Short text");
+    EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::compressed).document, edited);
     EXPECT_EQ(content.scroll_top, 42);
     EXPECT_EQ(note_audio_info(*target_, copied->id)["count"], 2);
     EXPECT_EQ(note_audio_clip(*target_, copied->id, 0).bytes, "first clip");
@@ -908,6 +916,57 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
         ++sources;
     }
     EXPECT_GT(sources, 0);
+
+    // Convert the source export to the old column layout and import it again.
+    {
+        Database legacy(file_, Database::Mode::read_write);
+        legacy.execute("DELETE FROM note_items WHERE compressed=1");
+        legacy.execute("ALTER TABLE note_items DROP COLUMN compressed");
+        legacy.execute("ALTER TABLE note_items ADD COLUMN compressed_text TEXT");
+        legacy.prepare("UPDATE note_items SET compressed_text='Short text' WHERE id=?", seneca.id).run();
+        legacy.prepare("UPDATE note_items SET compressed_text='Ignored' WHERE id=?", folder.id).run();
+    }
+    const auto legacy_parent = note_create(*target_, {}, NoteItemKind::folder, "Legacy");
+    const auto legacy_root = note_import_folder(*target_, legacy_parent.id, file_);
+    EXPECT_FALSE(note_find_item(*target_, legacy_root)->has_compressed);
+    const auto legacy_letters = target_item(legacy_root, "Letters");
+    ASSERT_TRUE(legacy_letters);
+    const auto legacy_note = target_item(legacy_letters->id, "Seneca");
+    ASSERT_TRUE(legacy_note);
+    EXPECT_TRUE(legacy_note->read_only);
+    const auto legacy_content = note_get(*target_, legacy_note->id);
+    EXPECT_EQ(legacy_content.document, document);
+    EXPECT_EQ(note_get(*target_, legacy_note->id, NoteTextMode::compressed).document, note_document_from_text("Short text"));
+    EXPECT_EQ(legacy_content.scroll_top, 42);
+    EXPECT_EQ(note_audio_info(*target_, legacy_note->id)["count"], 2);
+    EXPECT_EQ(note_audio_clip(*target_, legacy_note->id, 1).bytes, "second clip");
+}
+
+TEST_F(NoteFolderExportTest, InvalidCompressedDocumentRollsBackImport) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Stoics");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Seneca");
+    note_save_compressed(*database_, note.id, "Short text");
+    note_export_folder(*database_, folder.id, file_);
+    {
+        Database exported(file_, Database::Mode::read_write);
+        exported.execute("UPDATE note_items SET content_json=X'00' WHERE compressed=1");
+    }
+    EXPECT_THROW((void)note_import_folder(*target_, {}, file_), NoteError);
+    EXPECT_EQ(item_count(*target_), 0);
+}
+
+TEST_F(NoteFolderExportTest, RejectsCompressedRowWithoutAnOriginalNoteParent) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Stoics");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Seneca");
+    note_save_compressed(*database_, note.id, "Short text");
+    note_export_folder(*database_, folder.id, file_);
+    {
+        Database exported(file_, Database::Mode::read_write);
+        exported.prepare("UPDATE note_items SET parent_id=? WHERE compressed=1", folder.id).run();
+    }
+    expect_note_error(NoteFailure::invalid, "This file is not a CHA folder export.",
+        [&] { (void)note_import_folder(*target_, {}, file_); });
+    EXPECT_EQ(item_count(*target_), 0);
 }
 
 TEST_F(NoteFolderExportTest, ImportRejectsDuplicateNamesAndOtherFilesWithoutChanges) {
@@ -1114,26 +1173,131 @@ TEST_F(NoteStorageTest, AnnotationRebuildLargeBookAndIllustratedFolder) {
 }
 
 TEST_F(NoteStorageTest, CompressionPreservesOriginalAndSurvivesEditsAndReopen) {
-    const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Source");
     EXPECT_FALSE(note.has_compressed);
-    EXPECT_FALSE(note_get(*database_, note.id).compressed_text.has_value());
-    EXPECT_FALSE(nlohmann::json(note_get(*database_, note.id)).contains("compressed_text"));
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document_id, note.id);
+    EXPECT_EQ(note_get(*database_, note.id).document_id, note.id);
     const auto original = raw_content(*database_, note.id);
-    note_save_compressed(*database_, note.id, "First compressed text");
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "First compressed text");
-    EXPECT_TRUE(note_list(*database_).front().has_compressed);
+    std::ifstream input(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "tests/fixtures/notes/compressed-note.json");
+    const auto fixture = nlohmann::json::parse(input);
+    const auto text = fixture["text"].get<std::string>();
+    note_save_compressed(*database_, note.id, text);
+    const auto compressed_id = database_->last_insert_rowid();
+    EXPECT_EQ(nlohmann::json::parse(raw_content(*database_, compressed_id)), fixture["document"]);
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text(text));
+    EXPECT_EQ(note_get_text(*database_, note.id, true).text, text);
+    EXPECT_EQ(note_get_text(*database_, note.id, false).text, "");
+    ASSERT_EQ(note_list(*database_).size(), 2u);
+    EXPECT_TRUE(note_list(*database_).back().has_compressed);
+    EXPECT_FALSE(note_find_item(*database_, compressed_id));
+    for (const auto& operation : std::vector<std::function<void()>>{
+        [&] { (void)note_get(*database_, compressed_id); },
+        [&] { (void)note_get_text(*database_, compressed_id, true); },
+        [&] { (void)note_set_read_only(*database_, compressed_id, true); },
+        [&] { note_save_compressed(*database_, compressed_id, "Text"); },
+        [&] { note_save_compressed(*database_, folder.id, "Text"); },
+    }) expect_note_error(NoteFailure::not_found, "That note was not found.", operation);
+    expect_note_error(NoteFailure::not_found, "That note or folder was not found.",
+        [&] { (void)note_rename(*database_, compressed_id, "Other"); });
+    expect_note_error(NoteFailure::not_found, "That note or folder was not found.",
+        [&] { note_delete(*database_, compressed_id); });
     EXPECT_EQ(raw_content(*database_, note.id), original);
     note_save(*database_, note.id, {{"type", "doc"}, {"changed", true}});
     EXPECT_TRUE(note_rename(*database_, note.id, "Renamed").has_compressed);
+    EXPECT_TRUE(note_set_read_only(*database_, note.id, true).read_only);
     note_save_compressed(*database_, note.id, "Replacement");
     database_.reset();
     database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Replacement");
-    EXPECT_EQ(nlohmann::json(note_get(*database_, note.id))["compressed_text"], "Replacement");
-    auto stored = database_->prepare("SELECT compressed_text FROM note_items WHERE id = ?1", note.id);
-    ASSERT_TRUE(stored.step());
-    EXPECT_EQ(stored.text(0), "Replacement");
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Replacement"));
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document_id, compressed_id);
+    {
+        auto stored = database_->prepare(
+            "SELECT id,name,read_only,scroll_top FROM note_items WHERE parent_id=? AND compressed=1", note.id);
+        ASSERT_TRUE(stored.step());
+        EXPECT_EQ(stored.integer(0), compressed_id);
+        EXPECT_EQ(stored.text(1), "Source");
+        EXPECT_EQ(stored.integer(2), 0);
+        EXPECT_EQ(stored.integer(3), 0);
+        EXPECT_FALSE(stored.step());
+    }
     EXPECT_THROW(note_save_compressed(*database_, note.id, " \n\t"), NoteError);
+    expect_note_error(NoteFailure::too_large, "Note exceeds 12 MiB. Remove content or use a smaller picture.",
+        [&] { note_save_compressed(*database_, note.id, std::string(note_document_byte_limit / 2, '"')); });
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Replacement"));
+    note_delete(*database_, folder.id);
+    EXPECT_EQ(item_count(*database_), 0);
+}
+
+TEST_F(NoteStorageTest, DamagedCompressionFailsReadsThatUseIt) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
+    note_save_compressed(*database_, note.id, "Summary");
+    for (const auto& bytes : {std::string("broken"), compressed_content(R"({"type":"paragraph"})")}) {
+        auto update = database_->prepare("UPDATE note_items SET content_json=? WHERE parent_id=? AND compressed=1");
+        update.bind_blob(1, bytes);
+        update.bind(2, note.id);
+        update.run();
+        expect_note_error(NoteFailure::opening, "The note could not be opened.",
+            [&] { (void)note_get(*database_, note.id, NoteTextMode::compressed); });
+        EXPECT_EQ(note_get(*database_, note.id).document_id, note.id);
+        expect_note_error(NoteFailure::opening, "The note could not be opened.",
+            [&] { (void)note_get_text(*database_, note.id, true); });
+        EXPECT_EQ(note_get_text(*database_, note.id, false).text, "");
+    }
+    note_save_compressed(*database_, note.id, "Summary");
+    auto corrupt_original = database_->prepare("UPDATE note_items SET content_json=? WHERE id=?");
+    corrupt_original.bind_blob(1, "broken");
+    corrupt_original.bind(2, note.id);
+    corrupt_original.run();
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Summary"));
+    EXPECT_THROW((void)note_get(*database_, note.id), NoteError);
+}
+
+TEST_F(NoteStorageTest, SavesOnlyTheLoadedDocumentWithSharedPermissions) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Folder");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Source");
+    const auto fallback = note_get(*database_, note.id, NoteTextMode::compressed);
+    ASSERT_EQ(fallback.document_id, note.id);
+    note_save_compressed(*database_, note.id, "Summary");
+    const auto compressed = note_get(*database_, note.id, NoteTextMode::compressed);
+    ASSERT_NE(compressed.document_id, note.id);
+    ASSERT_EQ(compressed.id, note.id);
+    auto full = note_document_from_text("Full text with highlight");
+    const auto marks = nlohmann::json::array({{{"type", "highlight"}, {"attrs", {{"color", "yellow"}}}}});
+    full["content"][0]["content"][0]["marks"] = marks;
+    EXPECT_TRUE(note_save(*database_, fallback.document_id, full));
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, compressed.document);
+    const auto annotations = note_list(*database_).back();
+    ASSERT_EQ(annotations.kind, NoteItemKind::annotation);
+    const auto aggregation = note_get(*database_, annotations.id, NoteTextMode::compressed);
+    EXPECT_EQ(aggregation.document_id, annotations.id);
+    EXPECT_THROW((void)note_get(*database_, folder.id, NoteTextMode::compressed), NoteError);
+
+    (void)note_set_read_only(*database_, note.id, true);
+    EXPECT_THROW(note_save(*database_, compressed.document_id, note_document_from_text("Different")), NoteError);
+    auto highlighted = compressed.document;
+    highlighted["content"][0]["content"][0]["marks"] = marks;
+    EXPECT_FALSE(note_save(*database_, compressed.document_id, highlighted));
+    EXPECT_EQ(note_get(*database_, annotations.id).document, aggregation.document);
+    EXPECT_EQ(note_get(*database_, note.id).document, full);
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, highlighted);
+
+    (void)note_set_read_only(*database_, note.id, false);
+    const auto empty = note_document_from_text("");
+    EXPECT_FALSE(note_save(*database_, compressed.document_id, empty));
+    note_save_scroll_position(*database_, compressed.document_id, 300);
+    note_save_scroll_position(*database_, note.id, 50);
+    const auto reopened = note_get(*database_, note.id, NoteTextMode::compressed);
+    EXPECT_EQ(reopened.document, empty);
+    EXPECT_EQ(reopened.document_id, compressed.document_id);
+    EXPECT_EQ(reopened.scroll_top, 300);
+    EXPECT_EQ(note_get(*database_, note.id).scroll_top, 50);
+
+    database_->prepare("DELETE FROM note_items WHERE id=?", compressed.document_id).run();
+    note_save_compressed(*database_, note.id, "Replacement");
+    EXPECT_THROW(note_save(*database_, compressed.document_id, highlighted), NoteError);
+    EXPECT_THROW(note_save_scroll_position(*database_, compressed.document_id, 100), NoteError);
+    EXPECT_EQ(note_get_text(*database_, note.id, true).text, "Replacement");
 }
 
 TEST_F(NoteStorageTest, CompressionCommitChecksSourceAndAtomicallyStoresItsEvent) {
@@ -1142,15 +1306,15 @@ TEST_F(NoteStorageTest, CompressionCommitChecksSourceAndAtomicallyStoresItsEvent
     const auto source = note_get_text(*database_, note.id).text;
     note_save_compressed(*database_, note.id, "Previous");
     EXPECT_FALSE(note_commit_compressed(*database_, note.id, "Changed", "Stale", "Ready"));
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Previous");
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Previous"));
     EXPECT_TRUE(event_list(*database_).empty());
     database_->execute("CREATE TRIGGER reject_success BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT,'event failure'); END");
     EXPECT_THROW(note_commit_compressed(*database_, note.id, source, "Replacement", "Ready"), NoteError);
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Previous");
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Previous"));
     EXPECT_TRUE(event_list(*database_).empty());
     database_->execute("DROP TRIGGER reject_success");
     EXPECT_TRUE(note_commit_compressed(*database_, note.id, source, "Replacement", "Ready"));
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Replacement");
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Replacement"));
     ASSERT_EQ(event_list(*database_).size(), 1U);
     EXPECT_EQ(event_list(*database_).front().severity, EventSeverity::success);
 }
@@ -1167,7 +1331,7 @@ TEST_F(NoteStorageTest, CompressionSourceIncludesCommentsButIgnoresUnchangedHigh
     document["content"].push_back(nlohmann::json::parse(R"({"type":"paragraph","content":[{"type":"text","text":"Comment","marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}]})"));
     note_save(*database_, note.id, document);
     EXPECT_FALSE(note_commit_compressed(*database_, note.id, source, "Stale", "Ready"));
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Summary");
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Summary"));
     EXPECT_EQ(event_list(*database_).size(), 1U);
 }
 
@@ -1186,7 +1350,7 @@ TEST_F(NoteStorageTest, ReadOnlyStateSurvivesReopenAndProtectsOnlyContent) {
     EXPECT_EQ(note_get(*database_, note.id).document, original);
     EXPECT_TRUE(note_rename(*database_, note.id, "Renamed").read_only);
     note_save_compressed(*database_, note.id, "Summary");
-    EXPECT_EQ(note_get(*database_, note.id).compressed_text, "Summary");
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Summary"));
     EXPECT_EQ(note_get_text(*database_, note.id, true).text, "Summary");
     EXPECT_FALSE(note_set_read_only(*database_, note.id, false).read_only);
     note_save(*database_, note.id, {{"changed", true}});
@@ -1426,6 +1590,8 @@ TEST_F(NoteStorageTest, ReplacesLegacyTextNotesOnce) {
         ) STRICT;
         INSERT INTO note_items VALUES (1, NULL, NULL), (2, 1, NULL), (3, 2, '{}');
     )sql");
+    migrate_compressed_notes(*database_);
+    EXPECT_EQ(item_count(*database_), 3);
     {
         storage::SqliteTransaction transaction(*database_);
         create_note_items_schema(*database_);
@@ -1440,6 +1606,25 @@ TEST_F(NoteStorageTest, ReplacesLegacyTextNotesOnce) {
     }
     ASSERT_EQ(note_list(*database_).size(), 1U);
     EXPECT_EQ(note_get(*database_, note.id).document, nlohmann::json::parse(empty_note_document));
+}
+
+TEST_F(NoteStorageTest, ReplacesLegacyTextNotesWithCompressedText) {
+    database_->execute(R"sql(
+        DROP TABLE note_items;
+        CREATE TABLE note_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL, name TEXT NOT NULL, content_json TEXT, compressed_text TEXT
+        ) STRICT;
+        INSERT INTO note_items VALUES (1, NULL, 'note', 'Old', '{}', 'Summary');
+    )sql");
+    migrate_compressed_notes(*database_);
+    {
+        storage::SqliteTransaction transaction(*database_);
+        create_note_items_schema(*database_);
+        transaction.commit();
+    }
+    EXPECT_TRUE(note_list(*database_).empty());
 }
 
 TEST(NoteStorage, ConvertsNoteBlocksLinksAndImageDescriptionsToMarkdown) {

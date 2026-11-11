@@ -649,6 +649,24 @@ describe('character picture selection', () => {
     expect(state.notesEpoch).toBe(1);
     expect(state.activeConversation).toBeNull();
   });
+
+  it('keeps the text mode for the app session and only reloads when it changes', () => {
+    const initial = readyState();
+    expect(initial.noteTextMode).toBe('full_text');
+    let state = appReducer(initial, {
+      type: 'open-note', noteId: 4, importSource: { kind: 'file', path: '/tmp/note.md' },
+    });
+    const change = { type: 'set-note-text-mode', mode: 'compressed', noteId: 4 } as const;
+    state = appReducer(state, change);
+    expect(state).toMatchObject({ noteTextMode: 'compressed', noteRequest: 2, activeNoteId: 4, notesEpoch: 0 });
+    expect(state.noteImportSource).toBeUndefined();
+    expect(appReducer(state, change)).toBe(state);
+    state = appReducer(state, { type: 'show-settings' });
+    expect(state.noteTextMode).toBe('compressed');
+    state = appReducer(state, { type: 'vault-context-reset' });
+    expect(state.noteTextMode).toBe('compressed');
+    expect(state.activeNoteId).toBeNull();
+  });
 });
 
 describe('session activity', () => {

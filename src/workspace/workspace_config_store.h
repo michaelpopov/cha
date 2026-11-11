@@ -400,7 +400,7 @@ public:
         std::optional<std::int64_t> parent_id,
         NoteItemKind kind,
         std::string_view name);
-    [[nodiscard]] NoteContent get_note(std::int64_t id) const;
+    [[nodiscard]] NoteContent get_note(std::int64_t id, NoteTextMode mode = NoteTextMode::full_text) const;
     [[nodiscard]] NoteText get_note_text(std::int64_t id, bool prefer_compressed = false) const;
     bool save_note(std::int64_t id, const nlohmann::json& document);
     void save_note_scroll_position(std::int64_t id, std::int64_t scroll_top);

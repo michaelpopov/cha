@@ -378,7 +378,7 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     (void)wait_upload(application->start_database_upload({}, application->context_epoch()));
     compression.join();
     EXPECT_FALSE(application->note_compression_status(pending, application->context_epoch())["pending"].get<bool>());
-    EXPECT_FALSE(application->get_note(pending, application->context_epoch()).compressed_text);
+    EXPECT_EQ(application->get_note(pending, application->context_epoch(), NoteTextMode::compressed).document_id, pending);
     server.join();
     ASSERT_EQ(server.requests().size(), 3U);
     const auto uploaded = pair.workspace_a.root() / "uploaded-notes.sqlite3";
@@ -1265,7 +1265,7 @@ TEST(ApplicationVault, FailedMaintenanceReservationCancelsCompressionInTheOrigin
     EXPECT_GT(recovered_epoch, epoch);
     EXPECT_EQ(application->current_vault().get().name, "A");
     EXPECT_FALSE(application->note_compression_status(pending, recovered_epoch)["pending"].get<bool>());
-    EXPECT_FALSE(application->get_note(pending, recovered_epoch).compressed_text);
+    EXPECT_EQ(application->get_note(pending, recovered_epoch, NoteTextMode::compressed).document_id, pending);
     const auto events = application->list_events(recovered_epoch);
     ASSERT_EQ(events.size(), 2U);
     EXPECT_EQ(events.front().message, "Compression cancelled for “Pending compression” (note " + std::to_string(pending) + ").");
@@ -1333,7 +1333,7 @@ TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
     }
     EXPECT_TRUE(application->join_shutdown(2s));
     storage::SqliteDatabase database(pair.database_a, storage::SqliteDatabase::Mode::read_write);
-    EXPECT_FALSE(note_get(database, pending).compressed_text);
+    EXPECT_EQ(note_get(database, pending, NoteTextMode::compressed).document_id, pending);
     EXPECT_EQ(event_list(database).front().severity, EventSeverity::info);
 }
 

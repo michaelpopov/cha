@@ -556,8 +556,12 @@ class ChaWebIntegration(DaemonHarness):
         with sqlite3.connect(database) as db:
             folder = db.execute("INSERT INTO note_items(kind,name) VALUES('folder','Reading')").lastrowid
             note = db.execute("""INSERT INTO note_items(parent_id,kind,name,content_json,
-                compressed_text,read_only,scroll_top) VALUES(?,'note','Article',?,'Summary only',1,432)""",
+                read_only,scroll_top) VALUES(?,'note','Article',?,1,432)""",
                 (folder, zlib.compress(json.dumps(document).encode()))).lastrowid
+            summary = {"type": "doc", "content": [{"type": "paragraph", "content": [
+                {"type": "text", "text": "Summary only"}]}]}
+            compressed = db.execute("""INSERT INTO note_items(parent_id,kind,name,content_json,compressed)
+                VALUES(?,'note','Article',?,1)""", (note, zlib.compress(json.dumps(summary).encode()))).lastrowid
             annotation = db.execute("""INSERT INTO note_items(parent_id,kind,name,content_json,read_only)
                 VALUES(?,'annotation','ANNOTATIONS',?,1)""",
                 (folder, zlib.compress(json.dumps(document).encode()))).lastrowid
@@ -568,6 +572,8 @@ class ChaWebIntegration(DaemonHarness):
         self.assertEqual(status, 200, raw)
         items = {item["id"]: item for item in json.loads(raw)["items"]}
         self.assertIn(folder, items)
+        self.assertNotIn(compressed, items)
+        self.assertTrue(items[note]["has_compressed"])
         for item_id in (note, annotation):
             path = CHAWEB + f"/notes/{item_id}"
             status, headers, raw = self.exchange("GET", path)
@@ -577,7 +583,7 @@ class ChaWebIntegration(DaemonHarness):
             for method in ("POST", "PUT", "PATCH", "DELETE"):
                 self.assertEqual(self.exchange(method, path, {})[0], 404)
                 self.assertEqual(self.exchange(method, CHAWEB + "/notes", {})[0], 404)
-        for suffix in (str(folder), "9007199254740991", "0", "-1", "1.5", "9007199254740992", "1/extra"):
+        for suffix in (str(folder), str(compressed), "9007199254740991", "0", "-1", "1.5", "9007199254740992", "1/extra"):
             self.assertEqual(self.exchange("GET", CHAWEB + "/notes/" + suffix)[0], 404)
         with sqlite3.connect(database) as db:
             self.assertEqual(db.execute("SELECT * FROM note_items ORDER BY id").fetchall(), before)

@@ -256,6 +256,25 @@ describe('note save scheduling', () => {
     expect(view.result.current.hasUnsaved()).toBe(true);
   });
 
+  it('sends a replacement editor save whose deadline passed during an older write', async () => {
+    const first = deferred();
+    const save = vi.fn().mockImplementationOnce(() => first.promise).mockResolvedValue(undefined);
+    const { editor, view } = setup(save);
+    insertText(editor, 'Original');
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    const replacement = createNotesEditor({ readPicture: async () => new Uint8Array() });
+    open.push(replacement);
+    act(() => view.rerender({ editor: replacement, noteId: 9, contextKey: 'vault' }));
+    insertText(replacement, 'Replacement');
+    await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
+    expect(save).toHaveBeenCalledOnce();
+    await act(async () => { first.reject(new Error('Late failure')); });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenLastCalledWith(replacement.getJSON());
+    expect(view.result.current.saveError).toBeNull();
+    expect(view.result.current.hasUnsaved()).toBe(false);
+  });
+
   it('does not save a selection-only change', async () => {
     const save = vi.fn(async () => undefined);
     const { editor, view } = setup(save);

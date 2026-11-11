@@ -23,6 +23,7 @@ import {
   type ChaClient,
   type NoteItem,
   type NotesClient,
+  type NoteTextMode,
 } from '../api/client';
 import { textFileAccept } from '../textFile';
 import {
@@ -55,6 +56,7 @@ import {
   FontSizeIcon,
   HighlighterIcon,
   HistoryIcon,
+  NoteTextModeIcon,
   PlaybackSpeedIcon,
   SearchIcon,
   TextFormatIcon,
@@ -127,9 +129,8 @@ function runHistory(editor: Editor, command: 'undo' | 'redo') {
   else editor.chain().redo().run();
 }
 
-// A toolbar button with a menu below it. The menu focuses its first enabled
-// item only when it opens. It closes on Escape, on a press outside it, or when
-// its button becomes disabled, so it cannot reappear later and take focus.
+// A toolbar menu focuses the checked radio item or the first enabled item
+// when it opens. It closes on Escape, an outside press, or a disabled trigger.
 function ToolbarMenu({
   editor,
   label,
@@ -161,7 +162,8 @@ function ToolbarMenu({
       onOpenChange(false);
       return;
     }
-    menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    const checked = menu.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"][aria-checked="true"]:not(:disabled)');
+    (checked ?? menu.current?.querySelector<HTMLButtonElement>('button:not(:disabled)'))?.focus();
     const dismiss = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && root.current?.contains(target)) return;
@@ -203,8 +205,15 @@ function ToolbarMenu({
   );
 }
 
+const noteTextLabels = { full_text: 'Full text', compressed: 'Compressed' } as const;
+const noteTextModes = ['full_text', 'compressed'] as const;
+
 function FormatBar({
   editor,
+  noteTextMode,
+  loadedTextMode,
+  noteActionPending,
+  onNoteTextModeChange,
   onHighlight,
   frozen,
   immutable,
@@ -212,7 +221,6 @@ function FormatBar({
   onFontSizeChange,
   playbackSpeed,
   onPlaybackSpeedChange,
-  toolbarRef,
   onFind,
   onPicture,
   onUpload,
@@ -220,6 +228,10 @@ function FormatBar({
   uploadEnabled,
 }: {
   editor: Editor;
+  noteTextMode: NoteTextMode;
+  loadedTextMode: NoteTextMode;
+  noteActionPending: boolean;
+  onNoteTextModeChange(mode: NoteTextMode): void;
   onHighlight(highlight: NoteHighlight): void;
   frozen: boolean;
   immutable: boolean;
@@ -227,7 +239,6 @@ function FormatBar({
   onFontSizeChange(size: number): void;
   playbackSpeed: number;
   onPlaybackSpeedChange(speed: number): void;
-  toolbarRef: { current: HTMLDivElement | null };
   onFind(): void;
   onPicture(file: File): void;
   onUpload(): void;
@@ -235,7 +246,7 @@ function FormatBar({
   uploadEnabled: boolean;
 }) {
   const [, setTick] = useState(0);
-  const [formatMenu, setFormatMenu] = useState<'content' | 'history' | 'edit' | 'font' | 'speed' | 'heading' | 'insert' | 'list' | null>(null);
+  const [formatMenu, setFormatMenu] = useState<'mode' | 'content' | 'history' | 'edit' | 'font' | 'speed' | 'heading' | 'insert' | 'list' | null>(null);
   const [headingsOpen, setHeadingsOpen] = useState(false);
   const listButton = useRef<HTMLButtonElement | null>(null);
   const listMenu = useRef<HTMLDivElement | null>(null);
@@ -270,6 +281,7 @@ function FormatBar({
   useLayoutEffect(() => {
     const anchor = fontAnchor.current;
     fontAnchor.current = null;
+    if (editor.isDestroyed) return;
     const host = editor.view.dom.closest('.cha-notes-document');
     if (!anchor || !host || !anchor.block.isConnected) return;
     const box = anchor.block.getBoundingClientRect();
@@ -332,7 +344,34 @@ function FormatBar({
   // Each toolbar action returns focus to the note. A menu or dialog that an
   // action opens then focuses its own first control.
   return (
-    <div className="cha-notes-toolbar" onClick={() => focusNotesEditor(editor)} ref={toolbarRef}>
+    <>
+      <div className="cha-notes-toolbar-group">
+        <ToolbarMenu
+          disabled={noteActionPending}
+          editor={editor}
+          icon={<NoteTextModeIcon />}
+          label="Note text mode"
+          title={`${noteTextLabels[noteTextMode]} mode; showing ${noteTextLabels[loadedTextMode].toLowerCase()}`}
+          onOpenChange={(open) => setFormatMenu(open ? 'mode' : null)}
+          open={formatMenu === 'mode'}
+        >
+          {noteTextModes.map(value => (
+            <button
+              aria-checked={noteTextMode === value}
+              key={value}
+              onClick={() => {
+                setFormatMenu(null);
+                onNoteTextModeChange(value);
+              }}
+              role="menuitemradio"
+              type="button"
+            >
+              <span>{noteTextLabels[value]}</span>
+              {noteTextMode === value && <CheckIcon />}
+            </button>
+          ))}
+        </ToolbarMenu>
+      </div>
       <div className="cha-notes-toolbar-group">
         <ToolbarMenu
           editor={editor}
@@ -662,7 +701,7 @@ function FormatBar({
           onClose={() => focusNotesEditor(editor)}
         />
       </div>
-    </div>
+    </>
   );
 }
 
@@ -836,6 +875,10 @@ export function NotesScreen({
   client,
   notesEpoch,
   noteRequest,
+  noteTextMode,
+  onNoteTextModeChange,
+  noteActionPending,
+  compressionOpen,
   autoFocus = true,
   destination,
   importSource,
@@ -849,6 +892,7 @@ export function NotesScreen({
   editorLiveRef,
   leave,
   onRegisterSave,
+  onRegisterLoad,
   onRegisterDispose,
   sessionStatus,
   toolbarVisible = true,
@@ -857,6 +901,10 @@ export function NotesScreen({
   client: ChaClient & NotesClient;
   notesEpoch: number;
   noteRequest: number;
+  noteTextMode: NoteTextMode;
+  onNoteTextModeChange(mode: NoteTextMode): void;
+  noteActionPending: boolean;
+  compressionOpen?: boolean;
   autoFocus?: boolean;
   destination?: AnnotationDestination;
   importSource?: NoteImportSource;
@@ -869,7 +917,8 @@ export function NotesScreen({
   navigate: Dispatch<NavigationAction>;
   editorLiveRef: MutableRefObject<Editor | null>;
   leave: LeaveHandle;
-  onRegisterSave(save: NoteSaveHandle | null): void;
+  onRegisterSave(save: NoteSaveHandle | null, documentId: number | null): void;
+  onRegisterLoad?(load: Promise<void>): void;
   onRegisterDispose(dispose: () => void): void;
   sessionStatus?: ReactNode;
   toolbarVisible?: boolean;
@@ -881,7 +930,8 @@ export function NotesScreen({
   const [playbackSpeed, setPlaybackSpeed] = useState(10);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
-  const importState = imports.state(activeNoteId);
+  const [documentId, setDocumentId] = useState<number | null>(null);
+  const importState = imports.state(documentId);
   const importing = importState?.stage ?? null;
   const replacing = importing !== null && importState?.replacing === true;
   const importError = promptError ?? importState?.error;
@@ -918,10 +968,12 @@ export function NotesScreen({
   const [useRegex, setUseRegex] = useState(false);
   const handledImportRequest = useRef<string | null>(null);
   const cancelNoteLoadRef = useRef<() => void>(() => undefined);
+  const settleLoadRef = useRef<() => void>(() => undefined);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
+  const fullTextLoaded = documentId !== null && documentId === activeNoteId;
   const noteAudio = useNoteAudio({ client: client.noteAudio, id: activeNoteId, editor,
-    enabled: readOnly && !immutable && phase === 'ready', menuOpen: contextMenu !== null,
+    enabled: fullTextLoaded && readOnly && !immutable && phase === 'ready', menuOpen: contextMenu !== null,
     playbackRate: playbackSpeed / 10, onError: setCommandError });
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const findRef = useRef<HTMLDivElement | null>(null);
@@ -947,36 +999,29 @@ export function NotesScreen({
 
   const save = useNoteSave({
     editor: phase === 'ready' ? editor : null,
-    noteId: activeNoteId,
+    noteId: documentId,
     contextKey: notesEpoch,
     save: async (document) => {
-      const id = noteIdRef.current;
-      if (id === null) return;
-      const epoch = epochRef.current;
-      const result = await client.saveNote(id, document);
-      if (epoch === epochRef.current && result.annotation_created) noteActions?.refresh();
+      if (documentId === null) return;
+      const result = await client.saveNote(documentId, document);
+      if (notesEpoch === epochRef.current && editorRef.current === editor && result.annotation_created) noteActions?.refresh();
     },
     saveScrollPosition: async () => {
       const host = hostRef.current;
-      if (!host || !editor || editor.isDestroyed || editorRef.current !== editor || activeNoteId === null) return;
-      await client.saveNoteScrollPosition(activeNoteId, Math.max(0, Math.round(host.scrollTop)));
+      if (!host || !editor || editor.isDestroyed || editorRef.current !== editor || documentId === null
+          || epochRef.current !== notesEpoch) return;
+      await client.saveNoteScrollPosition(documentId, Math.max(0, Math.round(host.scrollTop)));
     },
   });
   // A file import replaces the note, so the screen stays frozen as during a save.
-  const frozen = save.frozen || replacing;
+  const frozen = save.frozen || replacing || !!compressionOpen;
 
   useLayoutEffect(() => {
-    onRegisterSave(save);
-    return () => onRegisterSave(null);
+    onRegisterSave(save, documentId);
+    return () => onRegisterSave(null, null);
   });
 
-  // The passive cleanup below destroys the old editor later. Until then, a
-  // background import must not see it as the editor of the newly opened note.
-  useLayoutEffect(() => () => {
-    editorLiveRef.current = null;
-  }, [activeNoteId, noteRequest, notesEpoch, editorLiveRef]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     setCommandError(null);
     setPromptError(null);
     if (activeNoteId === null) {
@@ -987,12 +1032,16 @@ export function NotesScreen({
     const noteId = activeNoteId;
     const noteName = itemsRef.current.find((item) => item.id === noteId)?.name ?? 'note';
     let cancelled = false;
-    cancelNoteLoadRef.current = () => { cancelled = true; };
+    const load = new Promise<void>(resolve => { settleLoadRef.current = resolve; });
+    const settle = settleLoadRef.current;
+    onRegisterLoad?.(load);
+    const cancel = () => { cancelled = true; settle(); };
+    cancelNoteLoadRef.current = cancel;
     setPhase('loading');
     setOpenError(null);
     void (async () => {
       try {
-        const content = await clientRef.current.getNote(noteId);
+        const content = await clientRef.current.getNote(noteId, noteTextMode);
         if (cancelled) return;
         const items = itemsRef.current;
         const shownDocument = items.find((item) => item.id === noteId)?.kind === 'annotation'
@@ -1004,7 +1053,7 @@ export function NotesScreen({
             content: shownDocument as Content,
             immutable: () => itemsRef.current.find((item) => item.id === noteId)?.kind !== 'note',
             onOpenAnnotation: (sourceId, target) => {
-              if (!cancelled) navigate({ type: 'open-note', noteId: sourceId, destination: target });
+              if (!cancelled) navigate({ type: 'open-note', noteId: sourceId, mode: 'full_text', destination: target });
             },
             readPicture: (url) => clientRef.current.readNotePicture(url),
             onRejectedContent: () => { rejected = true; },
@@ -1038,6 +1087,7 @@ export function NotesScreen({
         scrollTopRef.current = content.scroll_top ?? 0;
         editorRef.current = created;
         setEditor(created);
+        setDocumentId(content.document_id);
         setPhase('ready');
       } catch (failure: unknown) {
         if (cancelled) return;
@@ -1053,11 +1103,13 @@ export function NotesScreen({
       }
     })();
     return () => {
-      cancelled = true;
+      cancel();
       const current = editorRef.current;
       editorRef.current = null;
+      if (editorLiveRef.current === current) editorLiveRef.current = null;
       if (current && !current.isDestroyed) current.destroy();
       setEditor(null);
+      setDocumentId(null);
     };
   }, [activeNoteId, noteRequest, notesEpoch]);
 
@@ -1107,7 +1159,7 @@ export function NotesScreen({
 
   useEffect(() => {
     if (phase !== 'ready' || !editor || editor.isDestroyed) return;
-    editor.setEditable(!readOnly && !save.frozen, false);
+    editor.setEditable(!readOnly && !frozen, false);
     setEditing(true);
     editorLiveRef.current = editor;
     const dom = editor.view.dom as HTMLElement & { chaEditor?: Editor };
@@ -1124,8 +1176,12 @@ export function NotesScreen({
   // This effect must follow the one above, which does not know about imports.
   useEffect(() => {
     if (phase !== 'ready' || !editor || editor.isDestroyed || save.frozen) return;
-    editor.setEditable(!readOnly && !replacing, false);
-  }, [editor, phase, readOnly, replacing]);
+    editor.setEditable(!readOnly && !frozen, false);
+  }, [editor, phase, readOnly, frozen, save.frozen]);
+
+  useEffect(() => {
+    if (phase === 'error' || (phase === 'ready' && editor && !editor.isDestroyed)) settleLoadRef.current();
+  }, [editor, phase]);
 
   useEffect(() => {
     setFindOpen(false);
@@ -1137,7 +1193,7 @@ export function NotesScreen({
     setPromptError(null);
     setPromptPending(false);
     setContextMenu(null);
-  }, [activeNoteId]);
+  }, [activeNoteId, noteTextMode]);
 
   useEffect(() => {
     if (!importSource || phase !== 'ready' || !editing || !editor || activeNoteId === null
@@ -1147,8 +1203,9 @@ export function NotesScreen({
     // Consume the opening even if it already has content; later edits must not retry it.
     handledImportRequest.current = request;
     if (editor.isEmpty) {
-      if (importSource.kind === 'page') void imports.page(activeNoteId, importSource.url);
-      else void imports.file(activeNoteId, importSource.path, true);
+      const target = { noteId: activeNoteId, documentId: activeNoteId };
+      if (importSource.kind === 'page') void imports.page(target, importSource.url);
+      else void imports.file(target, importSource.path, true);
     }
   }, [importSource, phase, editing, editor, activeNoteId, notesEpoch, noteRequest, save.frozen, importing]);
 
@@ -1326,9 +1383,9 @@ export function NotesScreen({
     const current = editorRef.current;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
-    if (importing !== null || !current || noteId === null || !sameEditorContext(current, noteId, epoch)) return false;
+    if (importing !== null || !current || noteId === null || documentId === null || !sameEditorContext(current, noteId, epoch)) return false;
     setPromptError(null);
-    const result = await imports.file(noteId, file);
+    const result = await imports.file({ noteId, documentId }, file);
     if (sameEditorIdentity(current, noteId, epoch)) return result;
     if (result === true && sent !== undefined) clearSentPrompt(sent);
     return false;
@@ -1338,11 +1395,11 @@ export function NotesScreen({
     const current = editorRef.current;
     const noteId = noteIdRef.current;
     const epoch = epochRef.current;
-    if (importing !== null || !current || noteId === null || !sameEditorContext(current, noteId, epoch)) {
+    if (importing !== null || !current || noteId === null || documentId === null || !sameEditorContext(current, noteId, epoch)) {
       return { clear_input: false };
     }
     setPromptError(null);
-    const result = await imports.page(noteId, url);
+    const result = await imports.page({ noteId, documentId }, url);
     if (sameEditorIdentity(current, noteId, epoch)) return { clear_input: result === true };
     if (result === true) clearSentPrompt(sent);
     return { clear_input: false };
@@ -1389,6 +1446,7 @@ export function NotesScreen({
       editorRef.current = null;
       if (current && !current.isDestroyed) current.destroy();
       setEditor(null);
+      setDocumentId(null);
     });
     return () => onRegisterDispose(() => undefined);
   }, [editorLiveRef, onRegisterDispose]);
@@ -1404,27 +1462,32 @@ export function NotesScreen({
     && !editor.isDestroyed
     && editor.isEditable
     && importing === null
-    && !save.frozen;
+    && !frozen;
 
   return (
     <section className="cha-notes-screen" aria-label="Note">
-      {phase === 'ready' && editor && toolbarVisible && (
-        <FormatBar
-          editor={editor}
-          onHighlight={chooseHighlight}
-          frozen={frozen}
-          immutable={immutable}
-          fontSize={fontSize}
-          onFontSizeChange={setFontSize}
-          playbackSpeed={playbackSpeed}
-          onPlaybackSpeedChange={setPlaybackSpeed}
-          onFind={openFind}
-          onPicture={onPicture}
-          onUpload={() => fileInput.current?.click()}
-          onCopyAll={() => void runContextCommand('Copy All')}
-          uploadEnabled={submitEnabled && !promptPending}
-          toolbarRef={toolbarRef}
-        />
+      {toolbarVisible && phase === 'ready' && editor && (
+        <div className="cha-notes-toolbar" onClick={() => focusNotesEditor(editor)} ref={toolbarRef}>
+          <FormatBar
+            editor={editor}
+            noteTextMode={noteTextMode}
+            loadedTextMode={fullTextLoaded ? 'full_text' : 'compressed'}
+            noteActionPending={noteActionPending}
+            onNoteTextModeChange={onNoteTextModeChange}
+            onHighlight={chooseHighlight}
+            frozen={frozen}
+            immutable={immutable}
+            fontSize={fontSize}
+            onFontSizeChange={setFontSize}
+            playbackSpeed={playbackSpeed}
+            onPlaybackSpeedChange={setPlaybackSpeed}
+            onFind={openFind}
+            onPicture={onPicture}
+            onUpload={() => fileInput.current?.click()}
+            onCopyAll={() => void runContextCommand('Copy All')}
+            uploadEnabled={submitEnabled && !promptPending}
+          />
+        </div>
       )}
       <input
         accept={textFileAccept}
@@ -1502,7 +1565,7 @@ export function NotesScreen({
             className="cha-button"
             onClick={() => {
               setPromptError(null);
-              if (activeNoteId !== null) imports.dismiss(activeNoteId);
+              if (documentId !== null) imports.dismiss(documentId);
             }}
             title="Dismiss error"
             type="button"
@@ -1513,7 +1576,7 @@ export function NotesScreen({
       )}
       {sessionStatus}
       <PromptInput
-        key={activeNoteId}
+        key={`${activeNoteId}:${noteTextMode}`}
         client={client}
         hidden={!promptVisible}
         enabled={promptVisible}

@@ -151,9 +151,16 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         return nlohmann::json{{"id", application.import_note_book(
             require_parent_id(params), require_string(params, "name"), notes, epoch)}};
     }
-    case Method::notes_get:
-        require_only_keys(params, {"id"});
-        return nlohmann::json(application.get_note(require_note_id(params), epoch));
+    case Method::notes_get: {
+        auto mode = NoteTextMode::full_text;
+        if (params.contains("mode")) {
+            require_only_keys(params, {"id", "mode"});
+            const auto name = require_string(params, "mode");
+            if (name == "compressed") mode = NoteTextMode::compressed;
+            else if (name != "full_text") throw std::invalid_argument("The note text mode is not valid.");
+        } else require_only_keys(params, {"id"});
+        return nlohmann::json(application.get_note(require_note_id(params), epoch, mode));
+    }
     case Method::notes_read_text_file: {
         require_only_keys(params, {"path"});
         const auto name = require_string(params, "path");

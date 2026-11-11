@@ -49,7 +49,7 @@ public:
     NotesService& operator=(const NotesService&) = delete;
 
     std::vector<NoteItem> list_note_items(std::uint64_t epoch);
-    NoteContent get_note(std::int64_t id, std::uint64_t epoch);
+    NoteContent get_note(std::int64_t id, std::uint64_t epoch, NoteTextMode mode = NoteTextMode::full_text);
     bool save_note(std::int64_t id, const nlohmann::json& document, std::uint64_t epoch);
     void save_note_scroll_position(std::int64_t id, std::int64_t scroll_top, std::uint64_t epoch);
     NoteItem rename_note_item(std::int64_t id, std::string name, std::uint64_t epoch);

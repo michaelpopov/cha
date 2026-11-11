@@ -1,7 +1,7 @@
 import type { NoteImportSource } from '../notes/importSource';
 import { hotkeysCoreFeature, syncDataLoaderFeature } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
-import { generateText, getSchema } from '@tiptap/core';
+import { getSchema } from '@tiptap/core';
 import {
   useEffect,
   useLayoutEffect,
@@ -15,10 +15,9 @@ import {
   ChaError,
   publicErrorMessage,
   type FolderStoreOperation,
-  type NoteCompressionStartResult,
-  type NoteContent,
   type NoteItem,
   type NotesClient,
+  type NoteTextMode,
 } from '../api/client';
 import {
   availableNoteName,
@@ -27,6 +26,7 @@ import {
   noteInSubtree,
   type NoteTreeRow,
 } from '../notes/tree';
+import { useDialogElement } from './useDialogElement';
 import { FolderStoreDialog } from './FolderStoreDialog';
 import { NoteAudioDialog, type NoteAudioTarget } from './NoteAudioDialog';
 import { newNoteImportSource } from '../notes/importSource';
@@ -62,13 +62,7 @@ type DeleteDialogState = {
   pending: boolean;
 };
 
-type CompressedDialogState = {
-  action: 'show-compressed';
-  sourceId: number;
-  name: string;
-};
-
-type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState | CompressedDialogState;
+type DialogState = CreateDialogState | RenameDialogState | DeleteDialogState;
 
 type MenuState = {
   sourceId: string;
@@ -98,8 +92,8 @@ export type NoteActions = {
 export type SetNoteReadOnly = (id: number, readOnly: boolean) => Promise<NoteItem>;
 
 export type CompressNote = (
-  id: number, epoch: number, skipIneligible?: boolean,
-) => Promise<NoteCompressionStartResult>;
+  targets: readonly Pick<NoteItem, 'id' | 'name'>[], epoch: number, folder: boolean, refresh: () => Promise<void>,
+) => Promise<void>;
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
@@ -112,6 +106,7 @@ export function NotesTree({
   onBeforeCreateNote,
   onDeleteItem,
   onCompressNote,
+  compressionInProgress,
   onSetNoteReadOnly,
   onNoteItems,
   vaultName,
@@ -123,10 +118,11 @@ export function NotesTree({
   getNoteLength(id: number): Promise<number>;
   browsing: boolean;
   activeNoteId: number | null;
-  onOpenNote(id: number, importSource?: NoteImportSource): void;
+  onOpenNote(id: number, importSource?: NoteImportSource, mode?: NoteTextMode): void;
   onBeforeCreateNote(): Promise<boolean>;
   onDeleteItem: DeleteNoteItem;
   onCompressNote: CompressNote;
+  compressionInProgress?(): boolean;
   onSetNoteReadOnly: SetNoteReadOnly;
   onNoteItems(items: NoteItem[]): void;
   vaultName: string;
@@ -146,12 +142,9 @@ export function NotesTree({
   const [folderTransfer, setFolderTransfer] = useState<'export' | 'import' | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [compressionSubmitting, setCompressionSubmitting] = useState(false);
   const generation = useRef(0);
   const alive = useRef(true);
   const busy = useRef(false);
-  const compressionSubmittingRef = useRef(false);
-  const submission = useRef(0);
   const pendingRefresh = useRef(false);
   const menuIdentity = useRef(0);
   const statusRead = useRef(0);
@@ -168,7 +161,6 @@ export function NotesTree({
   const beforeCreateRef = useRef(onBeforeCreateNote);
   const onNoteItemsRef = useRef(onNoteItems);
   const onDeleteRef = useRef(onDeleteItem);
-  const onCompressRef = useRef(onCompressNote);
   const itemsRef = useRef(items);
   const staleRef = useRef(stale);
   const listingRef = useRef(listing);
@@ -179,7 +171,6 @@ export function NotesTree({
   beforeCreateRef.current = onBeforeCreateNote;
   onNoteItemsRef.current = onNoteItems;
   onDeleteRef.current = onDeleteItem;
-  onCompressRef.current = onCompressNote;
   itemsRef.current = items;
   staleRef.current = stale;
   listingRef.current = listing;
@@ -245,7 +236,6 @@ export function NotesTree({
     alive.current = true;
     return () => {
       alive.current = false;
-      ++submission.current;
       pendingRefresh.current = false;
     };
   }, []);
@@ -332,7 +322,7 @@ export function NotesTree({
   }
 
   function flushBackgroundRefresh() {
-    if (!alive.current || !pendingRefresh.current || busy.current || compressionSubmittingRef.current
+    if (!alive.current || !pendingRefresh.current || busy.current || compressionInProgress?.()
       || listingRef.current || dialogRef.current !== null || audioRunRef.current !== null
       || currentMenu.current !== null || storeRunRef.current !== null) return;
     pendingRefresh.current = false;
@@ -354,10 +344,6 @@ export function NotesTree({
       setError(publicErrorMessage(failure, 'Could not read compression status. Reopen the note menu to try again.'));
     }
   }
-
-  useEffect(() => {
-    ++submission.current;
-  }, [activeNoteId, browsing]);
 
   useEffect(() => {
     const changed = (event: Event) => {
@@ -413,6 +399,7 @@ export function NotesTree({
       && !staleRef.current
       && !listingRef.current
       && !busy.current
+      && !compressionInProgress?.()
       && dialogRef.current === null && storeRunRef.current === null;
   }
 
@@ -717,40 +704,29 @@ export function NotesTree({
   async function startCompress() {
     const epoch = menu?.epoch;
     const source = takeMenuSource();
-    if (!source || epoch === undefined || !canMutateNow() || compressionSubmittingRef.current) return;
+    if (!source || epoch === undefined || !canMutateNow()) return;
     const folder = source.kind === 'folder';
-    const ids: number[] = [];
+    const targets: Pick<NoteItem, 'id' | 'name'>[] = [];
     const collect = (key: string) => {
       for (const child of index.children[key] ?? []) {
         const row = index.rows[child];
         if (row.kind === 'folder') collect(child);
-        else if (row.kind === 'note') ids.push(row.noteId!);
+        else if (row.kind === 'note') targets.push({ id: row.noteId!, name: row.name });
       }
     };
     if (folder) collect(String(source.id));
-    else ids.push(source.id);
-    const invocation = ++submission.current;
-    let accepted = false;
-    compressionSubmittingRef.current = true;
-    setCompressionSubmitting(true);
+    else targets.push(source);
+    if (targets.length === 0) return;
     setError(null);
     try {
-      for (const id of ids) {
-        if (!alive.current || invocation !== submission.current) break;
-        if (clientRef.current.contextEpoch() !== epoch) break;
-        // Only the single note's preparation owns the notes-action guard in App.
-        if (!folder) busy.current = true;
-        const result = await onCompressRef.current(id, epoch, folder);
-        if ('accepted' in result) accepted = true;
-        if (!alive.current || invocation !== submission.current || clientRef.current.contextEpoch() !== epoch) break;
-      }
+      await onCompressNote(targets, epoch, folder, async () => {
+        if (!alive.current) return;
+        pendingRefresh.current = false;
+        await runList(++generation.current, true);
+      });
     } catch (failure) {
-      if (alive.current) setError(publicErrorMessage(failure, 'Could not start compression. Try again.')
-        + (accepted ? ' Jobs already accepted continue in the background.' : ''));
+      if (alive.current) setError(publicErrorMessage(failure, 'Could not start compression. Try again.'));
     } finally {
-      if (!folder) busy.current = false;
-      compressionSubmittingRef.current = false;
-      if (alive.current) setCompressionSubmitting(false);
       flushBackgroundRefresh();
     }
   }
@@ -758,7 +734,7 @@ export function NotesTree({
   function showCompressed() {
     const source = takeMenuSource();
     if (!source || source.kind !== 'note' || !source.has_compressed) return;
-    setDialog({ action: 'show-compressed', sourceId: source.id, name: source.name });
+    onOpenNote(source.id, undefined, 'compressed');
   }
 
   async function copyReference() {
@@ -844,7 +820,8 @@ export function NotesTree({
     openMenu(focused, anchor);
   }
 
-  const canMutate = loaded && !stale && !listing && dialog === null && storeRun === null && !busy.current;
+  const canMutate = loaded && !stale && !listing && dialog === null && storeRun === null
+    && !busy.current && !compressionInProgress?.();
   const rows = tree.getItems();
   const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind !== 'folder';
   const menuManaged = menu !== null && index.rows[menu.sourceId]?.forumId !== undefined;
@@ -996,8 +973,7 @@ export function NotesTree({
                   catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); }
                 }} role="menuitem" type="button">Generate audio</button>}
               {index.rows[menu.sourceId]?.kind !== 'annotation' && !index.rows[menu.sourceId]?.isSummary && <button
-                disabled={menuFolderBusy || menu.compressionPending === null || (!menuIsNote && menu.compressionPending)
-                  || (compressionSubmitting && !(menuIsNote && menu.compressionPending))}
+                disabled={menuFolderBusy || menu.compressionPending === null || (!menuIsNote && menu.compressionPending)}
                 onClick={() => void (menuIsNote && menu.compressionPending ? cancelCompression() : startCompress())}
                 role="menuitem" type="button">{menuIsNote && menu.compressionPending ? 'Cancel compression' : 'Compress'}</button>}
               {menuIsNote && !index.rows[menu.sourceId]?.isSummary && (
@@ -1062,17 +1038,13 @@ export function NotesTree({
           onSubmit={() => void submitDelete()}
         />
       )}
-      {dialog?.action === 'show-compressed' && (
-        <CompressedDialog client={client} sourceId={dialog.sourceId} name={dialog.name}
-          onClose={() => setDialog(null)} />
-      )}
     </div>
   );
 }
 
 export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () => void) {
   const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-    '[role="menuitem"]:not(:disabled), [role="menuitemcheckbox"]:not(:disabled)',
+    ':is([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]):not(:disabled)',
   )].filter((item) => item.closest('[role="menu"]') === event.currentTarget);
   const current = items.indexOf(document.activeElement as HTMLButtonElement);
   let next = current;
@@ -1087,71 +1059,6 @@ export function menuKeys(event: ReactKeyboardEvent<HTMLDivElement>, close: () =>
   } else return;
   event.preventDefault();
   items[next]?.focus();
-}
-
-function CompressedDialog({ client, sourceId, name, onClose }: {
-  client: NotesClient;
-  sourceId: number;
-  name: string;
-  onClose(): void;
-}) {
-  const button = useRef<HTMLButtonElement | null>(null);
-  const element = useDialogElement(() => button.current?.focus());
-  const [note, setNote] = useState<NoteContent | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const text = note?.compressed_text ?? null;
-  const originalText = note
-    ? generateText({ type: 'doc', ...note.document }, notesExtensions(), { blockSeparator: '\n' }) : '';
-  const ratio = text ? `${([...originalText].length / [...text].length).toFixed(1)}:1` : 'N/A';
-
-  useEffect(() => {
-    let cancelled = false;
-    void client.getNote(sourceId).then(
-      (note) => {
-        if (cancelled) return;
-        if (note.compressed_text === undefined) setError('No compressed version is stored for this note.');
-        else setNote(note);
-      },
-      (failure: unknown) => {
-        if (!cancelled) setError(publicErrorMessage(failure, 'The compressed note could not be loaded.'));
-      },
-    );
-    return () => { cancelled = true; };
-  }, [client, sourceId]);
-
-  return createPortal(
-    <dialog className="cha-dialog cha-compressed-note-dialog" ref={element}
-      aria-label={`Compressed version of “${name}”`}
-      onCancel={(event) => { event.preventDefault(); onClose(); }}>
-      {text === null && !error && <p role="status">Loading…</p>}
-      {text !== null && <pre aria-label="Compressed note text" tabIndex={0}>{text}</pre>}
-      {error && <p className="cha-error-message" role="alert">{error}</p>}
-      <div className="cha-dialog-actions">
-        {text !== null && <span className="cha-compression-ratio">Compression: {ratio}</span>}
-        <button className="cha-button cha-button-ghost" type="button" ref={button} onClick={onClose}>Close</button>
-      </div>
-    </dialog>, document.body,
-  );
-}
-
-function useDialogElement(focus: () => void) {
-  const element = useRef<HTMLDialogElement | null>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  const focusRef = useRef(focus);
-  focusRef.current = focus;
-  useEffect(() => {
-    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const node = element.current;
-    if (!node) return;
-    if (typeof node.showModal === 'function') node.showModal();
-    else node.setAttribute('open', '');
-    focusRef.current();
-    return () => {
-      if (typeof node.close === 'function') node.close();
-      if (previousFocus.current?.isConnected) previousFocus.current.focus();
-    };
-  }, []);
-  return element;
 }
 
 function NameDialog({

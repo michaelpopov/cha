@@ -259,7 +259,13 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
     const auto document = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original prose","marks":[{"type":"highlight"}]}]}]})");
     application_->save_note(note.id, document, epoch);
     application_->save_note_scroll_position(note.id, 123, epoch);
-    application_->set_note_read_only(note.id, true, epoch);
+    (void)application_->set_note_read_only(note.id, true, epoch);
+    std::int64_t compressed_id;
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, "Compressed prose");
+        compressed_id = database.last_insert_rowid();
+    }
     const auto before = application_->get_note(note.id, epoch);
     const auto listing = get("/api/cha/v1/notes");
     ASSERT_EQ(listing.status, 200) << listing.raw;
@@ -268,6 +274,7 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
     for (const auto& item : listing.json.at("items")) {
         if (item.at("kind") == "folder") continue;
         const auto id = item.at("id").get<std::int64_t>();
+        EXPECT_NE(id, compressed_id);
         const auto response = get("/api/cha/v1/notes/" + std::to_string(id));
         ASSERT_EQ(response.status, 200) << response.raw;
         EXPECT_EQ(response.json.size(), 2);
@@ -279,6 +286,7 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
     EXPECT_EQ(application_->get_note(note.id, epoch).document, before.document);
     EXPECT_EQ(application_->get_note(note.id, epoch).scroll_top, before.scroll_top);
     EXPECT_EQ(get("/api/cha/v1/notes/" + std::to_string(folder.id)).status, 404);
+    EXPECT_EQ(get("/api/cha/v1/notes/" + std::to_string(compressed_id)).status, 404);
     EXPECT_EQ(get("/api/cha/v1/notes/9007199254740991").status, 404);
 }
 

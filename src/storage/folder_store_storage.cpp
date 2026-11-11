@@ -244,7 +244,7 @@ FolderStoreCapture capture_impl(
         "WITH RECURSIVE tree(id, parent_id, kind, name) AS ("
         "SELECT id, parent_id, kind, name FROM note_items WHERE id = ?1 "
         "UNION ALL SELECT n.id, n.parent_id, n.kind, n.name "
-        "FROM note_items n JOIN tree t ON n.parent_id = t.id) "
+        "FROM note_items n JOIN tree t ON n.parent_id = t.id WHERE n.compressed=0) "
         "SELECT t.id, t.parent_id, t.kind, t.name, "
         "CASE WHEN t.kind = 'note' THEN n.content_json END "
         "FROM tree t JOIN note_items n ON n.id = t.id",

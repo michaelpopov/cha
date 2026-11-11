@@ -187,13 +187,12 @@ function isFolderStoreOperation(value: unknown): value is FolderStoreOperation {
 
 function isNoteContent(value: unknown): value is NoteContent {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'document',
-      ...('compressed_text' in value ? ['compressed_text'] : []),
+    && hasExactKeys(value, ['id', 'document_id', 'document',
       ...('scroll_top' in value ? ['scroll_top'] : []),
     ])
     && isNoteId(value.id)
+    && isNoteId(value.document_id)
     && isRecord(value.document)
-    && (!('compressed_text' in value) || typeof value.compressed_text === 'string')
     && (!('scroll_top' in value) || (typeof value.scroll_top === 'number'
       && Number.isSafeInteger(value.scroll_top) && value.scroll_top >= 0));
 }
@@ -1009,7 +1008,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { parent_id: parentId, kind, name },
       isNoteItem,
     ),
-    getNote: (id) => call('notes.get', { id }, isNoteContent),
+    getNote: (id, mode) => call('notes.get', { id, ...(mode === undefined ? {} : { mode }) },
+      (value): value is NoteContent => isNoteContent(value) && value.id === id
+        && (mode === 'compressed' || value.document_id === id)),
     readNoteTextFile: (path) => call('notes.readTextFile', { path }, (value): value is TextFileRequest | null => (
       value === null || (isRecord(value) && Object.keys(value).length === 2
         && typeof value.name === 'string' && typeof value.text === 'string')

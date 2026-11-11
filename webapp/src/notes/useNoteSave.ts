@@ -106,25 +106,25 @@ export function useNoteSave({
 
   function settle(serial: number, origin: Origin, failure: unknown) {
     if (inFlight.current?.serial === serial) inFlight.current = null;
-    if (
-      editorRef.current !== origin.editor
-      || noteIdRef.current !== origin.noteId
-      || contextRef.current !== origin.contextKey
-    ) return;
-    if (failure == null) {
-      savedSerial.current = serial;
-      if (saveErrorRef.current && saveErrorRef.current.serial <= serial) {
-        saveErrorRef.current = null;
-        setSaveError(null);
+    if (editorRef.current === origin.editor
+      && noteIdRef.current === origin.noteId
+      && contextRef.current === origin.contextKey) {
+      if (failure == null) {
+        savedSerial.current = serial;
+        if (saveErrorRef.current && saveErrorRef.current.serial <= serial) {
+          saveErrorRef.current = null;
+          setSaveError(null);
+        }
+      } else {
+        const next = {
+          serial,
+          message: publicErrorMessage(failure, noteSaveFailedMessage),
+        };
+        saveErrorRef.current = next;
+        setSaveError(next);
       }
-    } else {
-      const next = {
-        serial,
-        message: publicErrorMessage(failure, noteSaveFailedMessage),
-      };
-      saveErrorRef.current = next;
-      setSaveError(next);
     }
+    // A replacement editor can also be waiting for the admitted write to finish.
     if (!saveDue.current) return;
     saveDue.current = false;
     if (editSerial.current > savedSerial.current && !frozenRef.current) sendRef.current(false);

@@ -7,6 +7,7 @@ import {
   currentAppRoute,
   rememberAppUrl,
   rememberedAppUrl,
+  restoreAppUrl,
   sessionRoute,
   welcomeSessionId,
   writeAppRoute,
@@ -65,6 +66,7 @@ function isSessionLimit(failure: unknown): failure is ChaError {
 const noSessionEvents: SessionEventsConnector = () => ({ close() {} });
 
 const passthroughLeave: LeaveNoteThen = async (action) => await action();
+const neverBlockNavigation = () => false;
 
 interface LiveSessionOptions {
   connectSessionEvents?: SessionEventsConnector;
@@ -74,6 +76,7 @@ interface LiveSessionOptions {
   onWelcomeRefresh?(): void;
   onConversationOpened?(forumId: string, sessionId: string): void;
   leaveNoteThen?: LeaveNoteThen;
+  navigationBlocked?(): boolean;
 }
 
 export function useLiveSession(
@@ -88,15 +91,20 @@ export function useLiveSession(
     onWelcomeRefresh,
     onConversationOpened,
     leaveNoteThen = passthroughLeave,
+    navigationBlocked = neverBlockNavigation,
   }: LiveSessionOptions,
 ) {
   const leaveRef = useRef(leaveNoteThen);
   leaveRef.current = leaveNoteThen;
   const { notesVisible, chatVisible } = workspaceVisibility(state);
   const splitWorkspace = notesVisible && chatVisible;
-  const leaveForChat = useCallback<LeaveNoteThen>(async (action, options) => (
-    splitWorkspace ? await action() : await leaveRef.current(action, options)
-  ), [splitWorkspace]);
+  const leaveForChat = useCallback<LeaveNoteThen>(async (action, options) => {
+    if (navigationBlocked()) {
+      if (options?.previousUrl !== undefined) restoreAppUrl(options.previousUrl);
+      return false;
+    }
+    return splitWorkspace ? await action() : await leaveRef.current(action, options);
+  }, [navigationBlocked, splitWorkspace]);
   // The epoch this render was built from. The ref below is what asynchronous
   // work compares against; this is what a render can compare against without
   // reading that ref while rendering.
@@ -246,6 +254,7 @@ export function useLiveSession(
       dispatch(action);
       return;
     }
+    if (navigationBlocked()) return;
     const context = vaultContext.current;
     const commit = () => {
       if (vaultContext.current !== context) return false;
@@ -254,7 +263,7 @@ export function useLiveSession(
     };
     if (splitWorkspace && (action.type === 'show-chat' || action.type === 'show-initial-conversation')) commit();
     else void leaveRef.current(commit);
-  }, [beginNavigation, dispatch, splitWorkspace]);
+  }, [beginNavigation, dispatch, navigationBlocked, splitWorkspace]);
 
   // Welcome and deletion also discard the last open target.
   const clearLiveSession = useCallback(() => {

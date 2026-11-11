@@ -323,6 +323,14 @@ export function TextLinesIcon(props: IconProps) {
   );
 }
 
+export function NoteTextModeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 5h11M10 12h11M10 19h11m-18-9 3-3-3-3m0 16 3-3-3-3" {...stroke} />
+    </Icon>
+  );
+}
+
 export function TextFormatIcon(props: IconProps) {
   return (
     <Icon {...props}>

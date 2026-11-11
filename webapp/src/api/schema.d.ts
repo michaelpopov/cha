@@ -898,10 +898,12 @@ export interface components {
         NoteCompressionStatus: {
             pending: boolean;
         };
+        /** @enum {string} */
+        NoteTextMode: "full_text" | "compressed";
         NoteContent: {
             id: components["schemas"]["NoteId"];
+            document_id: components["schemas"]["NoteId"];
             document: components["schemas"]["NoteDocument"];
-            compressed_text?: string;
             scroll_top?: number;
         };
         NoteAudioInfo: {

@@ -101,7 +101,8 @@ def configure(root, lane, key):
 def documents(root):
     with closing(sqlite3.connect('file:' + str(root / 'test.sqlite3') + '?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
-        rows = db.execute('''SELECT n.id,n.name,n.read_only,n.compressed_text,n.content_json,
+        rows = db.execute('''SELECT n.id,n.name,n.read_only,n.content_json,
+            EXISTS(SELECT 1 FROM note_items c WHERE c.parent_id=n.id AND c.compressed=1) AS has_compressed,
             s.session_key,c.session_id,f.forum_id,p.forum_id AS parent_forum,r.forum_id AS root_forum,
             r.parent_id AS root_parent FROM note_summaries s JOIN note_items n ON n.id=s.note_id
             JOIN sessions c ON c.session_key=s.session_key JOIN forums f ON f.forum_key=c.forum_key
@@ -276,8 +277,8 @@ def inspect(lane, capture, rounds):
     body = without_comment(capture.get('afterComment', {}))
     check('Exactly one later comment added; generated summary body unchanged', len(comments) == 1
           and body == capture.get('beforeComment'))
-    check('Editor reopened JSON equals persisted JSON; compressed_text is unused', len(saved) == 1
-          and saved[0]['compressed_text'] is None and saved[0]['document'] == capture.get('reopened')
+    check('Editor reopened JSON equals persisted JSON and the note has no compressed version', len(saved) == 1
+          and not saved[0]['has_compressed'] and saved[0]['document'] == capture.get('reopened')
           and capture.get('afterComment') == capture.get('reopened'))
     prompts = [(REPOSITORY / f'resources/session-{kind}-summary-prompt.md').read_text().strip()
                for kind in ('short', 'long')]

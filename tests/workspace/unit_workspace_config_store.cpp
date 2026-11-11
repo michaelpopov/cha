@@ -19,10 +19,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <barrier>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -1085,6 +1087,145 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpensAndAddsMissingEntryMetadataColumns)
     EXPECT_TRUE(found_web_search_used);
     Statement entries = handle.prepare("SELECT web_search_used FROM entries");
     while (entries.step()) EXPECT_EQ(entries.integer(0), 0);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, OpenMigratesCompressedNotesInPlainAndProtectedVaults) {
+    for (const std::string_view password : {std::string_view{}, std::string_view{"test password"}}) {
+        auto path = password.empty() ? database() : database_directory() / "protected.sqlite3";
+        if (!password.empty())
+            (void)import_workspace_configuration(source(), path, WorkspaceConfigLease::acquire, password);
+        std::string original_blob;
+        {
+            Database handle(path, Database::Mode::read_write, password);
+            const auto note = note_create(handle, {}, NoteItemKind::note, "Temporary");
+            auto original = handle.prepare("SELECT content_json FROM note_items WHERE id=?", note.id);
+            ASSERT_TRUE(original.step());
+            original_blob = original.blob(0);
+        }
+        {
+            Database handle(path, Database::Mode::read_write, password);
+            handle.execute(R"sql(
+                DROP TABLE note_items;
+                CREATE TABLE note_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL, name TEXT NOT NULL, compressed_text TEXT,
+                    scroll_top INTEGER NOT NULL DEFAULT 0, content_json BLOB,
+                    read_only INTEGER NOT NULL DEFAULT 0,
+                    parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
+                    CHECK (kind <> 'annotation' OR compressed_text IS NULL)
+                ) STRICT;
+                INSERT INTO note_items(id,kind,name,compressed_text) VALUES
+                    (1,'folder','Reading','Ignored'), (40,'folder','Deleted',NULL);
+                DELETE FROM note_items WHERE id=40;
+                INSERT INTO forums(forum_key,forum_id) VALUES(1,'lobby');
+                INSERT INTO sessions(forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id)
+                    VALUES(1,'migration','Saved chat',0,1,1,1);
+            )sql");
+            if (password.empty()) {
+                handle.execute("ALTER TABLE note_items ADD COLUMN changed INTEGER NOT NULL DEFAULT 0");
+                handle.execute("ALTER TABLE note_items ADD COLUMN forum_id TEXT");
+            }
+            for (const auto id : {2, 3, 4}) {
+                auto insert = handle.prepare(
+                    "INSERT INTO note_items(id,parent_id,kind,name,content_json,compressed_text,read_only,scroll_top) "
+                    "VALUES(?,1,'note',?,?,?,1,123)", id, "Article " + std::to_string(id));
+                insert.bind_blob(3, original_blob);
+                if (id == 2) insert.bind(4, "  **Café**\r\n\r\nSummary\t ");
+                else if (id == 3) insert.bind(4, std::string_view{""});
+                else insert.bind_null(4);
+                insert.run();
+            }
+            handle.execute(R"sql(
+                INSERT INTO note_summaries VALUES(2,1);
+                INSERT INTO note_audio VALUES(2,0,'audio/mpeg',X'0102');
+                INSERT INTO note_audio_attempts(note_id,note_name,clip_count,service_origin,api_key_id)
+                    VALUES(2,'Article 2',1,'origin','key');
+                INSERT INTO session_notes VALUES(1,2,'Saved name','Saved snapshot');
+                INSERT INTO sync_queue(record) VALUES('{"kind":"note.compress","compressed_text":"Pending"}'),('{}');
+            )sql");
+            if (password.empty()) {
+                handle.execute("UPDATE note_items SET changed=1 WHERE id=2");
+                handle.execute(R"sql(
+                    INSERT INTO note_items(id,kind,name,forum_id) VALUES(5,'folder','Forums','');
+                    INSERT INTO note_items(id,parent_id,kind,name,forum_id) VALUES(6,5,'folder','Lobby','lobby');
+                )sql");
+                // Exhaust the allowed ID range after the table copy to force rollback during conversion.
+                handle.execute("UPDATE sqlite_sequence SET seq=9007199254740991 WHERE name='note_items'");
+                try {
+                    migrate_compressed_notes(handle);
+                    FAIL() << "Expected migration to fail";
+                } catch (const std::runtime_error& error) {
+                    EXPECT_NE(std::string_view(error.what()).find("Cannot migrate compressed note 2"), std::string_view::npos);
+                }
+                EXPECT_EQ(handle.pragma_integer("foreign_keys"), 1);
+                EXPECT_FALSE(handle.prepare("SELECT 1 FROM sqlite_master WHERE name='note_items_new'").step());
+                EXPECT_TRUE(handle.prepare("SELECT compressed_text FROM note_items WHERE id=2").step());
+                EXPECT_TRUE(handle.prepare("SELECT 1 FROM note_audio WHERE note_id=2").step());
+                handle.execute("UPDATE sqlite_sequence SET seq=40 WHERE name='note_items'");
+            }
+        }
+        if (!password.empty()) {
+            const auto copied = database_directory() / "protected-copy.sqlite3";
+            copy_workspace_session_database(path, copied, password, password);
+            Database source_vault(path, Database::Mode::read_only, password);
+            EXPECT_TRUE(source_vault.prepare("SELECT compressed_text FROM note_items WHERE id=2").step());
+            path = copied;
+        }
+        // Open twice to exercise both the conversion and the idempotent path.
+        for (int reopen = 0; reopen < 2; ++reopen) {
+            std::barrier start_open(2);
+            std::future<void> competing_open;
+            if (reopen == 0 && password.empty()) {
+                competing_open = std::async(std::launch::async, [&] {
+                    start_open.arrive_and_wait();
+                    (void)WorkspaceConfigStore::open(path);
+                });
+                start_open.arrive_and_wait();
+            }
+            const auto store = WorkspaceConfigStore::open(path, std::string(password));
+            if (competing_open.valid()) competing_open.get();
+            Database handle(path, Database::Mode::read_only, password);
+            EXPECT_EQ(handle.pragma_integer("user_version"), workspace_session_database_version);
+            EXPECT_EQ(store->get_note(2, NoteTextMode::compressed).document, note_document_from_text("  **Café**\r\n\r\nSummary\t "));
+            EXPECT_EQ(store->get_note(3, NoteTextMode::compressed).document, note_document_from_text(""));
+            EXPECT_EQ(store->get_note(4, NoteTextMode::compressed).document_id, 4);
+            EXPECT_EQ(store->get_note(2).scroll_top, 123);
+            const auto note = note_find_item(handle, 2);
+            ASSERT_TRUE(note);
+            EXPECT_EQ(note->parent_id, 1);
+            EXPECT_TRUE(note->is_summary && note->summary_linked && note->read_only);
+            auto original = handle.prepare("SELECT content_json,changed,forum_id FROM note_items WHERE id=2");
+            ASSERT_TRUE(original.step());
+            EXPECT_EQ(original.blob(0), original_blob);
+            EXPECT_EQ(original.integer(1), password.empty() ? 1 : 0);
+            EXPECT_TRUE(original.is_null(2));
+            if (password.empty()) {
+                const auto managed = note_find_item(handle, 6);
+                ASSERT_TRUE(managed);
+                EXPECT_EQ(managed->forum_id, "lobby");
+                EXPECT_EQ(managed->parent_id, 5);
+            }
+            auto children = handle.prepare("SELECT id,parent_id,changed FROM note_items WHERE compressed=1 ORDER BY id");
+            for (const auto id : {41, 42}) {
+                ASSERT_TRUE(children.step());
+                EXPECT_EQ(children.integer(0), id);
+                EXPECT_EQ(children.integer(1), id - 39);
+                EXPECT_EQ(children.integer(2), 0);
+            }
+            EXPECT_FALSE(children.step());
+            EXPECT_EQ(note_audio_clip(handle, 2, 0).bytes, std::string("\x01\x02", 2));
+            EXPECT_TRUE(note_audio_attempt_for_note(handle, 2));
+            auto copy = handle.prepare("SELECT name,text FROM session_notes WHERE note_id=2");
+            ASSERT_TRUE(copy.step());
+            EXPECT_EQ(copy.text(0), "Saved name");
+            EXPECT_EQ(copy.text(1), "Saved snapshot");
+            const auto queued = sync_queue_list(handle);
+            ASSERT_EQ(queued.size(), 2u);
+            EXPECT_EQ(queued[0].record, R"({"kind":"note.compress","compressed_text":"Pending"})");
+            EXPECT_EQ(queued[1].record, "{}");
+            EXPECT_FALSE(handle.prepare("PRAGMA foreign_key_check").step());
+        }
+    }
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, AddsRecentVisibilityWithoutHidingExistingSessions) {

@@ -25,11 +25,10 @@ function setup(open?: { editor: Editor; save: NoteSaveHandle }) {
   let epoch = 1;
   let items = [note];
   const saveNote = vi.fn(async () => ({ annotation_created: false }));
-  const getNote = vi.fn(async (id: number) => ({ id, document: { type: 'doc', content: [{ type: 'paragraph' }] } }));
+  const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: { type: 'doc', content: [{ type: 'paragraph' }] } }));
   const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...note, id, name }));
   const setNoteReadOnly = vi.fn(async (id: number, read_only: boolean) => ({ ...note, id, read_only }));
-  const cancelOpen = vi.fn();
-  const reload = vi.fn();
+  const opening = pending<void>();
   const client = fixtureClient({
     contextEpoch: () => epoch,
     listNoteItems: async () => items,
@@ -40,17 +39,18 @@ function setup(open?: { editor: Editor; save: NoteSaveHandle }) {
     const leave = useNoteLeave(() => null);
     const imports = useNoteImports({
       client, epoch: appEpoch, leave,
-      openNote: () => ({ id: openId, editor: open?.editor ?? null, save: open?.save ?? null }),
-      updated: () => undefined, refresh: () => undefined, cancelOpen, reload,
+      openNote: () => ({ noteId: openId, documentId: open ? openId : null, editor: open?.editor ?? null, save: open?.save ?? null }),
+      waitForOpen: () => open ? null : opening.promise,
+      updated: () => undefined, refresh: () => undefined,
     });
     return { imports, leave };
   }, { initialProps: { appEpoch: 1, openId: null as number | null } });
-  function start() {
+  function start(documentId = note.id) {
     let done!: Promise<boolean | null>;
-    act(() => { done = hook.result.current.imports.page(note.id, page.url); });
+    act(() => { done = hook.result.current.imports.page({ noteId: note.id, documentId }, page.url); });
     return done;
   }
-  return { ...hook, start, reading, saveNote, getNote, renameNoteItem, setNoteReadOnly, cancelOpen, reload,
+  return { ...hook, start, reading, opening, saveNote, getNote, renameNoteItem, setNoteReadOnly,
     wireEpoch: (value: number) => { epoch = value; }, listing: (value: NoteItem[]) => { items = value; } };
 }
 
@@ -103,16 +103,34 @@ describe('background note imports', () => {
     expect(test.result.current.imports.state(note.id)).toBeUndefined();
   });
 
-  it('reloads a target whose editor was still opening when the import committed', async () => {
+  it('waits for an opening document before deciding where to merge', async () => {
     const test = setup();
     test.rerender({ appEpoch: 1, openId: note.id });
     const done = test.start();
-    await act(async () => { test.reading.resolve(page); await done; });
-    expect(test.cancelOpen).toHaveBeenCalledOnce();
+    await act(async () => { test.reading.resolve(page); });
+    expect(test.saveNote).not.toHaveBeenCalled();
+    await act(async () => { test.opening.resolve(); await done; });
     expect(test.saveNote).toHaveBeenCalledOnce();
-    expect(test.reload).toHaveBeenCalledExactlyOnceWith(note.id);
-    expect(test.cancelOpen.mock.invocationCallOrder[0]).toBeLessThan(test.saveNote.mock.invocationCallOrder[0]);
     await waitFor(() => expect(test.result.current.imports.state(note.id)).toBeUndefined());
+  });
+
+  it('saves a background import to its captured compressed row and changes metadata on the logical note', async () => {
+    const test = setup();
+    test.getNote.mockResolvedValueOnce({ id: note.id, document_id: 18, document: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const done = test.start(18);
+    await act(async () => { test.reading.resolve(page); await done; });
+    expect(test.getNote).toHaveBeenCalledExactlyOnceWith(note.id, 'compressed');
+    expect(test.saveNote).toHaveBeenCalledExactlyOnceWith(18, expect.any(Object));
+    expect(test.renameNoteItem).toHaveBeenCalledExactlyOnceWith(note.id, 'Video');
+    expect(test.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(note.id, true);
+  });
+
+  it('rejects a background import when its compressed row is gone', async () => {
+    const test = setup();
+    const done = test.start(18);
+    await act(async () => { test.reading.resolve(page); expect(await done).toBe(false); });
+    expect(test.saveNote).not.toHaveBeenCalled();
+    expect(test.result.current.imports.state(18)?.error).toBe('This note document is no longer available.');
   });
 
   it('leaves a rejected open-note merge to the editor error and restarts the canceled save', async () => {

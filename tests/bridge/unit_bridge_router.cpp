@@ -2910,9 +2910,9 @@ std::string compression_response(std::string_view api, bool stream,
 
 std::string stored_compression(const std::filesystem::path& path, std::int64_t id) {
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only);
-    auto statement = database.prepare("SELECT compressed_text FROM note_items WHERE id = ?1", id);
-    if (!statement.step() || statement.is_null(0)) return {};
-    return statement.text(0);
+    auto statement = database.prepare("SELECT content_json FROM note_items WHERE parent_id=? AND compressed=1", id);
+    if (!statement.step()) return {};
+    return note_document_markdown(note_parse_saved_document(statement.blob(0), id));
 }
 
 std::string compression_refusal(std::string_view api, bool stream, bool partial_answer) {
@@ -4699,6 +4699,7 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     const auto loaded = call("notes.get", {{"id", note_id}});
     ASSERT_TRUE(loaded["ok"]);
     EXPECT_EQ(loaded["result"]["id"], note_id);
+    EXPECT_EQ(loaded["result"]["document_id"], note_id);
     EXPECT_EQ(
         loaded["result"]["document"],
         nlohmann::json::parse(std::string(empty_note_document)));
@@ -4708,15 +4709,30 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     ASSERT_TRUE(call("notes.save", {{"id", note_id}, {"document", document}})["ok"]);
     EXPECT_EQ(call("notes.get", {{"id", note_id}})["result"]["document"], document);
 
-    EXPECT_FALSE(call("notes.get", {{"id", note_id}})["result"].contains("compressed_text"));
+    EXPECT_EQ(call("notes.get", {{"id", note_id}, {"mode", "compressed"}})["result"]["document_id"], note_id);
+    expect_note_error(call("notes.get", {{"id", note_id}, {"mode", "other"}}),
+        "invalid_argument", "The note text mode is not valid.");
+    EXPECT_FALSE(call("notes.get", {{"id", note_id}, {"mode", nullptr}})["ok"].get<bool>());
+    std::int64_t compressed_id;
     {
         storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
         note_save_compressed(database, note_id, "Stored compressed text");
+        compressed_id = database.last_insert_rowid();
     }
-    const auto compressed = call("notes.get", {{"id", note_id}});
+    const auto compressed = call("notes.get", {{"id", note_id}, {"mode", "compressed"}});
     ASSERT_TRUE(compressed["ok"]);
-    EXPECT_EQ(compressed["result"]["compressed_text"], "Stored compressed text");
-    EXPECT_EQ(compressed["result"]["document"], document);
+    EXPECT_EQ(compressed["result"], nlohmann::json({
+        {"id", note_id}, {"document_id", compressed_id},
+        {"document", note_document_from_text("Stored compressed text")}, {"scroll_top", 0}}));
+    const auto edited = note_document_from_text("Edited compression");
+    EXPECT_EQ(call("notes.save", {{"id", compressed_id}, {"document", edited}})["result"],
+        nlohmann::json({{"annotation_created", false}}));
+    EXPECT_TRUE(call("notes.saveScrollPosition", {{"id", compressed_id}, {"scroll_top", 12}})["ok"].get<bool>());
+    EXPECT_EQ(call("notes.get", {{"id", note_id}, {"mode", "full_text"}})["result"]["document"], document);
+    const auto reopened = call("notes.get", {{"id", note_id}, {"mode", "compressed"}})["result"];
+    EXPECT_EQ(reopened["document"], edited);
+    EXPECT_EQ(reopened["scroll_top"], 12);
+    expect_note_error(call("notes.get", {{"id", compressed_id}}), "not_found", "That note was not found.");
 
     const auto renamed = call("notes.rename", {{"id", note_id}, {"name", "Final"}});
     ASSERT_TRUE(renamed["ok"]);

@@ -561,7 +561,7 @@ public:
         NoteItemKind kind,
         std::string name,
         std::uint64_t epoch);
-    [[nodiscard]] NoteContent get_note(std::int64_t id, std::uint64_t epoch);
+    [[nodiscard]] NoteContent get_note(std::int64_t id, std::uint64_t epoch, NoteTextMode mode = NoteTextMode::full_text);
     [[nodiscard]] std::shared_ptr<OperationReply> generate_session_summary(
         std::string connection_id, const FullSessionId& identity, std::uint64_t epoch);
     [[nodiscard]] NoteItem commit_session_summary(std::string_view connection_id,

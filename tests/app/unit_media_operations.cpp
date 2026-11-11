@@ -509,7 +509,7 @@ TEST(ApplicationMedia, NoteCompressionUsesAssistantAppliedProvider) {
         && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
     EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
     server.join();
-    EXPECT_EQ(application->get_note(note.id, epoch).compressed_text, "Compressed through Assistant settings");
+    EXPECT_EQ(application->get_note(note.id, epoch, NoteTextMode::compressed).document, note_document_from_text("Compressed through Assistant settings"));
     ASSERT_EQ(server.requests().size(), 1u);
     EXPECT_TRUE(server.requests()[0].starts_with("POST /v1/responses HTTP/"))
         << server.requests()[0].substr(0, server.requests()[0].find("\r\n"));
@@ -543,9 +543,9 @@ TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAn
             && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
         EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
         server.join();
-        const auto saved = application->get_note(note.id, epoch);
-        if (std::string_view(reason) == "STOP") EXPECT_EQ(saved.compressed_text, "Compressed text");
-        else EXPECT_FALSE(saved.compressed_text);
+        const auto saved = application->get_note(note.id, epoch, NoteTextMode::compressed);
+        if (std::string_view(reason) == "STOP") EXPECT_EQ(saved.document, note_document_from_text("Compressed text"));
+        else EXPECT_EQ(saved.document_id, note.id);
         ASSERT_EQ(server.requests().size(), 1u);
         const auto& wire = server.requests()[0];
         EXPECT_TRUE(wire.starts_with("POST /v1beta/models/gemini-test:streamGenerateContent?alt=sse HTTP/1.1"));
@@ -586,9 +586,9 @@ TEST(ApplicationMedia, AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartia
             && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
         EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
         server.join();
-        const auto saved = application->get_note(note.id, epoch);
-        if (std::string_view(reason) == "end_turn") EXPECT_EQ(saved.compressed_text, "Compressed text");
-        else EXPECT_FALSE(saved.compressed_text);
+        const auto saved = application->get_note(note.id, epoch, NoteTextMode::compressed);
+        if (std::string_view(reason) == "end_turn") EXPECT_EQ(saved.document, note_document_from_text("Compressed text"));
+        else EXPECT_EQ(saved.document_id, note.id);
         ASSERT_EQ(server.requests().size(), 1u);
         const auto& wire = server.requests()[0];
         EXPECT_TRUE(wire.starts_with("POST /v1/messages HTTP/1.1"));

@@ -98,6 +98,7 @@ export type FolderStoreOperation = components['schemas']['FolderStoreOperation']
 export type ActivityEvent = components['schemas']['ActivityEvent'];
 export type ActivityEventList = components['schemas']['ActivityEventList'];
 export type NoteContent = components['schemas']['NoteContent'];
+export type NoteTextMode = components['schemas']['NoteTextMode'];
 
 export type ErrorCode = components['schemas']['ErrorResponse']['error']['code'];
 export type MediaResource = components['schemas']['MediaResource'];
@@ -192,7 +193,7 @@ export interface NotesClient {
     kind: 'folder' | 'note',
     name: string,
   ) => Promise<NoteItem>;
-  getNote: (id: number) => Promise<NoteContent>;
+  getNote: (id: number, mode?: NoteTextMode) => Promise<NoteContent>;
   saveNote: (id: number, document: Record<string, unknown>) => Promise<components['schemas']['NoteSaveResult']>;
   saveNoteScrollPosition: (id: number, scrollTop: number) => Promise<void>;
   setNoteReadOnly: (id: number, readOnly: boolean) => Promise<NoteItem>;

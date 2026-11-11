@@ -12,6 +12,7 @@ import {
   type PointerEvent,
   type SetStateAction,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import {
   ChaError,
@@ -21,6 +22,7 @@ import {
   type CharacterSettingsPatch,
   type NoteItem,
   type NotesClient,
+  type NoteTextMode,
   type TextFileRequest,
 } from '../api/client';
 import type { NativeBridge } from '../api/nativeBridge';
@@ -41,6 +43,7 @@ import { noteInSubtree } from '../notes/tree';
 import { notesExtensions } from '../notes/editor';
 import { summaryDocument, summaryConversionError } from '../notes/summaryImport';
 import { useNoteLeave } from '../notes/useNoteLeave';
+import { compressAndWait, type CompressionCancellation } from '../notes/compression';
 import { useNoteImports, type NoteImports } from '../notes/useNoteImports';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -89,6 +92,7 @@ import {
 } from './PersonaScreens';
 import { SessionsScreen } from './SessionsScreen';
 import { NotesScreen } from './NotesScreen';
+import { NoteCompressionDialog, type NoteCompressionProgress } from './NoteCompressionDialog';
 import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SetNoteReadOnly } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
@@ -131,7 +135,11 @@ interface ScreenProps extends ChatActions {
     stay(): void;
     discard(): void;
   };
-  onRegisterSave(save: NoteSaveHandle | null): void;
+  compressionOpen: boolean;
+  noteActionPending: boolean;
+  onNoteTextModeChange(mode: NoteTextMode): void;
+  onRegisterSave(save: NoteSaveHandle | null, documentId: number | null): void;
+  onRegisterLoad(load: Promise<void>): void;
   onRegisterDispose(dispose: () => void): void;
   onDraftChange(next: string): void;
   onDeleteForum(forumId: string): Promise<void>;
@@ -219,7 +227,11 @@ function ScreenContent({
   noteImports,
   editorLiveRef,
   leave,
+  compressionOpen,
+  noteActionPending,
+  onNoteTextModeChange,
   onRegisterSave,
+  onRegisterLoad,
   onRegisterDispose,
   onRetryStream,
   onReturnToStart,
@@ -517,6 +529,10 @@ function ScreenContent({
         noteActions={noteActions}
         imports={noteImports}
         noteRequest={state.noteRequest}
+        noteTextMode={state.noteTextMode}
+        noteActionPending={noteActionPending}
+        onNoteTextModeChange={onNoteTextModeChange}
+        compressionOpen={compressionOpen}
         autoFocus={state.noteAutoFocus}
         destination={state.noteDestination}
         importSource={state.noteImportSource}
@@ -524,6 +540,7 @@ function ScreenContent({
         onDraftChange={onNotesDraftChange}
         onRegisterDispose={onRegisterDispose}
         onRegisterSave={onRegisterSave}
+        onRegisterLoad={onRegisterLoad}
         sessionStatus={!workspaceVisibility(state).chatVisible && state.sessionOperation !== 'idle' && (
           <div className="cha-notes-status" role={state.sessionOperation === 'failed' ? 'alert' : 'status'}>
             <p>{state.sessionOperationMessage}</p>
@@ -748,6 +765,8 @@ export function App({
 
   const sessionDiscarded = useCallback(() => setCatalogRevision((revision) => revision + 1), []);
   const noteSaveRef = useRef<NoteSaveHandle | null>(null);
+  const documentIdRef = useRef<number | null>(null);
+  const noteLoadRef = useRef<Promise<void> | null>(null);
   const editorLiveRef = useRef<Editor | null>(null);
   const disposeEditorRef = useRef<() => void>(() => undefined);
   const notesEpochRef = useRef(state.notesEpoch);
@@ -755,6 +774,9 @@ export function App({
   notesEpochRef.current = state.notesEpoch;
   activeNoteIdRef.current = state.activeNoteId;
   const notesVisibleRef = useRef(false);
+  const compressionRun = useRef<(CompressionCancellation & { notesChanged: boolean }) | null>(null);
+  const [compression, setCompression] = useState<NoteCompressionProgress | null>(null);
+  const compressionInProgress = useCallback(() => compressionRun.current !== null, []);
   notesVisibleRef.current = workspaceVisibility(state).notesVisible;
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
     disposeEditor: () => {
@@ -774,6 +796,7 @@ export function App({
       state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible);
   }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible]);
   useEffect(() => installNativeLayoutHandler((requested) => {
+    if (compressionRun.current) return;
     if (requested === 'toggle-russian') {
       dispatch({ type: 'toggle-russian' });
       return;
@@ -813,8 +836,13 @@ export function App({
       });
     } else commit();
   }), [state.bootstrapStatus, state.layoutMode, state.mainView, state.sessionOperation, noteLeave.leaveNoteThen]);
-  const registerSave = useCallback((save: NoteSaveHandle | null) => {
+  const registerSave = useCallback((save: NoteSaveHandle | null, documentId: number | null) => {
     noteSaveRef.current = save;
+    documentIdRef.current = documentId;
+  }, []);
+  const registerLoad = useCallback((load: Promise<void>) => {
+    noteLoadRef.current = load;
+    void load.then(() => { if (noteLoadRef.current === load) noteLoadRef.current = null; });
   }, []);
   const registerDispose = useCallback((dispose: () => void) => {
     disposeEditorRef.current = dispose;
@@ -827,16 +855,14 @@ export function App({
     client,
     epoch: state.notesEpoch,
     leave: noteLeave,
-    openNote: () => ({ id: activeNoteIdRef.current, editor: editorLiveRef.current, save: noteSaveRef.current }),
+    openNote: () => ({ noteId: activeNoteIdRef.current, documentId: documentIdRef.current,
+      editor: editorLiveRef.current, save: noteSaveRef.current }),
+    waitForOpen: () => noteLoadRef.current,
     updated: item => {
       setNoteItems(items => items.map(note => note.id === item.id ? item : note));
       noteActions?.updated(item);
     },
     refresh: () => { noteActions?.refresh(); },
-    cancelOpen: () => disposeEditorRef.current(),
-    reload: id => {
-      if (activeNoteIdRef.current === id && notesVisibleRef.current) dispatch({ type: 'open-note', noteId: id });
-    },
   });
 
   const activeChatKey = state.activeConversation
@@ -879,26 +905,26 @@ export function App({
       ));
     },
     leaveNoteThen: noteLeave.leaveNoteThen,
+    navigationBlocked: compressionInProgress,
   });
 
   useEffect(() => {
     setNoteItems([]);
   }, [state.notesEpoch]);
 
-  const requestOpenNote = useCallback((id: number, importSource?: NoteImportSource) => {
-    const live = editorLiveRef.current;
-    if (
-      workspaceVisibility(state).notesVisible
-      && state.activeNoteId === id
-      && live
-      && !live.isDestroyed
-      && !noteSaveRef.current?.frozen
-    ) {
-      live.view.focus();
-      return;
-    }
-    navigate({ type: 'open-note', noteId: id, importSource });
-  }, [navigate, state.activeNoteId, state.mainView, state.layoutMode]);
+  const requestOpenNote = useCallback((id: number, importSource?: NoteImportSource, mode?: NoteTextMode) => {
+    navigate({ type: 'open-note', noteId: id, importSource, mode });
+  }, [navigate]);
+
+  const changeNoteTextMode = useCallback((mode: NoteTextMode) => {
+    if (mode === state.noteTextMode || compressionRun.current) return;
+    const context = vaultContext.current;
+    const noteId = activeNoteIdRef.current;
+    void noteLeave.leaveNoteThen(() => {
+      if (vaultContext.current !== context) return false;
+      dispatch({ type: 'set-note-text-mode', mode, noteId });
+    });
+  }, [noteLeave.leaveNoteThen, state.noteTextMode]);
 
   const sourceChanged = useCallback((parentId: number | null) => {
     const active = noteItems.find((item) => item.id === activeNoteIdRef.current);
@@ -909,17 +935,17 @@ export function App({
 
   const summaryViewRef = useRef({ noteActions, sourceChanged });
   summaryViewRef.current = { noteActions, sourceChanged };
-  const summaryCancellation = useRef(new AbortController());
+  const notesCancellation = useRef(new AbortController());
   useEffect(() => {
     const controller = new AbortController();
-    summaryCancellation.current = controller;
+    notesCancellation.current = controller;
     return () => controller.abort();
   }, [state.notesEpoch]);
 
   const saveSummary = useCallback(async (forumId: string, sessionId: string) => {
     const epoch = client.contextEpoch();
     const editorEpoch = notesEpochRef.current;
-    const signal = summaryCancellation.current.signal;
+    const signal = notesCancellation.current.signal;
     const current = () => {
       try { return !signal.aborted && notesEpochRef.current === editorEpoch && client.contextEpoch() === epoch; }
       catch { return false; }
@@ -1055,7 +1081,7 @@ export function App({
   const getNoteLength = useCallback(async (id: number) => {
     const openText = () => {
       const editor = editorLiveRef.current;
-      return activeNoteIdRef.current === id && editor && !editor.isDestroyed
+      return activeNoteIdRef.current === id && documentIdRef.current === id && editor && !editor.isDestroyed
         ? editor.getText({ blockSeparator: '\n' }) : null;
     };
     let text = openText();
@@ -1091,41 +1117,75 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const compressNote = useCallback<CompressNote>(async (sourceId, epoch, skipIneligible) => {
+  const compressNote = useCallback<CompressNote>(async (targets, epoch, folder, refresh) => {
+    const context = notesCancellation.current.signal;
     const checkContext = () => {
-      if (client.contextEpoch() !== epoch) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+      if (context.aborted || client.contextEpoch() !== epoch)
+        throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
     };
     checkContext();
     if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    const editorEpoch = notesEpochRef.current;
+    const run: NonNullable<typeof compressionRun.current> = { requested: false, notesChanged: false };
+    compressionRun.current = run;
+    setCompression({ message: 'Saving note…', cancelEnabled: true });
     const noteId = activeNoteIdRef.current;
-    const save = sourceId === noteId ? noteSaveRef.current : null;
-    let canceledUncovered = false;
+    const save = noteSaveRef.current;
+    const editor = editorLiveRef.current;
+    let reload = false;
+    let started = false;
     try {
       if (save?.isOpen) {
-        canceledUncovered = save.freeze();
+        save.freeze();
         const admitted = save.inFlightSerial();
-        if (admitted !== null || save.hasUnsaved()) {
-          await save.waitInFlight();
-          checkContext();
-          if (save.saveError?.serial === admitted) throw new ChaError('internal_error', save.saveError.message);
-          const saved = await save.flushRemaining();
-          checkContext();
-          if (!saved) throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
-        }
+        await save.waitInFlight();
+        checkContext();
+        if (save.saveError?.serial === admitted || !await save.flushRemaining()) return;
       }
       checkContext();
-      const result = await client.compressNote(sourceId, epoch, skipIneligible);
-      checkContext();
-      return result;
+      if (run.requested) return;
+      started = true;
+      for (const [index, target] of targets.entries()) {
+        if (run.requested) break;
+        checkContext();
+        const progress = {
+          message: `Compressing “${target.name}”…`,
+          count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
+          cancelEnabled: true,
+        };
+        setCompression(progress);
+        await compressAndWait(client, target.id, epoch, folder, run, context, () => setCompression(progress));
+        if (target.id === noteId && state.noteTextMode === 'compressed') reload = true;
+      }
     } finally {
-      if (save?.isOpen && notesEpochRef.current === editorEpoch && activeNoteIdRef.current === noteId) {
-        save.unfreeze();
-        if (canceledUncovered && save.hasUnsaved() && !save.saveError) save.submitNow();
+      try {
+        if (started || run.notesChanged) {
+          checkContext();
+          setCompression(progress => progress && { ...progress, cancelEnabled: false });
+          await refresh();
+          checkContext();
+          if (reload && !run.notesChanged && noteId === activeNoteIdRef.current && notesVisibleRef.current) {
+            try { await save?.saveScrollPosition?.(); }
+            catch (failure) { console.warn('Could not save the note scroll position.', failure); }
+          }
+          // A sync notice can arrive while the replacement is opening.
+          while ((reload || run.notesChanged) && noteId !== null
+              && noteId === activeNoteIdRef.current && notesVisibleRef.current) {
+            checkContext();
+            reload = false;
+            run.notesChanged = false;
+            setCompression({ message: 'Opening note…', cancelEnabled: false });
+            flushSync(() => dispatch({ type: 'reload-note' }));
+            await noteLoadRef.current;
+          }
+        }
+      } finally {
+        if (save?.isOpen && !context.aborted && editor === editorLiveRef.current) save.unfreeze();
+        compressionRun.current = null;
+        setCompression(null);
+        noteLeave.endNoteAction();
       }
-      noteLeave.endNoteAction();
     }
-  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
+  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, state.noteTextMode]);
 
   const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
     if (!noteLeave.beginNoteAction()) return 'busy';
@@ -1225,12 +1285,14 @@ export function App({
         return;
       }
       noteActionsRef.current?.refresh();
-      if (notesVisibleRef.current) dispatch({ type: 'reload-note' });
+      if (compressionRun.current) compressionRun.current.notesChanged = true;
+      else if (notesVisibleRef.current) dispatch({ type: 'reload-note' });
     });
     return unsubscribe;
   }, [client, contextEvents, dispatch]);
 
   const returnToStart = useCallback(() => {
+    if (compressionRun.current) return;
     const action = () => {
       const bootstrap = state.bootstrap;
       if (bootstrap) noteDraftAdoption(bootstrap.initial_forum_id, bootstrap.initial_session_id);
@@ -1486,6 +1548,7 @@ export function App({
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
                 onCompressNote={compressNote}
+                compressionInProgress={compressionInProgress}
                 onSetNoteReadOnly={setNoteReadOnly}
                 onNoteItems={setNoteItems}
                 onSourceChanged={sourceChanged}
@@ -1553,6 +1616,10 @@ export function App({
                 onDraftChange={editChat}
                 onNotesDraftChange={editNotes}
                 onRegisterDispose={registerDispose}
+                onRegisterLoad={registerLoad}
+                onNoteTextModeChange={changeNoteTextMode}
+                noteActionPending={noteLeave.pendingKind !== null}
+                compressionOpen={compression !== null}
                 onRegisterSave={registerSave}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
@@ -1575,6 +1642,13 @@ export function App({
             )}
           </main>
         </div>
+        {compression && <NoteCompressionDialog progress={compression} onCancel={() => {
+          const run = compressionRun.current;
+          if (!compression.cancelEnabled || !run) return;
+          run.requested = true;
+          setCompression({ message: 'Cancelling…', count: compression.count, cancelEnabled: false });
+          run.cancelJob?.();
+        }} />}
       </TransliterationProvider>
       </DetailRefreshProvider>
     </AppErrorBoundary>

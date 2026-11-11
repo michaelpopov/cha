@@ -8,6 +8,7 @@
 #include "support/test_workspace.h"
 #include "app/application_config.h"
 #include "util/logging.h"
+#include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 #include <toml++/toml.hpp>
@@ -538,6 +539,23 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
     seed_pending_sync(remote);
+    {
+        storage::SqliteDatabase source(remote, storage::SqliteDatabase::Mode::read_write);
+        source.execute(R"sql(
+            CREATE TABLE legacy_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_id INTEGER REFERENCES note_items(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL, name TEXT NOT NULL, content_json BLOB,
+                compressed_text TEXT, read_only INTEGER NOT NULL DEFAULT 0,
+                scroll_top INTEGER NOT NULL DEFAULT 0, changed INTEGER NOT NULL DEFAULT 0
+            ) STRICT;
+            INSERT INTO legacy_notes(id,parent_id,kind,name,content_json,compressed_text,changed)
+                SELECT id,parent_id,kind,name,content_json,'Downloaded summary',changed FROM note_items;
+            DROP TABLE note_items;
+            ALTER TABLE legacy_notes RENAME TO note_items;
+        )sql");
+    }
+    checkpoint_workspace_session_database(remote, {}, false);
     const std::string remote_bytes = file_bytes(remote);
     const std::filesystem::path destination =
         remote_workspace.root() / "downloaded.sqlite3";
@@ -571,7 +589,14 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
         EXPECT_TRUE(sync_queue_list(installed).empty());
         EXPECT_FALSE(sync_has_pending(installed));
         EXPECT_TRUE(sync_read_d1(installed));
-        EXPECT_TRUE(sync_note_find(installed, {"Flagged"}));
+        EXPECT_TRUE(installed.prepare("SELECT compressed_text FROM note_items WHERE name='Flagged'").step());
+    }
+    {
+        const auto opened = WorkspaceConfigStore::open(destination);
+        storage::SqliteDatabase installed(destination, storage::SqliteDatabase::Mode::read_only);
+        const auto note = sync_note_find(installed, {"Flagged"});
+        ASSERT_TRUE(note);
+        EXPECT_EQ(opened->get_note(*note, NoteTextMode::compressed).document, note_document_from_text("Downloaded summary"));
     }
     const VaultDefinition downloaded = load_vault_definition_file(
         remote_workspace.root(), vault);

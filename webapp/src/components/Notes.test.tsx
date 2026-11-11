@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   ChaError,
+  type NoteContent,
   type NoteItem,
   type NotePage,
   type NotesClient,
+  type NoteTextMode,
 } from '../api/client';
 import { bootstrapFixture, fixtureClient, forumDetailFixture, snapshotFixture } from '../test/fixtures';
 import { App } from './App';
@@ -24,7 +26,7 @@ function noteDocument(text: string) {
 function notesClient(text = 'Saved plan') {
   return fixtureClient({
     listNoteItems: async () => [study, plan],
-    getNote: async (id: number) => ({ id, document: noteDocument(text) }),
+    getNote: async (id: number) => ({ id, document_id: id, document: noteDocument(text) }),
     saveNote: async () => undefined,
   });
 }
@@ -42,7 +44,7 @@ function importClient(readNotePage: NotesClient['readNotePage'], readNoteTextFil
     items = items.map(item => item.id === id ? { ...item, ...changes } : item);
     return items.find(item => item.id === id)!;
   }
-  const getNote = vi.fn(async (id: number) => ({ id, document: documents.get(id) ?? { type: 'doc', content: [{ type: 'paragraph' }] } }));
+  const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: documents.get(id) ?? { type: 'doc', content: [{ type: 'paragraph' }] } }));
   const saveNote = vi.fn(async (id: number, document: Record<string, unknown>) => { documents.set(id, document); });
   const renameNoteItem = vi.fn(async (id: number, name: string) => update(id, { name }));
   const setNoteReadOnly = vi.fn(async (id: number, read_only: boolean) => update(id, { read_only }));
@@ -87,6 +89,21 @@ async function openNotes() {
   await screen.findByRole('treeitem', { name: bootstrapFixture.vault_name });
 }
 
+function chooseNoteMode(label: 'Full text' | 'Compressed') {
+  fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
+}
+
+function compressionChanged(id: number) {
+  window.dispatchEvent(new CustomEvent('cha-note-compression-changed', { detail: { id, epoch: 1 } }));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+
 function noteEditor(): Editor {
   const dom = document.querySelector('.ProseMirror') as (HTMLElement & { chaEditor?: Editor }) | null;
   const editor = dom?.chaEditor;
@@ -104,14 +121,219 @@ function historyAction(name: 'Undo' | 'Redo') {
   return screen.getByRole('menuitem', { name });
 }
 
+describe('Note text mode', () => {
+  it('keeps fallback edits on the original row even when compression appears before the save', async () => {
+    const documents = new Map<number, Record<string, unknown>>([[plan.id, noteDocument('Original text')]]);
+    const positions = new Map<number, number>([[plan.id, 20], [40, 70]]);
+    const getNote = vi.fn(async (id: number, mode?: NoteTextMode) => {
+      const documentId = mode === 'compressed' && documents.has(40) ? 40 : id;
+      return { id, document_id: documentId, document: documents.get(documentId)!, scroll_top: positions.get(documentId) };
+    });
+    const saveNote = vi.fn(async (id: number, document: Record<string, unknown>) => { documents.set(id, document); });
+    const saveNoteScrollPosition = vi.fn(async (id: number, top: number) => { positions.set(id, top); });
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, saveNote, saveNoteScrollPosition })} />);
+    await openNotes();
+    const row = await screen.findByRole('treeitem', { name: 'Plan' });
+    fireEvent.click(row);
+    await screen.findByText('Original text');
+    const mode = screen.getByRole('button', { name: 'Note text mode' });
+    expect(mode).toHaveAttribute('title', 'Full text mode; showing full text');
+    chooseNoteMode('Compressed');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing full text'));
+    expect(saveNote).not.toHaveBeenCalled();
+    const host = document.querySelector('.cha-notes-document')!;
+    expect(host.scrollTop).toBe(20);
+    host.scrollTop = 150;
+    documents.set(40, noteDocument('Compressed body'));
+    act(() => typeInNote(' edited'));
+    fireEvent.click(row);
+    await screen.findByText('Compressed body');
+    expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing compressed');
+    expect(row).toHaveAttribute('aria-current', 'true');
+    expect(saveNote).toHaveBeenCalledExactlyOnceWith(plan.id, noteDocument('Original text edited'));
+    expect(saveNoteScrollPosition).toHaveBeenLastCalledWith(plan.id, 150);
+    expect(host.scrollTop).toBe(70);
+    expect(noteEditor().can().undo()).toBe(false);
+    host.scrollTop = 175;
+    act(() => typeInNote(' revised'));
+    chooseNoteMode('Full text');
+    await screen.findByText('Original text edited');
+    expect(saveNote).toHaveBeenLastCalledWith(40, noteDocument('Compressed body revised'));
+    expect(saveNoteScrollPosition).toHaveBeenLastCalledWith(40, 175);
+    expect(host.scrollTop).toBe(150);
+    chooseNoteMode('Compressed');
+    await screen.findByText('Compressed body revised');
+    expect(host.scrollTop).toBe(175);
+    expect(noteEditor().can().undo()).toBe(false);
+    const opens = getNote.mock.calls.length;
+    chooseNoteMode('Compressed');
+    expect(getNote).toHaveBeenCalledTimes(opens);
+    expect(saveNote).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['Stay', 'Retry', 'Discard'] as const)('uses %s when a compressed edit cannot save during a mode change', async choice => {
+    const saveNote = vi.fn().mockRejectedValueOnce(new ChaError('internal_error', 'Save failed.')).mockResolvedValue(undefined);
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [{ ...plan, has_compressed: true }],
+      getNote: async (id, mode) => ({
+        id, document_id: mode === 'compressed' ? 40 : id,
+        document: noteDocument(mode === 'compressed' ? 'Compressed body' : 'Original text'),
+      }),
+      saveNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Show compressed' }));
+    await screen.findByText('Compressed body');
+    act(() => typeInNote(' revised'));
+    chooseNoteMode('Full text');
+    const dialog = await screen.findByRole('dialog', { name: 'Could not save “Plan”.' });
+    const mode = screen.getByRole('button', { name: 'Note text mode' });
+    expect(mode).toHaveAttribute('title', expect.stringMatching(/^Compressed mode/));
+    expect(mode).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole('button', { name: choice }));
+    if (choice === 'Stay') {
+      await waitFor(() => expect(mode).toBeEnabled());
+      expect(noteEditor().getText()).toBe('Compressed body revised');
+      expect(mode).toHaveAttribute('title', 'Compressed mode; showing compressed');
+    } else {
+      await screen.findByText('Original text');
+      expect(screen.getByRole('button', { name: 'Note text mode' }))
+        .toHaveAttribute('title', 'Full text mode; showing full text');
+    }
+    expect(saveNote.mock.calls.map(([id]) => id)).toEqual(choice === 'Retry' ? [40, 40] : [40]);
+  });
+
+  it('shows the mode button only with the regular Notes toolbar', async () => {
+    const opening = deferred<void>();
+    const client = fixtureClient({
+      listNoteItems: async () => [{ ...plan, read_only: true }],
+      getNote: vi.fn()
+        .mockImplementationOnce(async () => {
+          await opening.promise;
+          throw new ChaError('internal_error', 'Cannot read this note.');
+        })
+        .mockImplementation(async (id: number, mode: NoteTextMode) => mode === 'compressed'
+          ? { id, document_id: 40, document: noteDocument('Compressed body') }
+          : { id, document_id: id, document: noteDocument('Original text') }),
+    });
+    const bus = contextBus();
+    render(<App client={client} contextEvents={bus} />);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled());
+    act(() => bus.layout('split'));
+    const note = within(await screen.findByRole('region', { name: 'Note' }));
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
+    expect(note.queryByRole('button', { name: 'Note text mode' })).not.toBeInTheDocument();
+    await openNotes();
+    expect(note.queryByRole('button', { name: 'Note text mode' })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await note.findByText('Opening…');
+    expect(note.queryByRole('button', { name: 'Note text mode' })).not.toBeInTheDocument();
+    await act(async () => opening.resolve());
+    await note.findByText(/Cannot read this note/);
+    expect(note.queryByRole('button', { name: 'Note text mode' })).not.toBeInTheDocument();
+
+    fireEvent.click(note.getByRole('button', { name: 'Retry' }));
+    await note.findByText('Original text');
+    const mode = await screen.findByRole('button', { name: 'Note text mode' });
+    const toolbar = mode.closest('.cha-notes-toolbar') as HTMLElement;
+    expect(toolbar).toContainElement(screen.getByRole('button', { name: 'Playback speed' }));
+    expect(within(toolbar).getAllByRole('button')[0]).toBe(mode);
+    expect(mode.textContent).toBe('');
+    expect(mode).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(mode);
+    const menu = screen.getByRole('menu', { name: 'Note text mode' });
+    const choices = within(menu).getAllByRole('menuitemradio');
+    expect(choices.map(item => item.textContent)).toEqual(['Full text', 'Compressed']);
+    expect(choices[0]).toBeChecked();
+    expect(choices[1]).not.toBeChecked();
+    fireEvent.keyDown(choices[0], { key: 'ArrowDown' });
+    expect(choices[1]).toHaveFocus();
+    fireEvent.keyDown(choices[1], { key: 'Escape' });
+    expect(noteEditor().isEditable).toBe(false);
+    expect(noteEditor().view.dom).toHaveFocus();
+
+    chooseNoteMode('Compressed');
+    await note.findByText('Compressed body');
+    act(() => bus.layout('toggle-toolbar'));
+    expect(note.queryByRole('button', { name: 'Note text mode' })).not.toBeInTheDocument();
+    expect(note.queryByRole('button', { name: 'Playback speed' })).not.toBeInTheDocument();
+    act(() => bus.layout('toggle-toolbar'));
+    fireEvent.click(note.getByRole('button', { name: 'Note text mode' }));
+    expect(note.getByRole('menuitemradio', { name: 'Compressed' })).toBeChecked();
+    expect(note.getByRole('menuitemradio', { name: 'Compressed' })).toHaveFocus();
+    expect(note.getByRole('menuitemradio', { name: 'Full text' })).not.toBeChecked();
+  });
+
+  it('keeps the find bar through a sync reload and closes it on a mode change', async () => {
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Original text') }));
+    const bus = contextBus();
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find' }), { target: { value: 'Original' } });
+    act(() => bus.notesChanged());
+    await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    expect(screen.getByRole('textbox', { name: 'Find' })).toHaveValue('Original');
+    chooseNoteMode('Compressed');
+    await waitFor(() => expect(getNote).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    expect(screen.queryByRole('textbox', { name: 'Find' })).not.toBeInTheDocument();
+  });
+
+  it('finishes a file import into the compressed row after switching to full text', async () => {
+    const reading = deferred<{ name: string; text: string }>();
+    const documents = new Map<number, Record<string, unknown>>([
+      [plan.id, noteDocument('Original text')], [40, noteDocument('Compressed body')],
+    ]);
+    const saveNote = vi.fn(async (id: number, document: Record<string, unknown>) => { documents.set(id, document); });
+    const setNoteReadOnly = vi.fn(async (id: number, read_only: boolean) => ({ ...plan, id, read_only, has_compressed: true }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [{ ...plan, has_compressed: true }],
+      getNote: async (id, mode) => {
+        const documentId = mode === 'compressed' ? 40 : id;
+        return { id, document_id: documentId, document: documents.get(documentId)! };
+      },
+      readNoteTextFile: () => reading.promise,
+      saveNote, setNoteReadOnly,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Show compressed' }));
+    await screen.findByText('Compressed body');
+    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
+    fireEvent.change(prompt, { target: { value: '/tmp/plan.txt' } });
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await screen.findByText('Retrieving content…');
+    chooseNoteMode('Full text');
+    await screen.findByText('Original text');
+    const original = noteEditor();
+    await act(async () => reading.resolve({ name: 'plan.txt', text: 'Imported body' }));
+    await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(plan.id, true));
+    expect(saveNote).toHaveBeenCalledExactlyOnceWith(40, noteDocument('Imported body'));
+    expect(noteEditor()).toBe(original);
+    expect(original.getText()).toBe('Original text');
+    expect(original.isEditable).toBe(false);
+    chooseNoteMode('Compressed');
+    await screen.findByText('Imported body');
+    expect(noteEditor().isEditable).toBe(false);
+  });
+});
+
 describe('Notes in the application', () => {
   it.each(['chat', 'note', 'chat during load'])('keeps typing focus in %s when an incoming change reloads the open note', async (focus) => {
     const bus = contextBus();
     let finish!: () => void;
     const getNote = vi.fn()
-      .mockResolvedValueOnce({ id: plan.id, document: noteDocument('Saved plan') })
+      .mockResolvedValueOnce({ id: plan.id, document_id: plan.id, document: noteDocument('Saved plan') })
       .mockImplementation(() => new Promise(resolve => {
-        finish = () => resolve({ id: plan.id, document: noteDocument('Incoming plan') });
+        finish = () => resolve({ id: plan.id, document_id: plan.id, document: noteDocument('Incoming plan') });
       }));
     const saveNote = vi.fn(async () => undefined);
     render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, saveNote })} contextEvents={bus} />);
@@ -335,7 +557,7 @@ describe('Notes in the application', () => {
   it('generates direct read-only folder notes in tree order and restores folder focus', async () => {
     const info = vi.fn(async (id: number) => ({ count: id === 7 ? 2 : 0 }));
     const start = vi.fn(async (id: number) => ({ attempt_id: id }));
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument(`Text ${id}`) }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument(`Text ${id}`) }));
     const changed = vi.fn();
     window.addEventListener('cha-note-audio-changed', changed);
     const child = { ...plan, parent_id: study.id, read_only: true };
@@ -411,7 +633,7 @@ describe('Notes in the application', () => {
     render(<App client={fixtureClient({
       listNoteItems: async () => items,
       deleteNoteItem: async id => { items = items.filter(item => item.id !== id); },
-      getNote: async id => ({ id, document: noteDocument(`Chapter ${id}`) }),
+      getNote: async id => ({ id, document_id: id, document: noteDocument(`Chapter ${id}`) }),
       noteAudio: { contextEpoch: () => 1, startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
     })} />);
     await openNotes();
@@ -444,7 +666,7 @@ describe('Notes in the application', () => {
     try {
       render(<App client={fixtureClient({
         listNoteItems: async () => [{ ...plan, read_only: true }],
-        getNote: async id => ({ id, document }),
+        getNote: async id => ({ id, document_id: id, document }),
         noteAudio: { contextEpoch: () => 1, startBackground: start, backgroundStatus, info: async () => ({ count: 0 }), source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
@@ -484,7 +706,7 @@ describe('Notes in the application', () => {
     const bus = contextBus();
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original') }),
       saveNote: async () => undefined,
       readNotePage,
     })} contextEvents={bus} />);
@@ -521,7 +743,7 @@ describe('Notes in the application', () => {
     try {
       render(<App client={fixtureClient({
         listNoteItems: async () => [plan],
-        getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+        getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
         saveNote: async () => { if (failSave) throw new ChaError('internal_error', 'Save failed.'); },
       })} contextEvents={bus} />);
       await openNotes();
@@ -552,7 +774,7 @@ describe('Notes in the application', () => {
 
   it('saves and restores a note hidden by layout while keeping chat mounted', async () => {
     const bus = contextBus();
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }));
     const saveNote = vi.fn(async () => undefined);
     render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, saveNote })} contextEvents={bus} />);
     await openNotes();
@@ -570,7 +792,7 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
     act(() => bus.layout('split'));
     await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
-    expect(getNote.mock.calls[1]).toEqual([plan.id]);
+    expect(getNote.mock.calls[1]).toEqual([plan.id, 'full_text']);
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
   });
 
@@ -602,7 +824,7 @@ describe('Notes in the application', () => {
     const setNoteReadOnly = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original') }),
       saveNote, setNoteReadOnly,
     })} />);
     await openNotes();
@@ -642,7 +864,7 @@ describe('Notes in the application', () => {
     });
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original') }),
       saveNote, setNoteReadOnly,
     })} />);
     await openNotes();
@@ -666,7 +888,7 @@ describe('Notes in the application', () => {
     const compressNote = vi.fn(async () => ({ accepted: true as const }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [locked],
-      getNote: async (id) => ({ id, document: noteDocument('Original text') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original text') }),
       saveNote, compressNote,
     })} />);
     await openNotes();
@@ -704,7 +926,7 @@ describe('Notes in the application', () => {
     const other = { ...plan, id: 5, name: 'Other' };
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, other],
-      getNote: async (id) => ({ id, document: saved }),
+      getNote: async (id) => ({ id, document_id: id, document: saved }),
       readNotePage: async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Imported' }),
       readNoteTextFile: async () => ({ name: '/tmp/file.txt', text: 'Imported' }),
       saveNote, setNoteReadOnly,
@@ -762,7 +984,7 @@ describe('Notes in the application', () => {
     const setNoteReadOnly = vi.fn(async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original') }),
       readNotePage: async () => ({ url: 'https://example.org/', title: 'Title', markdown: 'Imported' }),
       saveNote, setNoteReadOnly,
     })} />);
@@ -778,20 +1000,24 @@ describe('Notes in the application', () => {
     expect(noteEditor().isEditable).toBe(true);
   });
 
-  it('saves an edited subfolder note before acceptance and releases the editor', async () => {
+  it('saves an edited subfolder note and keeps the editor blocked until its job ends', async () => {
     const nested = { ...study, id: 2, parent_id: study.id, name: 'Nested' };
     const child = { ...plan, parent_id: nested.id };
     let finishSave!: () => void;
     const saveNote = vi.fn((_id: number, _document: Record<string, unknown>) => new Promise<void>(resolve => { finishSave = resolve; }));
     let finishAcceptance!: (result: { accepted: true }) => void;
     const compressNote = vi.fn(() => new Promise<{ accepted: true }>(resolve => { finishAcceptance = resolve; }));
+    let pending = true;
+    const compressionStatus = vi.fn(async (id: number) => ({ pending: id === plan.id && pending }));
     render(<App client={fixtureClient({ listNoteItems: async () => [study, nested, child],
-      getNote: async id => ({ id, document: noteDocument('Original') }), saveNote, compressNote })} />);
+      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
+      saveNote, compressNote, compressionStatus })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Nested' }));
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+    const editor = noteEditor();
     act(() => typeInNote(' edited'));
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
@@ -799,12 +1025,20 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
     expect(compressNote).not.toHaveBeenCalled();
     expect(noteEditor().isEditable).toBe(false);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: 'Note compression' });
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Saving note…');
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
     await act(async () => finishSave());
     await waitFor(() => expect(compressNote).toHaveBeenCalledExactlyOnceWith(plan.id, 1, true));
     expect(noteEditor().isEditable).toBe(false);
     await act(async () => finishAcceptance({ accepted: true }));
-    expect(noteEditor().isEditable).toBe(true);
+    expect(within(dialog).getByRole('status')).toHaveTextContent('Note 1 of 1');
+    expect(noteEditor().isEditable).toBe(false);
+    pending = false;
+    act(() => compressionChanged(plan.id));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(noteEditor()).toBe(editor);
+    expect(editor.isEditable).toBe(true);
     expect(saveNote.mock.calls[0][1]).toEqual(noteEditor().getJSON());
   });
 
@@ -815,7 +1049,7 @@ describe('Notes in the application', () => {
       .mockResolvedValue(undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Original') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original') }),
       saveNote,
       compressNote,
     })} />);
@@ -826,7 +1060,7 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
     await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
-    await waitFor(() => expect(screen.getAllByRole('alert').some(alert => alert.textContent?.includes('The note could not be saved.'))).toBe(true));
+    await screen.findByText('Could not save “Plan”. Check the vault and try again.');
     expect(compressNote).not.toHaveBeenCalled();
     expect(noteEditor().isEditable).toBe(true);
     expect(noteEditor().getText()).toContain('edited');
@@ -837,17 +1071,214 @@ describe('Notes in the application', () => {
     expect(saveNote).toHaveBeenCalledTimes(2);
   });
 
-  it('defers a window close only until local compression acceptance finishes', async () => {
+  it('blocks navigation and waits for the compressed reload even if the first job status read fails', async () => {
+    const reopened = deferred<NoteContent>();
+    let started = false;
+    let pending = true;
+    const getNote = vi.fn(async (id: number, mode?: NoteTextMode) => (
+      started && mode === 'compressed' ? reopened.promise : { id, document_id: id, document: noteDocument('Original') }
+    ));
+    const compressionStatus = vi.fn()
+      .mockResolvedValueOnce({ pending: false })
+      .mockRejectedValueOnce(new Error('Temporary status error'))
+      .mockImplementation(async () => ({ pending }));
+    const bus = contextBus();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan], getNote, compressionStatus,
+      compressNote: async () => { started = true; return { accepted: true }; },
+    })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    chooseNoteMode('Compressed');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing full text'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note compression' });
+    await waitFor(() => expect(compressionStatus).toHaveBeenCalledTimes(2));
+    expect(noteEditor().isEditable).toBe(false);
+    expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    act(() => bus.layout('split'));
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).not.toBeInTheDocument();
+    pending = false;
+    act(() => compressionChanged(plan.id));
+    await within(dialog).findByText('Opening note…');
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.queryByText('Original')).not.toBeInTheDocument();
+    await act(async () => reopened.resolve({ id: plan.id, document_id: 40, document: noteDocument('New compression') }));
+    expect(dialog).not.toBeInTheDocument();
+    expect(noteEditor().getText()).toBe('New compression');
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
+  it('checks an early compression notice even when the first post-acceptance status read fails', async () => {
+    const compressionStatus = vi.fn()
+      .mockResolvedValueOnce({ pending: false })
+      .mockRejectedValueOnce(new Error('Temporary status error'))
+      .mockResolvedValueOnce({ pending: false });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
+      compressionStatus,
+      compressNote: async () => {
+        compressionChanged(plan.id);
+        return { accepted: true };
+      },
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await waitFor(() => expect(compressionStatus).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
+  it('reloads a selected fallback after folder compression skips a newly compressed note', async () => {
+    let hasCompressed = false;
+    const compressNote = vi.fn(async () => {
+      hasCompressed = true;
+      return { skipped: true as const };
+    });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [study, { ...plan, parent_id: study.id, has_compressed: hasCompressed }],
+      getNote: async (id, mode) => (
+        hasCompressed && mode === 'compressed'
+          ? { id, document_id: 40, document: noteDocument('Existing compression') }
+          : { id, document_id: id, document: noteDocument('Original') }
+      ),
+      compressNote,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    chooseNoteMode('Compressed');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing full text'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    await screen.findByText('Existing compression');
+    expect(compressNote).toHaveBeenCalledExactlyOnceWith(plan.id, 1, true);
+    expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing compressed');
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
+  });
+
+  it('lets the initial save settle before cancelling without starting a job', async () => {
+    const saving = deferred<void>();
+    const saveNote = vi.fn(() => saving.promise);
+    const compressNote = vi.fn();
+    const cancelCompression = vi.fn();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
+      saveNote, compressNote, cancelCompression,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note compression' });
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    expect(dialog).toHaveTextContent('Cancelling…');
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await act(async () => saving.resolve());
+    expect(dialog).not.toBeInTheDocument();
+    expect(compressNote).not.toHaveBeenCalled();
+    expect(cancelCompression).not.toHaveBeenCalled();
+    expect(noteEditor().getText()).toBe('Original edited');
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
+  it('keeps the job blocking after Cancel fails and allows another attempt', async () => {
+    const cancel = deferred<void>();
+    const cancelCompression = vi.fn().mockRejectedValueOnce(new Error('Temporary failure'))
+      .mockReturnValueOnce(cancel.promise);
+    const compressNote = vi.fn(async () => ({ accepted: true as const }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
+      compressNote, cancelCompression,
+      compressionStatus: async () => ({ pending: compressNote.mock.calls.length > 0 }),
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note compression' });
+    await within(dialog).findByText('Compressing “Plan”…');
+    const button = within(dialog).getByRole('button', { name: 'Cancel' });
+    fireEvent.click(button);
+    await waitFor(() => expect(cancelCompression).toHaveBeenCalledOnce());
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(noteEditor().isEditable).toBe(false);
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    expect(dialog).toBeInTheDocument();
+    await act(async () => cancel.resolve());
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(noteEditor().isEditable).toBe(true);
+    expect(cancelCompression.mock.calls).toEqual([[plan.id, 1], [plan.id, 1]]);
+  });
+
+  it('applies an incoming sync change before releasing a full-text editor after compression', async () => {
+    let body = 'Original';
+    let pending = false;
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument(body) }));
+    const bus = contextBus();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote,
+      compressNote: async () => { pending = true; return { accepted: true }; },
+      compressionStatus: async () => ({ pending }),
+    })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    const old = noteEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note compression' });
+    await within(dialog).findByText('Compressing “Plan”…');
+    body = 'Incoming full text';
+    act(() => bus.notesChanged());
+    expect(noteEditor()).toBe(old);
+    expect(old.isEditable).toBe(false);
+    pending = false;
+    act(() => compressionChanged(plan.id));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(noteEditor().getText()).toBe(body);
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
+  it('defers a window close until the compression operation releases the note', async () => {
     const post = vi.fn();
     window.__CHA_NATIVE_CONNECTION_ID__ = 'view-1';
     window.__CHA_NATIVE_POST__ = post;
     try {
       let accept!: (result: { accepted: true }) => void;
       const compressNote = vi.fn(() => new Promise<{ accepted: true }>(resolve => { accept = resolve; }));
+      let pending = true;
       render(<App client={fixtureClient({
         listNoteItems: async () => [plan],
-        getNote: async (id) => ({ id, document: noteDocument('Original') }),
+        getNote: async (id) => ({ id, document_id: id, document: noteDocument('Original') }),
         compressNote,
+        compressionStatus: async () => ({ pending: compressNote.mock.calls.length > 0 && pending }),
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
@@ -860,6 +1291,10 @@ describe('Notes in the application', () => {
       expect(post.mock.calls.map(([message]) => JSON.parse(message as string)))
         .not.toContainEqual(expect.objectContaining({ native_action: 'close_reply', attempt_id: 7 }));
       await act(async () => accept({ accepted: true }));
+      expect(post.mock.calls.map(([message]) => JSON.parse(message as string)))
+        .not.toContainEqual(expect.objectContaining({ native_action: 'close_reply', attempt_id: 7 }));
+      pending = false;
+      act(() => compressionChanged(plan.id));
       await waitFor(() => expect(post.mock.calls.map(([message]) => JSON.parse(message as string)))
         .toContainEqual({ native_action: 'close_reply', connection_id: 'view-1', attempt_id: 7, result: 'ready' }));
     } finally {
@@ -874,7 +1309,7 @@ describe('Notes in the application', () => {
       ...plan, id: 20 + index, name: index === 0 ? 'Article title' : `Article title ${index}`,
     }));
     const expected = count === 0 ? 'Article title' : `Article title ${count}`;
-    const getNote = vi.fn(async (id: number) => ({ id, document: {
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: {
       type: 'doc', content: [{ type: 'paragraph' }],
     } }));
     const renameNoteItem = vi.fn(async (id: number, name: string) => ({ ...original, id, name }));
@@ -920,8 +1355,8 @@ describe('Notes in the application', () => {
     expect(window.location.href).toBe(address);
   });
 
-  it('opens one note, keeps the chat draft, and focuses the same note again', async () => {
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+  it('reopens the selected note and keeps the chat draft', async () => {
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
       getNote,
@@ -941,8 +1376,8 @@ describe('Notes in the application', () => {
     expect(screen.queryByRole('heading', { name: 'Notes' })).not.toBeInTheDocument();
     act(() => screen.getByRole('treeitem', { name: 'Plan' }).focus());
     fireEvent.click(screen.getByRole('treeitem', { name: 'Plan' }));
-    expect(noteEditor().view.dom).toHaveFocus();
-    expect(getNote).toHaveBeenCalledOnce();
+    await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(noteEditor().view.dom).toHaveFocus());
     expect(screen.getByText('Saved plan')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
     expect(document.title).toBe('CHA: Personal — Plan');
@@ -958,8 +1393,8 @@ describe('Notes in the application', () => {
     let items = [plan];
     let finishOpen!: () => void;
     const newDocument = { type: 'doc', content: [{ type: 'paragraph' }] };
-    const pendingOpen = new Promise<{ id: number; document: typeof newDocument }>((resolve) => {
-      finishOpen = () => resolve({ id: created.id, document: newDocument });
+    const pendingOpen = new Promise<{ id: number; document_id: number; document: typeof newDocument }>((resolve) => {
+      finishOpen = () => resolve({ id: created.id, document_id: created.id, document: newDocument });
     });
     const createNoteItem = vi.fn(async () => {
       items = [...items, created];
@@ -969,8 +1404,8 @@ describe('Notes in the application', () => {
       listNoteItems: async () => items,
       createNoteItem,
       getNote: async (id) => {
-        if (id !== created.id) return { id, document: noteDocument('Saved plan') };
-        return loading === 'delayed' ? pendingOpen : { id, document: newDocument };
+        if (id !== created.id) return { id, document_id: id, document: noteDocument('Saved plan') };
+        return loading === 'delayed' ? pendingOpen : { id, document_id: id, document: newDocument };
       },
       saveNote: async () => undefined,
     })} />);
@@ -1012,7 +1447,7 @@ describe('Notes in the application', () => {
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, essay],
       getNote: async (id: number) => ({
-        id,
+        id, document_id: id,
         document: noteDocument(id === 5 ? 'Essay text' : 'Saved plan'),
       }),
       saveNote,
@@ -1044,7 +1479,7 @@ describe('Notes in the application', () => {
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id: number) => ({ id, document: noteDocument('Saved plan') }),
+      getNote: async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
       saveNote,
     })} />);
     await openNotes();
@@ -1075,7 +1510,7 @@ describe('Notes in the application', () => {
     const createVault = vi.fn(async () => { transferred = stored; return { ...vault, display_name: 'Copy', active: false }; });
     render(<App client={fixtureClient({
       getBootstrap: async () => ({ ...bootstrapFixture, capabilities: { can_transfer_r2: true, can_modify: false } }),
-      listNoteItems: async () => [plan], getNote: async (id) => ({ id, document: stored }), saveNote,
+      listNoteItems: async () => [plan], getNote: async (id) => ({ id, document_id: id, document: stored }), saveNote,
       listVaults: async () => [vault], uploadVault, createVault,
       checkVaultUpload: async () => ({ status: 'match', etag: 'known', context_epoch: 1 }),
     })} />);
@@ -1118,7 +1553,7 @@ describe('Notes in the application', () => {
       data_path: '/data/personal.sqlite3', mirror_path: null, modify_path: null };
     render(<App client={fixtureClient({
       getBootstrap: async () => ({ ...bootstrapFixture, capabilities: { can_transfer_r2: true, can_modify: false } }),
-      listNoteItems: async () => [plan], getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+      listNoteItems: async () => [plan], getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
       listVaults: async () => [vault],
       checkVaultUpload: async () => ({ status: 'match', etag: 'known', context_epoch: 1 }),
       uploadVault: () => new Promise<number>((_resolve, fail) => { reject = fail; }),
@@ -1156,7 +1591,7 @@ describe('Notes in the application', () => {
       getBootstrap: async () => ({ ...bootstrapFixture, vault_name: activeVault }),
       getSessionSnapshot: async () => ({ ...snapshotFixture, recent_pending: true, discardable: true }),
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument(activeVault) }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument(activeVault) }),
       saveNote, discardUnusedSession, switchVault,
     })} />);
     fireEvent.change(await screen.findByRole('textbox', { name: 'Message' }), { target: { value: 'Chat draft' } });
@@ -1210,7 +1645,7 @@ describe('Notes in the application', () => {
         ? { ...snapshotFixture, forum: bootstrapFixture.forums[1], session_id: 'planning', session_label: 'Planning' }
         : snapshotFixture),
       listNoteItems: async () => [plan],
-      getNote: async (id) => ({ id, document: noteDocument('Saved plan') }),
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
       saveNote,
       deleteSession,
     })} />);
@@ -1240,7 +1675,7 @@ describe('Notes in the application', () => {
     const pendingOpen = new Promise<void>((_resolve, reject) => { rejectOpen = reject; });
     let failOpen = true;
     const saveNote = vi.fn(async () => undefined);
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
       getNote,
@@ -1298,7 +1733,7 @@ describe('Notes in the application', () => {
     const createSession = vi.fn(async () => {
       throw new ChaError('invalid_argument', 'The session could not be created.');
     });
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }));
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
       getNote,
@@ -1345,8 +1780,8 @@ describe('Notes in the application', () => {
   it('replaces an open note when the vault context changes, even for the same id', async () => {
     const events = contextBus();
     const getNote = vi.fn()
-      .mockResolvedValueOnce({ id: 4, document: noteDocument('Alpha') })
-      .mockResolvedValueOnce({ id: 4, document: noteDocument('Gamma') });
+      .mockResolvedValueOnce({ id: 4, document_id: 4, document: noteDocument('Alpha') })
+      .mockResolvedValueOnce({ id: 4, document_id: 4, document: noteDocument('Gamma') });
     render(<App
       client={fixtureClient({
         listNoteItems: async () => [plan],
@@ -1375,7 +1810,7 @@ describe('Notes in the application', () => {
     });
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote: async (id: number) => ({ id, document: noteDocument('Alpha') }),
+      getNote: async (id: number) => ({ id, document_id: id, document: noteDocument('Alpha') }),
       saveNote,
     })} />);
     await openNotes();
@@ -1422,7 +1857,7 @@ describe('Notes in the application', () => {
     let removed = false;
     const deleteNoteItem = vi.fn(async () => { removed = true; });
     const getNote = vi.fn(async (id: number) => ({
-      id,
+      id, document_id: id,
       document: text ? noteDocument(text) : { type: 'doc', content: [{ type: 'paragraph' }] },
     }));
     render(<App client={fixtureClient({
@@ -1443,7 +1878,7 @@ describe('Notes in the application', () => {
     { saved: 'Short', edited: 'A long unsaved note body', confirm: true },
   ])('uses unsaved text for deletion confirmation ($edited)', async ({ saved, edited, confirm }) => {
     let removed = false;
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument(saved) }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument(saved) }));
     const deleteNoteItem = vi.fn(async () => { removed = true; });
     render(<App client={fixtureClient({
       listNoteItems: async () => removed ? [] : [plan],
@@ -1461,11 +1896,31 @@ describe('Notes in the application', () => {
     expect(getNote).toHaveBeenCalledOnce();
   });
 
+  it('requires delete confirmation based on the original even with a short compressed document open', async () => {
+    const deleteNoteItem = vi.fn();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [{ ...plan, has_compressed: true }],
+      getNote: async (id, mode) => ({
+        id, document_id: mode === 'compressed' ? 40 : id,
+        document: noteDocument(mode === 'compressed' ? 'Short' : 'The original is longer than sixteen characters.'),
+      }),
+      deleteNoteItem,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Show compressed' }));
+    await screen.findByText('Short');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(await screen.findByRole('dialog', { name: /^Delete “Plan”\?/ })).toBeInTheDocument();
+    expect(deleteNoteItem).not.toHaveBeenCalled();
+  });
+
   it('uses live edits if a note opens while its deletion length is being read', async () => {
-    let finishRead!: (note: { id: number; document: Record<string, unknown> }) => void;
+    let finishRead!: (note: { id: number; document_id: number; document: Record<string, unknown> }) => void;
     const getNote = vi.fn((id: number) => getNote.mock.calls.length === 1
-      ? new Promise<{ id: number; document: Record<string, unknown> }>((resolve) => { finishRead = resolve; })
-      : Promise.resolve({ id, document: noteDocument('Short') }));
+      ? new Promise<{ id: number; document_id: number; document: Record<string, unknown> }>((resolve) => { finishRead = resolve; })
+      : Promise.resolve({ id, document_id: id, document: noteDocument('Short') }));
     const deleteNoteItem = vi.fn();
     render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, deleteNoteItem })} />);
     await openNotes();
@@ -1475,14 +1930,14 @@ describe('Notes in the application', () => {
     await screen.findByText('Short');
     await waitFor(() => noteEditor());
     act(() => { noteEditor().commands.setContent(noteDocument('A long unsaved note body')); });
-    await act(async () => { finishRead({ id: 4, document: noteDocument('Short') }); });
+    await act(async () => { finishRead({ id: 4, document_id: 4, document: noteDocument('Short') }); });
     expect(await screen.findByRole('dialog')).toHaveTextContent('Delete “Plan”?');
     expect(deleteNoteItem).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   });
 
   it('renames a note without reloading its body', async () => {
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan') }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }));
     let renamed = false;
     render(<App client={fixtureClient({
       listNoteItems: async () => {
@@ -1514,7 +1969,7 @@ describe('Notes in the application', () => {
 
   it('deletes an open note without saving the remainder and keeps the draft', async () => {
     const saveNote = vi.fn(async () => undefined);
-    const getNote = vi.fn(async (id: number) => ({ id, document: noteDocument('Saved plan contents') }));
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan contents') }));
     let removed = false;
     render(<App client={fixtureClient({
       listNoteItems: async () => (removed ? [study] : [study, plan]),
@@ -1543,7 +1998,7 @@ describe('Notes in the application', () => {
     const saveNote = vi.fn(async (_id: number, _document: Record<string, unknown>) => undefined);
     render(<App client={fixtureClient({
       listNoteItems: async () => [study, plan],
-      getNote: async (id: number) => ({ id, document: noteDocument('Saved plan contents') }),
+      getNote: async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan contents') }),
       saveNote,
       deleteNoteItem: async () => {
         throw new ChaError('invalid_argument', 'The note is still open in the vault.');
@@ -1567,7 +2022,7 @@ describe('Notes in the application', () => {
     const essay: NoteItem = { id: 5, read_only: false, is_summary: false, summary_linked: false, has_compressed: false, has_audio: false, parent_id: null, kind: 'note', name: 'Essay' };
     let finishDelete: () => void = () => {};
     const getNote = vi.fn(async (id: number) => ({
-      id,
+      id, document_id: id,
       document: noteDocument(id === 5 ? 'Essay text' : 'Saved plan'),
     }));
     render(<App client={fixtureClient({
@@ -1595,7 +2050,7 @@ describe('Notes in the application', () => {
   it('does not close a note opened after a deletion from the previous vault', async () => {
     const events = contextBus();
     let finishDelete: () => void = () => {};
-    const getNote = vi.fn(async () => ({ id: 4, document: noteDocument('Gamma note contents') }));
+    const getNote = vi.fn(async () => ({ id: 4, document_id: 4, document: noteDocument('Gamma note contents') }));
     render(<App
       client={fixtureClient({
         listNoteItems: async () => [plan],
@@ -1636,16 +2091,23 @@ it('opens annotation sources, protects generated content and reports stale entri
   const saveNote = vi.fn();
   render(<App client={fixtureClient({
     listNoteItems: async () => [plan, annotation],
-    getNote: async (id) => {
+    getNote: async (id, mode) => {
       if (missing && id !== 9) throw new ChaError('not_found', 'That note was not found.');
-      return { id, scroll_top: 500, document: id === 9 ? generated : stale ? noteDocument('Changed') : source };
+      if (id === plan.id && mode === 'compressed') return { id, document_id: 40, document: noteDocument('Compressed body') };
+      return { id, document_id: id, scroll_top: 500, document: id === 9 ? generated : stale ? noteDocument('Changed') : source };
     },
     saveNote,
   })} />);
   await openNotes();
   fireEvent.click(await screen.findByRole('treeitem', { name: 'ANNOTATIONS' }));
+  await screen.findByRole('button', { name: 'Go to highlight' });
+  chooseNoteMode('Compressed');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
+    .toHaveAttribute('title', 'Compressed mode; showing full text'));
   fireEvent.click(await screen.findByRole('button', { name: 'Go to highlight' }));
   await waitFor(() => expect(noteEditor().state.doc.textBetween(noteEditor().state.selection.from, noteEditor().state.selection.to)).toBe('Target'));
+  expect(screen.getByRole('button', { name: 'Note text mode' }))
+    .toHaveAttribute('title', 'Full text mode; showing full text');
   expect(saveNote).not.toHaveBeenCalled();
   expect(document.querySelector('.cha-notes-document')).not.toHaveClass('cha-notes-annotations');
   fireEvent.click(screen.getByRole('treeitem', { name: 'ANNOTATIONS' }));
@@ -1680,7 +2142,7 @@ it('clears a source navigation error when the source note closes', async () => {
   let items = [plan, annotation];
   render(<App client={fixtureClient({
     listNoteItems: async () => items,
-    getNote: async (id) => ({ id, document: id === 9 ? generated : noteDocument('Changed') }),
+    getNote: async (id) => ({ id, document_id: id, document: id === 9 ? generated : noteDocument('Changed') }),
     deleteNoteItem: async (id) => { items = items.filter((item) => item.id !== id); },
   })} />);
   await openNotes();
@@ -1699,7 +2161,7 @@ it('refreshes a visible annotation note after source rename and deletion', async
   let text = 'Old annotations';
   render(<App client={fixtureClient({
     listNoteItems: async () => items,
-    getNote: async (id) => ({ id, document: noteDocument(text) }),
+    getNote: async (id) => ({ id, document_id: id, document: noteDocument(text) }),
     renameNoteItem: async (id, name) => { text = 'Renamed annotations'; items = items.map((item) => item.id === id ? { ...item, name } : item); return items[0]; },
     deleteNoteItem: async (id) => { text = 'No comments or highlights.'; items = items.filter((item) => item.id !== id); },
   })} />);
@@ -1727,7 +2189,7 @@ it.each(['rename', 'delete'])('refreshes visible annotations after %s even when 
       if (changed) throw new Error('List unavailable');
       return [plan, annotation];
     },
-    getNote: async (id) => ({ id, document: noteDocument(changed ? 'Fresh annotations' : 'Old annotations'), scroll_top: 240 }),
+    getNote: async (id) => ({ id, document_id: id, document: noteDocument(changed ? 'Fresh annotations' : 'Old annotations'), scroll_top: 240 }),
     renameNoteItem: async (id, name) => { changed = true; return { ...plan, id, name }; },
     deleteNoteItem: async () => { changed = true; },
     saveNote,
@@ -1754,7 +2216,7 @@ it('refreshes the tree after automatic creation and keeps typing focus in the so
   const listNoteItems = vi.fn(async () => created ? [plan, annotation] : [plan]);
   render(<App client={fixtureClient({
     listNoteItems,
-    getNote: async (id) => ({ id, document: noteDocument('Source') }),
+    getNote: async (id) => ({ id, document_id: id, document: noteDocument('Source') }),
     saveNote: async () => { const first = !created; created = true; return { annotation_created: first }; },
   })} />);
   await openNotes();
@@ -1779,7 +2241,7 @@ it('keeps a committed source save successful when the annotation tree refresh fa
   const listNoteItems = vi.fn().mockResolvedValueOnce([plan]).mockRejectedValueOnce(new Error('List unavailable'))
     .mockResolvedValue([plan, annotation]);
   const saveNote = vi.fn(async () => ({ annotation_created: true }));
-  render(<App client={fixtureClient({ listNoteItems, saveNote, getNote: async (id) => ({ id, document: noteDocument('Source') }) })} />);
+  render(<App client={fixtureClient({ listNoteItems, saveNote, getNote: async (id) => ({ id, document_id: id, document: noteDocument('Source') }) })} />);
   await openNotes();
   fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
   await waitFor(() => expect(noteEditor().isEditable).toBe(true));
@@ -1804,7 +2266,7 @@ it('discards a pending source navigation when the vault changes during scroll sa
   ] }] };
   let finishScroll!: () => void;
   const events = contextBus();
-  const getNote = vi.fn(async (id: number) => ({ id, document }));
+  const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document }));
   const saveNoteScrollPosition = vi.fn(() => new Promise<void>((resolve) => { finishScroll = resolve; }));
   render(<App client={fixtureClient({ listNoteItems: async () => [plan, annotation], getNote, saveNoteScrollPosition })} contextEvents={events} />);
   await openNotes();
@@ -1827,7 +2289,7 @@ it('opens a newly created note while ANNOTATIONS is visible, even with a slow sc
   });
   render(<App client={fixtureClient({
     listNoteItems: async () => items,
-    getNote: async (id) => ({ id, document: noteDocument(id === 10 ? 'Newly created contents' : 'Generated contents') }),
+    getNote: async (id) => ({ id, document_id: id, document: noteDocument(id === 10 ? 'Newly created contents' : 'Generated contents') }),
     saveNoteScrollPosition: saveScroll,
     createNoteItem: async () => { items = [...items, created]; return created; },
   })} />);
@@ -1858,7 +2320,7 @@ it('shows annotation groups in folder tree order, also after a source rename', a
     .sort((left, right) => right.name.localeCompare(left.name)).flatMap(group) });
   render(<App client={fixtureClient({
     listNoteItems: async () => items,
-    getNote: async (id) => ({ id, document: id === 9 ? stored() : noteDocument('Source') }),
+    getNote: async (id) => ({ id, document_id: id, document: id === 9 ? stored() : noteDocument('Source') }),
     renameNoteItem: async (id, name) => {
       items = items.map((item) => item.id === id ? { ...item, name } : item);
       return items.find((item) => item.id === id)!;

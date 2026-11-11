@@ -52,14 +52,15 @@ bool is_key_config(std::string_view name) {
 nlohmann::json note_fields(
     storage::SqliteDatabase& database, std::int64_t id) {
     auto query = database.prepare(
-        "SELECT content_json, compressed_text, scroll_top, read_only "
-        "FROM note_items WHERE id=?1 AND kind='note'",
+        "SELECT n.content_json, c.content_json, n.scroll_top, n.read_only "
+        "FROM note_items n LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 "
+        "WHERE n.id=?1 AND n.kind='note' AND n.compressed=0",
         id);
     if (!query.step()) throw std::runtime_error("Sync note is missing.");
     nlohmann::json fields;
     fields["content"] = encode_base64(query.blob(0));
-    if (query.is_null(1)) fields["compressed_text"] = nullptr;
-    else fields["compressed_text"] = query.text(1);
+    if (query.is_null(1)) fields["compressed_content"] = nullptr;
+    else fields["compressed_content"] = encode_base64(query.blob(1));
     fields["scroll_top"] = query.integer(2);
     fields["read_only"] = query.integer(3) != 0;
     return fields;
@@ -250,7 +251,7 @@ std::vector<std::string> sync_note_path(
         if (!visited.insert(*current).second)
             throw std::runtime_error("Sync note path contains a cycle.");
         auto query = database.prepare(
-            "SELECT parent_id, name FROM note_items WHERE id=?1", *current);
+            "SELECT parent_id, name FROM note_items WHERE id=?1 AND compressed=0", *current);
         if (!query.step()) throw std::runtime_error("Sync note path is missing.");
         reversed.push_back(query.text(1));
         current = query.is_null(0) ? std::optional<std::int64_t>{}
@@ -267,9 +268,9 @@ std::optional<std::int64_t> sync_note_find(
     for (const std::string& name : path) {
         auto query = parent
             ? database.prepare(
-                "SELECT id FROM note_items WHERE parent_id=?1 AND name=?2", *parent, name)
+                "SELECT id FROM note_items WHERE parent_id=?1 AND name=?2 AND compressed=0", *parent, name)
             : database.prepare(
-                "SELECT id FROM note_items WHERE parent_id IS NULL AND name=?1", name);
+                "SELECT id FROM note_items WHERE parent_id IS NULL AND name=?1 AND compressed=0", name);
         if (!query.step()) return std::nullopt;
         found = query.integer(0);
         parent = found;
@@ -284,14 +285,14 @@ std::size_t sync_collect_flagged_notes(
     std::vector<std::int64_t> flagged;
     {
         auto query = database.prepare(
-            "SELECT id FROM note_items WHERE changed<>0 AND kind='note' ORDER BY id");
+            "SELECT id FROM note_items WHERE changed<>0 AND kind='note' AND compressed=0 ORDER BY id");
         while (query.step()) flagged.push_back(query.integer(0));
     }
     std::size_t collected = 0;
     for (const std::int64_t id : flagged) {
         storage::SqliteTransaction transaction(database);
         auto check = database.prepare(
-            "SELECT changed FROM note_items WHERE id=?1 AND kind='note'", id);
+            "SELECT changed FROM note_items WHERE id=?1 AND kind='note' AND compressed=0", id);
         if (!check.step() || check.integer(0) == 0) continue;
         if (!sync_connected(database, machine)) continue;
         auto fields = note_fields(database, id);

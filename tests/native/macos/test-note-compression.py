@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run background compression in the real native host with a delayed provider."""
+"""Run blocking compression in the real native host with a delayed provider."""
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -36,7 +36,7 @@ def main():
                 self.send_header('Content-Length', '0')
                 self.end_headers()
                 return
-            result = json.dumps({'choices': [{'message': {'content': 'Compressed result'}, 'finish_reason': 'stop'}]}).encode()
+            result = json.dumps({'choices': [{'message': {'content': 'Compressed café\n\n- Result'}, 'finish_reason': 'stop'}]}).encode()
             try:
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
@@ -74,14 +74,19 @@ def main():
         try:
             subprocess.run(['tests/native/macos/run.sh', 'parity', '--timeout-ms', '45000'], cwd=REPOSITORY, env=environment, check=True)
             with closing(sqlite3.connect(root / 'test.sqlite3')) as database:
-                saved = database.execute('SELECT name FROM note_items WHERE compressed_text IS NOT NULL ORDER BY name').fetchall()
-                assert saved == [('B nested',), ('Single',)], saved
+                saved = database.execute('''SELECT n.name, n.content_json, c.content_json
+                    FROM note_items n JOIN note_items c ON c.parent_id=n.id
+                    WHERE c.compressed=1 ORDER BY n.name''').fetchall()
+                assert [row[0] for row in saved] == ['B nested', 'Single'], saved
+                original, compressed = (zlib.decompress(blob).decode() for blob in saved[1][1:])
+                assert ' original edit' in original and 'manual edit' not in original, original
+                assert 'manual edit' in compressed and ' original edit' not in compressed, compressed
                 events = database.execute('SELECT severity FROM event_history ORDER BY id').fetchall()
                 assert sorted(events) == sorted([('info',)] * 6 + [('success',)] * 2), events
             counts = {marker: sum(marker in text for text in requests)
                       for marker in ('SINGLE', 'SLOW_FOLDER', 'FAST_NESTED')}
             assert counts['SINGLE'] == 2 and counts['FAST_NESTED'] == 2, counts
-            # A may be cancelled while waiting for the earlier transfer to unwind.
+            # A may be cancelled before its provider transfer starts.
             assert counts['SLOW_FOLDER'] <= 1 and len(requests) == sum(counts.values()), counts
         finally:
             server.shutdown()

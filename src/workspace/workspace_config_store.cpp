@@ -1546,6 +1546,7 @@ struct WorkspaceConfigStore::Impl {
         ensure_entry_metadata_columns(*database);
         ensure_session_lifecycle_columns(*database);
         create_session_character_settings_table(*database);
+        migrate_compressed_notes(*database);
         {
             storage::SqliteTransaction transaction(*database);
             create_note_items_schema(*database);
@@ -2971,9 +2972,9 @@ std::int64_t WorkspaceConfigStore::import_note_folder(std::optional<std::int64_t
     return note_import_folder(*impl_->database, parent_id, source, impl_->sync_machine);
 }
 
-NoteContent WorkspaceConfigStore::get_note(std::int64_t id) const {
+NoteContent WorkspaceConfigStore::get_note(std::int64_t id, NoteTextMode mode) const {
     const std::lock_guard lock(impl_->mutex);
-    return note_get(*impl_->database, id);
+    return note_get(*impl_->database, id, mode);
 }
 
 NoteText WorkspaceConfigStore::get_note_text(std::int64_t id, bool prefer_compressed) const {

@@ -457,6 +457,7 @@ TEST(TextInput, UsesCompressedNoteTextForAttachmentsAndTheChatSizeLimit) {
     document["content"][0]["content"][0]["text"] = std::string(256 * 1024 + 1, 'a');
     note_save(database, note.id, document);
     note_save_compressed(database, note.id, "Short version\n\n- Key point");
+    const auto compressed_id = database.last_insert_rowid();
     auto controller = test::from_test_workspace(
         std::vector<CharacterDefinition>{definition()}, temporary.path, notifier());
     ASSERT_TRUE(handle_text_input(*controller, "operator", "##000001").clear_input);
@@ -469,6 +470,14 @@ TEST(TextInput, UsesCompressedNoteTextForAttachmentsAndTheChatSizeLimit) {
     EXPECT_EQ(rejected.session.notice,
         "This note is too large to add to a chat. The limit is 256 KiB of text.");
     EXPECT_EQ(controller->view().transcript.entries.size(), 1U);
+    EXPECT_EQ(journal.notes_prompt(), "# Note: Large\n\nShort version\n\n- Key point");
+    const auto missing = handle_text_input(*controller, "operator", note_item_ref_id(compressed_id));
+    EXPECT_FALSE(missing.clear_input);
+    EXPECT_EQ(missing.session.notice, "That note was not found.");
+    database.prepare("UPDATE note_items SET content_json=X'00' WHERE id=?", compressed_id).run();
+    const auto damaged = handle_text_input(*controller, "operator", "##000001");
+    EXPECT_FALSE(damaged.clear_input);
+    EXPECT_EQ(damaged.session.notice, "The note could not be opened.");
     EXPECT_EQ(journal.notes_prompt(), "# Note: Large\n\nShort version\n\n- Key point");
 }
 
