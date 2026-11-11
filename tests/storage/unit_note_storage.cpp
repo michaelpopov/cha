@@ -899,6 +899,59 @@ TEST_F(NoteStorageTest, IncomingNoteRecordsApplyAndClearSummaryFields) {
     EXPECT_TRUE(note_find_item(*database_, overview.id)->folder_summary);
 }
 
+TEST_F(NoteStorageTest, IncomingLevelAndExclusionRecordsApplyAndRefuseInvalidRecords) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Chapter");
+    const auto original = note_document_from_text("Original");
+    const auto compressed = note_document_from_text("Compressed");
+    const auto l1 = note_document_from_text("Level one");
+    const auto l2 = note_document_from_text("Level two");
+    (void)note_save(*database_, note.id, original);
+    note_save_compressed(*database_, note.id, "Compressed");
+
+    const nlohmann::json level_one = {
+        {"kind", "note.level"}, {"item", "note"}, {"path", {"Book", "Chapter"}},
+        {"level", "l1"}, {"content", encode_base64(compressed_content(l1.dump()))},
+    };
+    auto level_two = level_one;
+    level_two["level"] = "l2";
+    level_two["content"] = encode_base64(compressed_content(l2.dump()));
+    ASSERT_TRUE(note_apply_record(*database_, level_one));
+    ASSERT_TRUE(note_apply_record(*database_, level_two));
+    const auto expect_documents = [&] {
+        EXPECT_EQ(note_get(*database_, note.id).document, original);
+        EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, compressed);
+        EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l1).document, l1);
+        EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l2).document, l2);
+    };
+    expect_documents();
+
+    nlohmann::json exclusion = {
+        {"kind", "note.summary_excluded"}, {"item", "note"}, {"path", {"Book", "Chapter"}},
+        {"summary_excluded", true},
+    };
+    ASSERT_TRUE(note_apply_record(*database_, exclusion));
+    EXPECT_TRUE(note_find_item(*database_, note.id)->summary_excluded);
+    exclusion["summary_excluded"] = false;
+    ASSERT_TRUE(note_apply_record(*database_, exclusion));
+    EXPECT_FALSE(note_find_item(*database_, note.id)->summary_excluded);
+
+    auto invalid_level = level_one;
+    invalid_level["level"] = "l3";
+    auto missing_content = level_one;
+    missing_content.erase("content");
+    auto folder_target = level_one;
+    folder_target["path"] = {"Book"};
+    exclusion["summary_excluded"] = "yes";
+    for (const auto& record : {invalid_level, missing_content, folder_target, exclusion}) {
+        SCOPED_TRACE(record.dump());
+        expect_note_error(NoteFailure::invalid, "The incoming note record is invalid.",
+            [&] { (void)note_apply_record(*database_, record); });
+        expect_documents();
+        EXPECT_FALSE(note_find_item(*database_, note.id)->summary_excluded);
+    }
+}
+
 class NoteFolderExportTest : public NoteStorageTest {
 protected:
     void SetUp() override {
@@ -947,6 +1000,9 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     const auto summary = note_document_from_text("Overview");
     (void)note_commit_folder_summary(*database_, letters.id, summary);
     note_save_scroll_position(*database_, seneca.id, 42);
+    note_save_scroll_position(*database_, compressed_id, 101);
+    note_save_scroll_position(*database_, note_get(*database_, seneca.id, NoteTextMode::l1).document_id, 102);
+    note_save_scroll_position(*database_, note_get(*database_, seneca.id, NoteTextMode::l2).document_id, 103);
     (void)note_set_read_only(*database_, seneca.id, true);
     const auto first = workspace_.root() / "first.m4a", second = workspace_.root() / "second.m4a";
     { std::ofstream(first, std::ios::binary) << "first clip"; std::ofstream(second, std::ios::binary) << "second clip"; }
@@ -981,6 +1037,9 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     EXPECT_TRUE(copied_summary->folder_summary);
     EXPECT_EQ(note_get(*target_, copied_summary->id).document, summary);
     EXPECT_EQ(content.scroll_top, 42);
+    EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::compressed).scroll_top, 101);
+    EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::l1).scroll_top, 102);
+    EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::l2).scroll_top, 103);
     EXPECT_EQ(note_audio_info(*target_, copied->id)["count"], 2);
     EXPECT_EQ(note_audio_clip(*target_, copied->id, 0).bytes, "first clip");
     EXPECT_EQ(note_audio_clip(*target_, copied->id, 1).bytes, "second clip");
@@ -1082,8 +1141,6 @@ TEST_F(NoteFolderExportTest, RejectsInvalidVersionRowsAndSummaryLinks) {
              "UPDATE note_items SET level=0 WHERE level=1",
              "UPDATE note_items SET folder_summary=1 WHERE name='Chapter' AND compressed=0",
              "UPDATE note_items SET folder_summary=1 WHERE level=1",
-             "UPDATE note_items SET parent_id=(SELECT id FROM note_items WHERE folder_summary=1) "
-             "WHERE name='Chapter' AND compressed=0",
          }) {
         note_export_folder(*database_, folder.id, file_);
         Database(file_, Database::Mode::read_write).execute(sql);

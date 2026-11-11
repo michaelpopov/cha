@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type Dispatch,
   type FormEvent,
   type KeyboardEvent,
@@ -526,10 +527,10 @@ export function Sidebar({
           ref={menuRef}
           role="menu"
           style={{
-            width: menu.kind === 'forum' ? '12rem' : undefined,
-            left: Math.max(8, Math.min(menu.x, window.innerWidth - (menu.kind === 'forum' ? 200 : 168))),
+            '--menu-width': menu.kind === 'forum' ? '12rem' : undefined,
+            '--menu-x': `${menu.x}px`,
             top: Math.max(8, Math.min(menu.y, window.innerHeight - (menu.kind === 'forum' ? 60 : 220))),
-          }}
+          } as CSSProperties}
         >
           {menu.kind === 'forum' ? (
             <button

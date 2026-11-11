@@ -266,19 +266,26 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
         note_save_compressed(database, note.id, "Compressed prose");
         compressed_id = database.last_insert_rowid();
     }
+    application_->commit_summary_part(note.id, app::SummaryPart::l1, note_document_from_text("Level one"), epoch);
+    application_->commit_summary_part(folder.id, app::SummaryPart::l3, note_document_from_text("Folder overview"), epoch);
+    std::int64_t l1_id;
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_only);
+        auto level = database.prepare("SELECT id FROM note_items WHERE parent_id=? AND compressed=1 AND level=1", note.id);
+        ASSERT_TRUE(level.step());
+        l1_id = level.integer(0);
+    }
     const auto before = application_->get_note(note.id, epoch);
     const auto listing = get("/api/cha/v1/notes");
     ASSERT_EQ(listing.status, 200) << listing.raw;
     EXPECT_EQ(listing.json, nlohmann::json({{"items", application_->list_note_items(epoch)}}));
     bool annotation_read = false;
-    for (const auto& item : listing.json.at("items")) {
-        EXPECT_EQ(item.at("has_l1"), false);
-        EXPECT_EQ(item.at("has_l2"), false);
-        EXPECT_EQ(item.at("summary_excluded"), false);
-        EXPECT_EQ(item.at("folder_summary"), false);
+    const auto& items = listing.json.at("items");
+    for (const auto& item : items) {
         if (item.at("kind") == "folder") continue;
         const auto id = item.at("id").get<std::int64_t>();
         EXPECT_NE(id, compressed_id);
+        EXPECT_NE(id, l1_id);
         const auto response = get("/api/cha/v1/notes/" + std::to_string(id));
         ASSERT_EQ(response.status, 200) << response.raw;
         EXPECT_EQ(response.json.size(), 2);
@@ -286,11 +293,23 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
         EXPECT_EQ(response.json.at("document"), application_->get_note(id, epoch).document);
         annotation_read |= item.at("kind") == "annotation";
     }
+    const auto original = std::find_if(items.begin(), items.end(),
+        [&](const auto& item) { return item.at("id") == note.id; });
+    ASSERT_NE(original, items.end());
+    EXPECT_EQ(original->at("has_l1"), true);
+    EXPECT_EQ(original->at("has_l2"), false);
+    const auto is_folder_summary = [](const auto& item) { return item.at("folder_summary") == true; };
+    ASSERT_EQ(std::count_if(items.begin(), items.end(), is_folder_summary), 1);
+    const auto summary = std::find_if(items.begin(), items.end(), is_folder_summary);
+    EXPECT_EQ(summary->at("is_summary"), true);
+    EXPECT_EQ(summary->at("parent_id"), folder.id);
+    EXPECT_EQ(summary->at("name"), "Summary");
     EXPECT_TRUE(annotation_read);
     EXPECT_EQ(application_->get_note(note.id, epoch).document, before.document);
     EXPECT_EQ(application_->get_note(note.id, epoch).scroll_top, before.scroll_top);
     EXPECT_EQ(get("/api/cha/v1/notes/" + std::to_string(folder.id)).status, 404);
     EXPECT_EQ(get("/api/cha/v1/notes/" + std::to_string(compressed_id)).status, 404);
+    EXPECT_EQ(get("/api/cha/v1/notes/" + std::to_string(l1_id)).status, 404);
     EXPECT_EQ(get("/api/cha/v1/notes/9007199254740991").status, 404);
 }
 

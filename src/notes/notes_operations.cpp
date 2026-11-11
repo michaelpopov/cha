@@ -275,14 +275,23 @@ constexpr std::string_view summary_cancelled = "Summary generation was cancelled
 constexpr std::string_view summary_start_failed = "Could not start summary generation. Try again.";
 constexpr std::string_view missing_summary_target = "That note or folder was not found.";
 
-void require_note_answer(const NotePromptAnswer& answer, const std::atomic_bool& cancel) {
+struct AnswerMessages {
+    std::string_view refused;
+    std::string_view context_window;
+    std::string_view incomplete;
+    std::string_view no_text;
+    std::string_view too_large;
+};
+
+void require_answer(const NotePromptAnswer& answer, const std::atomic_bool& cancel,
+    const AnswerMessages& messages) {
     const auto& result = answer.result;
     if (cancel.load() || result.outcome == GenerationOutcome::cancelled)
         throw ApplicationError(ErrorCode::operation_cancelled, std::string(summary_cancelled));
-    if (result.refused) throw ApplicationError(ErrorCode::internal_error, "The provider refused this request.");
+    if (result.refused) throw ApplicationError(ErrorCode::internal_error, std::string(messages.refused));
     if (result.outcome != GenerationOutcome::completed) {
         if (result.message == "Prompt exceeds the model's context window.")
-            throw ApplicationError(ErrorCode::invalid_argument, result.message);
+            throw ApplicationError(ErrorCode::invalid_argument, std::string(messages.context_window));
         const std::initializer_list<std::string_view> safe_reasons{
             "HTTP request failed: idle timeout reached", "HTTP request failed: Timeout was reached",
             "Provider quota or billing limit exceeded.", "Provider authentication or permission was rejected.",
@@ -293,10 +302,11 @@ void require_note_answer(const NotePromptAnswer& answer, const std::atomic_bool&
             : "The provider request failed. Check the connection and provider settings, then try again.");
     }
     if (!result.finish_reason.empty() && result.finish_reason != "stop" && result.finish_reason != "end_turn")
-        throw ApplicationError(ErrorCode::internal_error, "The provider returned an incomplete result.");
-    if (trim_view(answer.text).empty()) throw ApplicationError(ErrorCode::internal_error, "The provider returned no text.");
+        throw ApplicationError(ErrorCode::internal_error, std::string(messages.incomplete));
+    if (trim_view(answer.text).empty())
+        throw ApplicationError(ErrorCode::internal_error, std::string(messages.no_text));
     if (answer.text.size() > note_document_byte_limit)
-        throw ApplicationError(ErrorCode::body_too_large, "The result exceeds 12 MiB.");
+        throw ApplicationError(ErrorCode::body_too_large, std::string(messages.too_large));
 }
 
 bool folder_summary_part(SummaryPart part) {
@@ -321,14 +331,13 @@ std::string note_summary_target(std::int64_t id, std::string_view name, bool fol
 }
 
 void record_note_summary_failure(WorkspaceConfigStore& store, SummaryPart part,
-    std::string_view target, std::string_view reason, bool conversion_failed = false) noexcept {
+    std::string_view target, std::string_view reason) noexcept {
     try {
         std::string message = part == SummaryPart::l3 ? "Could not save the " : "Could not make ";
         if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview) message += "the ";
         message.append(summary_part_label(part)).append(" for ").append(target).append(": ").append(reason);
         if (!message.ends_with('.')) message += '.';
-        if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview
-            || (part == SummaryPart::l3 && conversion_failed))
+        if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview)
             message += " The Summary note was not changed.";
         store.append_event(EventSeverity::error, message);
     } catch (...) { log_warn("Could not record note summary outcome."); }
@@ -354,30 +363,6 @@ std::string_view summary_prompt(SummaryPart part) {
     }
 }
 
-void require_summary_answer(const NotePromptAnswer& answer, const std::atomic_bool& cancel) {
-    const auto& result = answer.result;
-    if (cancel.load() || result.outcome == GenerationOutcome::cancelled)
-        throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
-    if (result.refused) throw ApplicationError(ErrorCode::internal_error, "The provider refused to summarize this session.");
-    if (result.outcome != GenerationOutcome::completed) {
-        if (result.message == "Prompt exceeds the model's context window.")
-            throw ApplicationError(ErrorCode::invalid_argument,
-                "The conversation exceeds the model's context window. Select a model with a larger context window in Settings → Notes settings and try again.");
-        const std::initializer_list<std::string_view> safe_reasons{
-            "HTTP request failed: idle timeout reached", "HTTP request failed: Timeout was reached",
-            "Provider quota or billing limit exceeded.", "Provider authentication or permission was rejected.",
-            "Provider rate limit exceeded.",
-        };
-        const bool safe = std::find(safe_reasons.begin(), safe_reasons.end(), result.message) != safe_reasons.end();
-        throw ApplicationError(ErrorCode::internal_error, safe ? result.message
-            : "The provider request failed. Check the connection and provider settings, then try again.");
-    }
-    if (!result.finish_reason.empty() && result.finish_reason != "stop" && result.finish_reason != "end_turn")
-        throw ApplicationError(ErrorCode::internal_error, "The provider returned an incomplete summary.");
-    if (trim_view(answer.text).empty()) throw ApplicationError(ErrorCode::internal_error, "The provider returned no summary text.");
-    if (answer.text.size() > note_document_byte_limit)
-        throw ApplicationError(ErrorCode::body_too_large, "The generated summary exceeds 12 MiB.");
-}
 }
 
 void NotesService::set_note_compression_changed(NoteAudioChanged callback) {
@@ -639,7 +624,6 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
         target = note_summary_target(id, item->name, folder);
         require_summary_target(*item, folder);
         if (folder) {
-            if (text.empty()) throw ApplicationError(ErrorCode::invalid_argument, "The overview text must not be empty.");
             if (text.size() > note_document_byte_limit)
                 throw ApplicationError(ErrorCode::body_too_large, "The overview text exceeds 12 MiB.");
         } else {
@@ -693,7 +677,13 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
                         else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
-                    require_note_answer(answer, cancel);
+                    require_answer(answer, cancel, {
+                        .refused = "The provider refused this request.",
+                        .context_window = "Prompt exceeds the model's context window.",
+                        .incomplete = "The provider returned an incomplete result.",
+                        .no_text = "The provider returned no text.",
+                        .too_large = "The result exceeds 12 MiB.",
+                    });
                 } catch (const ApplicationError& error) { code = error.code; failure = error.what(); }
                 catch (...) { failure = "Check the Notes provider settings and try again."; }
 
@@ -764,7 +754,7 @@ void NotesService::abandon_summary_part(std::int64_t id, SummaryPart part, std::
         const auto item = impl_->store->get_note_item(id);
         if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
         record_note_summary_failure(*impl_->store, part, note_summary_target(id, item->name, folder_summary_part(part)),
-            "the result could not be converted to a note", true);
+            "the result could not be converted to a note");
     } catch (const NoteError& error) { rethrow_note(error); }
 }
 
@@ -862,7 +852,14 @@ std::shared_ptr<OperationReply> NotesService::generate_session_summary(
                             else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
                                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
                         }
-                        require_summary_answer(answer, cancel);
+                        require_answer(answer, cancel, {
+                            .refused = "The provider refused to summarize this session.",
+                            .context_window = "The conversation exceeds the model's context window. "
+                                "Select a model with a larger context window in Settings → Notes settings and try again.",
+                            .incomplete = "The provider returned an incomplete summary.",
+                            .no_text = "The provider returned no summary text.",
+                            .too_large = "The generated summary exceeds 12 MiB.",
+                        });
                         return std::move(answer.text);
                     };
                     auto short_text = generate(short_definition);

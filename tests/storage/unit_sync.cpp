@@ -708,8 +708,7 @@ TEST_F(SyncNotesTest, CompressedEditRecordsAnUpdateForTheOriginalPath) {
 
 TEST_F(SyncNotesTest, LevelEditFlagsTheOriginalNote) {
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
-    note_save_compressed(*database_, note.id, "Generated", sync_machine);
-    database_->prepare("UPDATE note_items SET level=1 WHERE parent_id=?", note.id).run();
+    note_commit_level(*database_, note.id, 1, text_document("Generated"), "Saved.", sync_machine);
     const auto l1 = note_get(*database_, note.id, NoteTextMode::l1);
     ASSERT_NE(l1.document_id, note.id);
     EXPECT_FALSE(note_save(*database_, l1.document_id, text_document("Edited"), sync_machine));
@@ -717,6 +716,8 @@ TEST_F(SyncNotesTest, LevelEditFlagsTheOriginalNote) {
     const auto record = records().back();
     EXPECT_EQ(record["kind"], "note.update");
     EXPECT_EQ(record["path"], nlohmann::json::array({"Note"}));
+    EXPECT_EQ(note_parse_saved_document(decode_base64(record["l1_content"].get<std::string>()), 0),
+        text_document("Edited"));
     EXPECT_TRUE(record["compressed_content"].is_null());
 }
 

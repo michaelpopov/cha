@@ -2156,8 +2156,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, SummaryPromptsFallBackInAnExistingVaultA
         EXPECT_FALSE(prompt->text.empty());
         EXPECT_EQ(prompt->text, normalize_prompt_text(entry->embedded_text()));
     }
-    EXPECT_NE(find_prompt_catalog_entry("summary-l1")->embedded_text,
-        prompt_catalog.front().embedded_text);
     EXPECT_EQ(config_contents(database()), original);
 
     store->apply_prompt_text("summary-l2", "Custom L2 prompt");

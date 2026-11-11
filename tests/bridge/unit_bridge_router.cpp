@@ -4149,6 +4149,12 @@ TEST_F(BridgeRouterTest, NoteSummaryCommitAbandonAndCompressionPreserveVersions)
         expect_event("error", "Could not make " + std::string(label) + " for " + note_target
             + ": the result could not be converted to a note.");
         EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", mode}})["result"]["document"], doc);
+        expect_note_error(call("notes.summaryCommit",
+            {{"id", note.id}, {"part", mode}, {"document", nlohmann::json::object()}}),
+            "invalid_argument", "Summary content must have a doc root.");
+        expect_event("error", "Could not make " + std::string(label) + " for " + note_target
+            + ": Summary content must have a doc root.");
+        EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", mode}})["result"]["document"], doc);
     }
 
     const auto l3 = [&](nlohmann::json document) {
@@ -4162,10 +4168,29 @@ TEST_F(BridgeRouterTest, NoteSummaryCommitAbandonAndCompressionPreserveVersions)
     EXPECT_TRUE(summary->read_only);
     expect_event("success", "Summary ready for “Book” (folder " + std::to_string(folder.id)
         + ", note " + std::to_string(summary->id) + ").");
-    ASSERT_TRUE(l3(text_document("Replacement folder summary"))["ok"]);
+    const auto request = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, request, epoch_, "notes.summaryCommit",
+        {{"id", folder.id}, {"part", "l3"}, {"document", text_document("Replacement folder summary")}}).dump());
+    nlohmann::json reply;
+    nlohmann::json notice;
+    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    while ((reply.empty() || notice.empty()) && std::chrono::steady_clock::now() < deadline) {
+        const auto delivery = wait_delivery(*router_, connection_);
+        if (!delivery) continue;
+        ack_delivery(*router_, connection_, *delivery);
+        if (reply.empty()) reply = reply_with_id(*delivery, request);
+        for (const auto& message : delivery->at("messages")) {
+            if (message.value("event", "") == "noteAudio.changed") notice = message;
+        }
+    }
+    ASSERT_FALSE(reply.empty());
+    ASSERT_TRUE(reply.at("ok"));
+    ASSERT_FALSE(notice.empty());
+    EXPECT_EQ(notice.at("id"), summary->id);
+    EXPECT_EQ(notice.at("context_epoch"), epoch_);
     ASSERT_TRUE(call("notes.summaryAbandon", {{"id", folder.id}, {"part", "l3"}})["ok"]);
     expect_event("error", "Could not save the Summary note for " + folder_target
-        + ": the result could not be converted to a note. The Summary note was not changed.");
+        + ": the result could not be converted to a note.");
     expect_note_error(l3(nlohmann::json::object()), "invalid_argument", "The summary document has no readable text.");
     expect_event("error", "Could not save the Summary note for " + folder_target
         + ": The summary document has no readable text.");

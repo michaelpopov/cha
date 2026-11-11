@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
 import { createPortal } from 'react-dom';
@@ -562,7 +563,7 @@ export function NotesTree({
     return refreshed;
   }
 
-  function noteContextCurrent(epoch: number) {
+  function storeContextCurrent(epoch: number) {
     try { return alive.current && clientRef.current.contextEpoch() === epoch; }
     catch { return false; }
   }
@@ -589,10 +590,10 @@ export function NotesTree({
     if (note && note.kind !== 'annotation') void readCompressionStatus(opened);
     if (note?.kind === 'folder') {
       void clientRef.current.storeOperation(note.id, epoch).then(status => {
-        if (noteContextCurrent(epoch))
+        if (storeContextCurrent(epoch))
           setMenu(current => current?.identity === opened.identity ? { ...current, storeStatus: status } : current);
       }).catch(failure => {
-        if (noteContextCurrent(epoch) && currentMenu.current?.identity === opened.identity)
+        if (storeContextCurrent(epoch) && currentMenu.current?.identity === opened.identity)
           setError(publicErrorMessage(failure, 'Could not read store status. Reopen the folder menu to try again.'));
       });
     }
@@ -758,9 +759,8 @@ export function NotesTree({
     setError(null);
     try {
       if (clientRef.current.contextEpoch() !== epoch) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
-      const updated = await clientRef.current.setNoteSummaryExcluded(source.id, !source.summary_excluded);
-      if (!noteContextCurrent(epoch)) return;
-      updateItem(updated);
+      await clientRef.current.setNoteSummaryExcluded(source.id, !source.summary_excluded);
+      if (!storeContextCurrent(epoch)) return;
       await refreshAfterOperation();
     } catch (failure) {
       if (alive.current) setError(publicErrorMessage(failure, 'The change could not be saved.'));
@@ -958,9 +958,9 @@ export function NotesTree({
           tabIndex={-1}
           role="menu"
           style={{
-            left: Math.max(8, Math.min(menu.x, window.innerWidth - 168)),
+            '--menu-x': `${menu.x}px`,
             top: menu.y,
-          }}
+          } as CSSProperties}
         >
           {!menuManaged && !menuIsNote && (
             <>
@@ -1011,7 +1011,7 @@ export function NotesTree({
                 onClick={() => void (menuIsNote && menu.compressionPending ? cancelCompression() : startCompress())}
                 role="menuitem" type="button">{menuIsNote && menu.compressionPending ? 'Cancel compression' : 'Compress'}</button>}
               {menuRow && menuRow.kind !== 'annotation' && !menuRow.isSummary && (
-                <button onClick={() => void startSummarize()} role="menuitem" type="button">Summarize</button>
+                <button disabled={menuFolderBusy} onClick={() => void startSummarize()} role="menuitem" type="button">Summarize</button>
               )}
               {menuRow?.kind === 'note' && !menuRow.isSummary && (
                 <button aria-checked={menuRow.summaryExcluded ?? false} onClick={() => void toggleSummaryExcluded()}

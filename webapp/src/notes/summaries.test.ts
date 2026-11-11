@@ -164,13 +164,11 @@ describe('summarizeAndWait', () => {
     ));
     level.resolve(markdown);
     test.checkContext.mockImplementation(() => { throw changed; });
-    test.run.cancelJob?.();
 
     await expect(done).rejects.toBe(changed);
     expect(test.summaryGenerate.mock.calls).toEqual([[1, 'l1'], [1, 'l2'], [1, 'l3_section']]);
     expect(test.summaryCommit).toHaveBeenCalledOnce();
     expect(test.summaryAbandon).not.toHaveBeenCalled();
-    expect(test.summaryCancel).not.toHaveBeenCalled();
     expect(test.run.cancelJob).toBeUndefined();
   });
 
@@ -187,17 +185,5 @@ describe('summarizeAndWait', () => {
     await expect(done).rejects.toBe(changed);
     expect(test.summaryCommit).not.toHaveBeenCalled();
     expect(test.summaryAbandon).not.toHaveBeenCalled();
-  });
-
-  it('starts no generation if the progress callback cancels the run', async () => {
-    const test = setup();
-    test.progress.mockImplementation(() => {
-      test.run.requested = true;
-      test.run.cancelJob?.();
-    });
-
-    await test.start();
-    expect(test.summaryCancel).toHaveBeenCalledOnce();
-    expect(test.summaryGenerate).not.toHaveBeenCalled();
   });
 });

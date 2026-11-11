@@ -16,6 +16,14 @@ const study: NoteItem = noteItem({ id: 1, kind: 'folder', name: 'Study' });
 const aardvark: NoteItem = noteItem({ id: 2, name: 'Aardvark' });
 const philosophy: NoteItem = noteItem({ id: 3, parent_id: 1, kind: 'folder', name: 'Philosophy' });
 const plan: NoteItem = noteItem({ id: 4, parent_id: 3, name: 'Plan' });
+const noteAudio: NonNullable<NotesClient['noteAudio']> = {
+  contextEpoch: () => 1,
+  startBackground: vi.fn(),
+  backgroundStatus: async () => ({ pending: false }),
+  info: vi.fn(),
+  source: vi.fn(),
+  release: vi.fn(),
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -163,9 +171,12 @@ describe('Notes tree', () => {
   });
 
   it.each([false, true])('omits Show compressed when has_compressed is %s and navigates summary actions with arrow keys', async has_compressed => {
-    renderTree({ items: [{ ...aardvark, has_compressed }] });
+    renderTree({ notes: client({ listNoteItems: async () => [{ ...aardvark, has_compressed }], noteAudio }) });
     fireEvent.click(await screen.findByRole('button', { name: 'Actions for Aardvark' }));
     const menu = screen.getByRole('menu');
+    expect([...menu.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].map(node => node.textContent))
+      .toEqual(['Rename', 'Make read-only', 'Generate audio', 'Compress', 'Summarize', 'Exclude from summaries',
+        'Delete', 'Copy Ref ID']);
     expect(within(menu).queryByRole('menuitem', { name: 'Show compressed' })).not.toBeInTheDocument();
     const compress = within(menu).getByRole('menuitem', { name: 'Compress' });
     await waitFor(() => expect(compress).toBeEnabled());
@@ -487,15 +498,17 @@ describe('Notes tree', () => {
 
   it('offers folder import on the root and folders, and folder export only on folders', async () => {
     const transfer = { exportFolder: vi.fn(async () => undefined), importFolder: vi.fn(async () => undefined) };
-    renderTree({ notes: client({ listNoteItems: async () => [study, aardvark], noteFolderTransfer: transfer }) });
+    renderTree({ notes: client({ listNoteItems: async () => [study, aardvark], noteFolderTransfer: transfer, noteAudio }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Personal' }));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent))
       .toEqual(['New note', 'New folder', 'Import EPUB…', 'Import folder…']);
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
-    expect(screen.getAllByRole('menuitem').map((item) => item.textContent).slice(0, 5))
-      .toEqual(['New note', 'New folder', 'Import EPUB…', 'Import folder…', 'Export folder…']);
+    const menu = screen.getByRole('menu');
+    expect([...menu.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].map(node => node.textContent))
+      .toEqual(['New note', 'New folder', 'Import EPUB…', 'Import folder…', 'Export folder…',
+        'Rename', 'Generate audio', 'Compress', 'Summarize', 'Delete', 'Upload to store']);
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Aardvark' }));
     expect(screen.queryByRole('menuitem', { name: 'Export folder…' })).not.toBeInTheDocument();
@@ -1114,22 +1127,15 @@ describe('Folder store tree actions', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete folder' }));
     await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith(1));
   });
-  it('keeps Summarize available when reading store status fails', async () => {
-    const onSummarize = vi.fn();
-    renderTree({ notes: client({
-      listNoteItems: async () => [study],
-      storeOperation: async () => { throw new Error('private body'); },
-    }), onSummarize });
+  it('keeps store actions disabled after a failed status read', async () => {
+    renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: async () => { throw new Error('private body'); } }) });
     await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read store status');
     expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled();
     expect(document.body).not.toHaveTextContent('private body');
-    const summarize = screen.getByRole('menuitem', { name: 'Summarize' });
-    expect(summarize).toBeEnabled();
-    fireEvent.click(summarize);
-    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(study, 1, expect.any(Function));
+    expect(screen.getByRole('menuitem', { name: 'Summarize' })).toBeDisabled();
   });
 });
 
@@ -1141,9 +1147,8 @@ it('disables conflicting folder actions while an upload is active', async () => 
   await screen.findByRole('treeitem', { name: 'Study' });
   fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
   await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeEnabled());
-  for (const name of ['New note', 'New folder', 'Import EPUB…', 'Rename', 'Compress'])
+  for (const name of ['New note', 'New folder', 'Import EPUB…', 'Rename', 'Compress', 'Summarize'])
     expect(screen.getByRole('menuitem', { name })).toBeDisabled();
-  expect(screen.getByRole('menuitem', { name: 'Summarize' })).toBeEnabled();
 });
 
 it.each(['mouse', 'keyboard'])('shows only Export folder for both managed folders via %s', async (entry) => {

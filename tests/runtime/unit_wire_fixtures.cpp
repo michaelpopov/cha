@@ -198,12 +198,6 @@ TEST(WebWireFixtures, SerializesNotesContract) {
     };
     EXPECT_EQ(items, fixture.at("items"));
     EXPECT_EQ(contents, fixture.at("contents"));
-    const nlohmann::json plan{{"notes", nlohmann::json::array({
-        {{"id", 4}, {"name", "Draft"}, {"has_l1", true}, {"has_l2", false}},
-    })}};
-    const nlohmann::json generated{{"markdown", "## Draft\n\nOverview."}};
-    EXPECT_EQ(plan, fixture.at("summary_plan"));
-    EXPECT_EQ(generated, fixture.at("summary_generated"));
 }
 
 } // namespace

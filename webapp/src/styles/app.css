@@ -592,10 +592,13 @@ select:disabled {
 }
 
 .cha-session-menu {
+  --menu-width: 13.35rem;
   position: fixed;
   z-index: 20;
   display: grid;
-  width: 10rem;
+  left: clamp(8px, var(--menu-x), calc(100% - var(--menu-width) - 8px));
+  width: var(--menu-width);
+  max-width: calc(100% - 16px);
   padding: 0.35rem;
   border: 1px solid var(--border);
   border-radius: 0.75rem;

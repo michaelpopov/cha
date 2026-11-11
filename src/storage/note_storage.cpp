@@ -254,19 +254,22 @@ void require_folder(
     if (!statement.is_null(1)) fail(NoteFailure::invalid, managed_folder_message);
 }
 
+// read_item() reads these columns by position.
+constexpr std::string_view note_item_select =
+    "SELECT n.id, n.parent_id, n.kind, n.name, "
+    "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
+    "n.read_only, n.forum_id, (s.note_id IS NOT NULL OR n.folder_summary=1), s.session_key IS NOT NULL, "
+    "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id), "
+    "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
+    "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
+    "n.summary_excluded, n.folder_summary "
+    "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id ";
+
 std::optional<NoteItem> find_item(
     storage::SqliteDatabase& database,
     std::int64_t id) {
     storage::SqliteStatement statement = database.prepare(
-        "SELECT n.id, n.parent_id, n.kind, n.name, "
-        "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
-        "n.read_only, n.forum_id, (s.note_id IS NOT NULL OR n.folder_summary=1), s.session_key IS NOT NULL, "
-        "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id), "
-        "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
-        "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
-        "n.summary_excluded, n.folder_summary "
-        "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id "
-        "WHERE n.id = ?1 AND n.compressed=0");
+        std::string(note_item_select) + "WHERE n.id = ?1 AND n.compressed=0");
     statement.bind(1, id);
     if (!statement.step()) return std::nullopt;
     return read_item(statement);
@@ -366,15 +369,10 @@ std::string encode_compressed_note(std::string_view text, std::int64_t id) {
     return compress_document(compact_document(note_document_from_text(text), id, true));
 }
 
-// A summary replacement removes all version rows.
-void delete_compressed_note(storage::SqliteDatabase& database, std::int64_t id) {
-    database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1", id).run();
-}
-
 void replace_summary_note(storage::SqliteDatabase& database, std::int64_t id, std::string_view blob) {
     abandon_note_audio(database, id, "summary replaced.");
     database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
-    delete_compressed_note(database, id);
+    database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1", id).run();
     auto update = database.prepare("UPDATE note_items SET content_json=?, read_only=1, scroll_top=0 WHERE id=?");
     update.bind_blob(1, blob);
     update.bind(2, id);
@@ -1358,15 +1356,7 @@ std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
         storage::SqliteTransaction transaction(database);
         storage::SqliteStatement statement = database.prepare(
-            "SELECT n.id, n.parent_id, n.kind, n.name, "
-            "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
-            "n.read_only, n.forum_id, (s.note_id IS NOT NULL OR n.folder_summary=1), s.session_key IS NOT NULL, "
-            "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id), "
-            "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
-            "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
-            "n.summary_excluded, n.folder_summary "
-            "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id "
-            "WHERE n.compressed=0 ORDER BY n.id");
+            std::string(note_item_select) + "WHERE n.compressed=0 ORDER BY n.id");
         std::vector<NoteItem> items;
         while (statement.step()) items.push_back(read_item(statement));
         transaction.commit();
@@ -2202,9 +2192,6 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
         if (parent_id) require_folder(database, *parent_id);
         const bool has_levels = note_items_has_column(file, "level");
         const bool has_version_rows = note_items_has_column(file, "compressed");
-        if (has_levels && (!has_version_rows || !note_items_has_column(file, "summary_excluded")
-                || !note_items_has_column(file, "folder_summary")))
-            fail(NoteFailure::invalid, not_export_message);
         if (!has_version_rows && !note_items_has_column(file, "compressed_text"))
             fail(NoteFailure::invalid, not_export_message);
         if (has_version_rows && file.prepare(
@@ -2227,9 +2214,9 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
                 LIMIT 1
                 )sql").step())
             fail(NoteFailure::invalid, not_export_message);
-        const std::string level_column = has_levels ? "level" : "0";
+        const std::string file_level = has_levels ? "level" : "0";
         if (has_version_rows && file.prepare(
-                "SELECT " + level_column + " AS version_level FROM note_items WHERE compressed=1 "
+                "SELECT " + file_level + " AS version_level FROM note_items WHERE compressed=1 "
                 "GROUP BY parent_id, version_level HAVING count(*)>1 LIMIT 1").step())
             fail(NoteFailure::invalid, not_export_message);
         const std::string originals = has_version_rows ? "compressed=0" : "1";
@@ -2264,13 +2251,12 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
             insert.bind(8, row.integer(7));
             insert.run();
             const auto id = database.last_insert_rowid();
-            if (!new_ids.emplace(row.integer(0), id).second)
-                fail(NoteFailure::invalid, not_export_message);
+            new_ids[row.integer(0)] = id;
             created.push_back(id);
             if (kind == "folder") folders.push_back(row.integer(0));
             else if (has_version_rows) {
                 auto versions = file.prepare(
-                    "SELECT " + level_column + ", content_json FROM note_items WHERE parent_id=? AND compressed=1",
+                    "SELECT " + file_level + ", content_json, scroll_top FROM note_items WHERE parent_id=? AND compressed=1",
                     row.integer(0));
                 while (versions.step()) {
                     const auto blob = versions.blob(1);
@@ -2279,7 +2265,11 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
                     } catch (const NoteError&) {
                         fail(NoteFailure::invalid, not_export_message);
                     }
-                    write_version_row(database, id, static_cast<int>(versions.integer(0)), blob);
+                    const auto level = static_cast<int>(versions.integer(0));
+                    write_version_row(database, id, level, blob);
+                    database.prepare(
+                        "UPDATE note_items SET scroll_top=? WHERE parent_id=? AND compressed=1 AND level=?",
+                        versions.integer(2), id, level).run();
                 }
             } else if (!row.is_null(8)) {
                 write_version_row(database, id, 0, encode_compressed_note(row.text(8), id));
@@ -2303,10 +2293,6 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
             auto children = file.prepare(columns + "WHERE parent_id=?1 AND " + originals + " ORDER BY id", folders[i]);
             while (children.step()) copy_item(children, new_ids.at(folders[i]));
         }
-        // Every original must be reachable from the root through folders.
-        auto count = file.prepare("SELECT count(*) FROM note_items WHERE " + originals);
-        if (!count.step() || count.integer(0) != static_cast<std::int64_t>(new_ids.size()))
-            fail(NoteFailure::invalid, not_export_message);
         for (const auto folder : folders) rebuild_folder_annotations(database, new_ids.at(folder), true);
         if (sync_connected(database, sync_machine)) {
             for (const auto created_id : created) sync_record_note_create(database, created_id);

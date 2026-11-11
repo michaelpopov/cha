@@ -927,11 +927,10 @@ export function App({
     });
   }, [noteLeave.leaveNoteThen, state.noteTextMode]);
 
-  const sourceChanged = useCallback((parentId: number | null, reopen?: () => void) => {
+  const sourceChanged = useCallback((parentId: number | null) => {
     const active = noteItems.find((item) => item.id === activeNoteIdRef.current);
     if (active?.kind === 'annotation' && active.parent_id === parentId) {
-      if (reopen) reopen();
-      else navigate({ type: 'open-note', noteId: active.id });
+      navigate({ type: 'open-note', noteId: active.id });
     }
   }, [navigate, noteItems]);
 
@@ -1141,7 +1140,6 @@ export function App({
     const editor = editorLiveRef.current;
     let reload = false;
     let started = false;
-    let committedFolderId: number | undefined;
     try {
       if (save?.isOpen) {
         save.freeze();
@@ -1163,8 +1161,8 @@ export function App({
         reload = (state.noteTextMode === 'l1' || state.noteTextMode === 'l2')
           && noteId !== null && result.targetIds.includes(noteId);
         if (result.folderSummaryCommitted) {
-          committedFolderId = source.id;
-          reload ||= noteItems.some(item => item.id === noteId && item.parent_id === source.id && item.folder_summary);
+          reload ||= noteItems.some(item => item.id === noteId && item.parent_id === source.id
+            && (item.folder_summary || item.kind === 'annotation'));
         }
       } else {
         const { targets, folder } = operation;
@@ -1188,10 +1186,6 @@ export function App({
           setCompression(progress => progress && { ...progress, cancelEnabled: false });
           await refresh();
           checkContext();
-          if (committedFolderId !== undefined) {
-            // Reload ANNOTATIONS under the same editor lock as a version reload.
-            summaryViewRef.current.sourceChanged(committedFolderId, () => { reload = true; });
-          }
           if (reload && !run.notesChanged && noteId === activeNoteIdRef.current && notesVisibleRef.current) {
             try { await save?.saveScrollPosition?.(); }
             catch (failure) { console.warn('Could not save the note scroll position.', failure); }

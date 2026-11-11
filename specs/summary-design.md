@@ -1082,6 +1082,9 @@ The tree's error area shows a refused start, as for compression:
 - "This note is over 256 KiB. Summaries are limited to 256 KiB of text."
 - "Select a compression provider in Notes settings." (existing)
 
+When a start fails without a public message, the tree's error area shows
+"Could not start summaries. Try again.", as for compression.
+
 ## 12. Known effects
 
 These effects follow from the PRD or from existing behavior. The design

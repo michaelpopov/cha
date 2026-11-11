@@ -161,8 +161,10 @@ bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
 void note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
     int level, const nlohmann::json& document, std::string_view success_message,
     std::string_view sync_machine = {});
+// Creates or replaces the Summary note of folder_id in one transaction.
 [[nodiscard]] NoteItem note_commit_folder_summary(storage::SqliteDatabase& database,
     std::int64_t folder_id, const nlohmann::json& document, std::string_view sync_machine = {});
+// Writes the flag and the sync record in one transaction.
 [[nodiscard]] NoteItem note_set_summary_excluded(storage::SqliteDatabase& database,
     std::int64_t id, bool excluded, std::string_view sync_machine = {});
 void note_save_scroll_position(
@@ -210,7 +212,7 @@ void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
 [[nodiscard]] bool note_apply_record(
     storage::SqliteDatabase& database, const nlohmann::json& record);
 // Exports the folder, its subfolders, notes and audio to a new SQLite file.
-// Includes the folder's Summary note link. Annotations, session summary
+// Includes Summary note links. Annotations, session summary
 // links, and forum links are left out.
 void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
     const std::filesystem::path& destination);

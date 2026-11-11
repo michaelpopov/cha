@@ -198,15 +198,15 @@ std::optional<nlohmann::json> dispatch_notes_operation(
     }
     case Method::notes_summary_plan:
         require_only_keys(params, {"id"});
-        return application.summary_plan(static_cast<std::int64_t>(require_safe_id(params, "id")), epoch);
+        return application.summary_plan(require_note_id(params), epoch);
     case Method::notes_summary_commit:
         require_only_keys(params, {"id", "part", "document"});
-        application.commit_summary_part(static_cast<std::int64_t>(require_safe_id(params, "id")),
+        application.commit_summary_part(require_note_id(params),
             require_saved_summary_part(params), require_document(params), epoch);
         return nlohmann::json::object();
     case Method::notes_summary_abandon:
         require_only_keys(params, {"id", "part"});
-        application.abandon_summary_part(static_cast<std::int64_t>(require_safe_id(params, "id")),
+        application.abandon_summary_part(require_note_id(params),
             require_saved_summary_part(params), epoch);
         return nlohmann::json::object();
     case Method::notes_set_summary_excluded:
@@ -214,7 +214,7 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         if (!params.at("excluded").is_boolean())
             throw std::invalid_argument("The exclusion state must be a boolean.");
         return nlohmann::json(application.set_note_summary_excluded(
-            static_cast<std::int64_t>(require_safe_id(params, "id")), params.at("excluded").get<bool>(), epoch));
+            require_note_id(params), params.at("excluded").get<bool>(), epoch));
     case Method::notes_set_read_only:
         require_only_keys(params, {"id", "read_only"});
         if (!params.contains("read_only") || !params.at("read_only").is_boolean()) {

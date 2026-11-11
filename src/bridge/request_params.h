@@ -1,6 +1,5 @@
 #pragma once
 
-#include "bridge/bridge_protocol.h"
 #include "util/path_name.h"
 
 #include <initializer_list>
@@ -38,18 +37,6 @@ inline void require_only_keys(
             throw std::invalid_argument("The request was not valid.");
         }
     }
-}
-
-inline std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key) {
-    const std::string name(key);
-    if (!params.contains(name)) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    const auto value = as_safe_uint(params[name]);
-    if (!value || *value == 0) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    return *value;
 }
 
 inline std::string require_string(const nlohmann::json& params, std::string_view key) {

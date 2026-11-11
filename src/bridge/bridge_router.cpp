@@ -60,6 +60,18 @@ std::optional<std::string> nullable_string(
     return value;
 }
 
+std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key) {
+    const std::string name(key);
+    if (!params.contains(name)) {
+        throw std::invalid_argument("The request was not valid.");
+    }
+    const auto value = as_safe_uint(params[name]);
+    if (!value || *value == 0) {
+        throw std::invalid_argument("The request was not valid.");
+    }
+    return *value;
+}
+
 VoiceSynthesis parse_synthesis_fields(const nlohmann::json& params) {
     return decode_voice_synthesis(params);
 }

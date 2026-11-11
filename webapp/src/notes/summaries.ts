@@ -1,18 +1,9 @@
 import type { NoteItem, NotesClient, SummaryTarget } from '../api/client';
+import type { NoteCompressionProgress } from '../components/NoteCompressionDialog';
+import type { CompressionCancellation } from './compression';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import { markdownNoteDocument, summaryConversionError } from './summaryImport';
 import { compareNoteSiblings } from './tree';
-
-type SummaryRun = {
-  requested: boolean;
-  cancelJob?: () => void;
-};
-
-type SummaryProgress = {
-  message: string;
-  count?: string;
-  cancelEnabled: boolean;
-};
 
 type Section = { name: string; markdown: string };
 
@@ -32,22 +23,15 @@ function folderSummaryDocument(overview: string, sections: Section[]) {
 export async function summarizeAndWait(
   client: NotesClient,
   source: NoteItem,
-  run: SummaryRun,
+  run: CompressionCancellation,
   checkContext: () => void,
-  onProgress: (progress: SummaryProgress) => void,
+  onProgress: (progress: NoteCompressionProgress) => void,
 ): Promise<{ targetIds: number[]; folderSummaryCommitted: boolean }> {
   const result = { targetIds: [] as number[], folderSummaryCommitted: false };
-  if (run.requested) return result;
 
   let cancellation: Promise<void> | undefined;
   run.cancelJob = () => {
-    try {
-      checkContext();
-    } catch {
-      // Changing vaults already cancels generation in the old vault.
-      return;
-    }
-    cancellation ??= client.summaryCancel().catch(() => {});
+    cancellation = client.summaryCancel().catch(() => {});
   };
   const folder = source.kind === 'folder';
   const sections: Section[] = [];
@@ -67,9 +51,7 @@ export async function summarizeAndWait(
   }
 
   try {
-    checkContext();
     const plan = await client.summaryPlan(source.id);
-    checkContext();
     const targets = plan.notes.map(target => ({ ...target, kind: 'note' as const })).sort(compareNoteSiblings);
     result.targetIds = targets.map(target => target.id);
     let makeL3 = folder && targets.length > 0;
@@ -90,20 +72,17 @@ export async function summarizeAndWait(
         count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
         cancelEnabled: true,
       });
-      if (run.requested) break;
       const calls = [];
       if (!folder || !target.has_l1) calls.push(makeLevel(target, 'l1'));
       if (!folder || !target.has_l2) calls.push(makeLevel(target, 'l2'));
       if (makeL3) calls.push(makeSection(target));
       await Promise.allSettled(calls);
-      checkContext();
     }
 
     if (!makeL3 || run.requested) return result;
     checkContext();
     const message = 'Writing the Summary note…';
     onProgress({ message, cancelEnabled: true });
-    if (run.requested) return result;
     const text = sections.map(({ name, markdown }) => `# ${name}\n\n${markdown}`).join('\n\n');
     try {
       const overview = await client.summaryGenerate(source.id, 'l3_overview', text);
@@ -117,11 +96,8 @@ export async function summarizeAndWait(
         return result;
       }
       onProgress({ message, cancelEnabled: false });
-      if (!run.requested) {
-        checkContext();
-        await client.summaryCommit(source.id, 'l3', document);
-        result.folderSummaryCommitted = true;
-      }
+      await client.summaryCommit(source.id, 'l3', document);
+      result.folderSummaryCommitted = true;
     } catch {
       // The backend reports failures from generation, commit, and abandon.
     } finally {
