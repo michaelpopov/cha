@@ -721,14 +721,18 @@ describe('notes native client', () => {
     await expect(client.setNoteSummaryExcluded(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
-  it('requests a compressed document by the logical note ID', async () => {
+  it.each(['compressed', 'l1', 'l2'] as const)('opens %s and its full-text fallback by the logical note ID', async mode => {
     const content = { id: 4, document_id: 8, document };
+    const fallback = { ...content, document_id: 4 };
     const getNote = vi.fn(() => content);
     const client = clientFor({ 'notes.get': getNote });
-    expect(await client.getNote(4, 'compressed')).toEqual(content);
-    expect(getNote).toHaveBeenCalledExactlyOnceWith({ id: 4, mode: 'compressed' });
+    expect(await client.getNote(4, mode)).toEqual(content);
+    expect(getNote).toHaveBeenCalledExactlyOnceWith({ id: 4, mode });
     await expect(client.getNote(4)).rejects.toBeInstanceOf(ChaProtocolError);
-    await expect(client.getNote(5, 'compressed')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.getNote(4, 'full_text')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.getNote(5, mode)).rejects.toBeInstanceOf(ChaProtocolError);
+    getNote.mockReturnValueOnce(fallback);
+    expect(await client.getNote(4, mode)).toEqual(fallback);
   });
 
   function clientFor(handlers: Record<string, (params: unknown) => unknown>) {

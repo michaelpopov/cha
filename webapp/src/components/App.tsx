@@ -44,6 +44,7 @@ import { notesExtensions } from '../notes/editor';
 import { summaryDocument, summaryConversionError } from '../notes/summaryImport';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { compressAndWait, type CompressionCancellation } from '../notes/compression';
+import { summarizeAndWait } from '../notes/summaries';
 import { useNoteImports, type NoteImports } from '../notes/useNoteImports';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -93,7 +94,7 @@ import {
 import { SessionsScreen } from './SessionsScreen';
 import { NotesScreen } from './NotesScreen';
 import { NoteCompressionDialog, type NoteCompressionProgress } from './NoteCompressionDialog';
-import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SetNoteReadOnly } from './NotesTree';
+import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SetNoteReadOnly, type SummarizeNotes } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
@@ -774,7 +775,7 @@ export function App({
   notesEpochRef.current = state.notesEpoch;
   activeNoteIdRef.current = state.activeNoteId;
   const notesVisibleRef = useRef(false);
-  const compressionRun = useRef<(CompressionCancellation & { notesChanged: boolean }) | null>(null);
+  const compressionRun = useRef<(CompressionCancellation & { notesChanged: boolean; label?: string }) | null>(null);
   const [compression, setCompression] = useState<NoteCompressionProgress | null>(null);
   const compressionInProgress = useCallback(() => compressionRun.current !== null, []);
   notesVisibleRef.current = workspaceVisibility(state).notesVisible;
@@ -912,8 +913,8 @@ export function App({
     setNoteItems([]);
   }, [state.notesEpoch]);
 
-  const requestOpenNote = useCallback((id: number, importSource?: NoteImportSource, mode?: NoteTextMode) => {
-    navigate({ type: 'open-note', noteId: id, importSource, mode });
+  const requestOpenNote = useCallback((id: number, importSource?: NoteImportSource) => {
+    navigate({ type: 'open-note', noteId: id, importSource });
   }, [navigate]);
 
   const changeNoteTextMode = useCallback((mode: NoteTextMode) => {
@@ -926,10 +927,11 @@ export function App({
     });
   }, [noteLeave.leaveNoteThen, state.noteTextMode]);
 
-  const sourceChanged = useCallback((parentId: number | null) => {
+  const sourceChanged = useCallback((parentId: number | null, reopen?: () => void) => {
     const active = noteItems.find((item) => item.id === activeNoteIdRef.current);
     if (active?.kind === 'annotation' && active.parent_id === parentId) {
-      navigate({ type: 'open-note', noteId: active.id });
+      if (reopen) reopen();
+      else navigate({ type: 'open-note', noteId: active.id });
     }
   }, [navigate, noteItems]);
 
@@ -1117,7 +1119,11 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const compressNote = useCallback<CompressNote>(async (targets, epoch, folder, refresh) => {
+  const runNoteOperation = useCallback(async (
+    operation: { source: NoteItem } | { targets: Parameters<CompressNote>[0]; folder: boolean },
+    epoch: number,
+    refresh: () => Promise<void>,
+  ) => {
     const context = notesCancellation.current.signal;
     const checkContext = () => {
       if (context.aborted || client.contextEpoch() !== epoch)
@@ -1125,7 +1131,9 @@ export function App({
     };
     checkContext();
     if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    const run: NonNullable<typeof compressionRun.current> = { requested: false, notesChanged: false };
+    const run: NonNullable<typeof compressionRun.current> = {
+      requested: false, notesChanged: false, label: 'source' in operation ? 'Note summaries' : undefined,
+    };
     compressionRun.current = run;
     setCompression({ message: 'Saving note…', cancelEnabled: true });
     const noteId = activeNoteIdRef.current;
@@ -1133,6 +1141,7 @@ export function App({
     const editor = editorLiveRef.current;
     let reload = false;
     let started = false;
+    let committedFolderId: number | undefined;
     try {
       if (save?.isOpen) {
         save.freeze();
@@ -1144,17 +1153,33 @@ export function App({
       checkContext();
       if (run.requested) return;
       started = true;
-      for (const [index, target] of targets.entries()) {
-        if (run.requested) break;
-        checkContext();
-        const progress = {
-          message: `Compressing “${target.name}”…`,
-          count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
-          cancelEnabled: true,
-        };
-        setCompression(progress);
-        await compressAndWait(client, target.id, epoch, folder, run, context, () => setCompression(progress));
-        if (target.id === noteId && state.noteTextMode === 'compressed') reload = true;
+      if ('source' in operation) {
+        const { source } = operation;
+        const result = await summarizeAndWait(client, source, run, checkContext, progress => {
+          if (progress.cancelEnabled) setCompression(progress);
+          // Disable Cancel before the folder commit is sent.
+          else flushSync(() => setCompression(progress));
+        });
+        reload = (state.noteTextMode === 'l1' || state.noteTextMode === 'l2')
+          && noteId !== null && result.targetIds.includes(noteId);
+        if (result.folderSummaryCommitted) {
+          committedFolderId = source.id;
+          reload ||= noteItems.some(item => item.id === noteId && item.parent_id === source.id && item.folder_summary);
+        }
+      } else {
+        const { targets, folder } = operation;
+        for (const [index, target] of targets.entries()) {
+          if (run.requested) break;
+          checkContext();
+          const progress = {
+            message: `Compressing “${target.name}”…`,
+            count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
+            cancelEnabled: true,
+          };
+          setCompression(progress);
+          await compressAndWait(client, target.id, epoch, folder, run, context, () => setCompression(progress));
+          if (target.id === noteId && state.noteTextMode === 'compressed') reload = true;
+        }
       }
     } finally {
       try {
@@ -1163,6 +1188,10 @@ export function App({
           setCompression(progress => progress && { ...progress, cancelEnabled: false });
           await refresh();
           checkContext();
+          if (committedFolderId !== undefined) {
+            // Reload ANNOTATIONS under the same editor lock as a version reload.
+            summaryViewRef.current.sourceChanged(committedFolderId, () => { reload = true; });
+          }
           if (reload && !run.notesChanged && noteId === activeNoteIdRef.current && notesVisibleRef.current) {
             try { await save?.saveScrollPosition?.(); }
             catch (failure) { console.warn('Could not save the note scroll position.', failure); }
@@ -1185,7 +1214,12 @@ export function App({
         noteLeave.endNoteAction();
       }
     }
-  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, state.noteTextMode]);
+  }, [client, noteItems, noteLeave.beginNoteAction, noteLeave.endNoteAction, state.noteTextMode]);
+
+  const compressNote = useCallback<CompressNote>((targets, epoch, folder, refresh) =>
+    runNoteOperation({ targets, folder }, epoch, refresh), [runNoteOperation]);
+  const summarizeNotes = useCallback<SummarizeNotes>((source, epoch, refresh) =>
+    runNoteOperation({ source }, epoch, refresh), [runNoteOperation]);
 
   const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
     if (!noteLeave.beginNoteAction()) return 'busy';
@@ -1548,6 +1582,7 @@ export function App({
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
                 onCompressNote={compressNote}
+                onSummarize={summarizeNotes}
                 compressionInProgress={compressionInProgress}
                 onSetNoteReadOnly={setNoteReadOnly}
                 onNoteItems={setNoteItems}
@@ -1642,7 +1677,7 @@ export function App({
             )}
           </main>
         </div>
-        {compression && <NoteCompressionDialog progress={compression} onCancel={() => {
+        {compression && <NoteCompressionDialog label={compressionRun.current?.label} progress={compression} onCancel={() => {
           const run = compressionRun.current;
           if (!compression.cancelEnabled || !run) return;
           run.requested = true;

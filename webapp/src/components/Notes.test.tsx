@@ -90,7 +90,7 @@ async function openNotes() {
   await screen.findByRole('treeitem', { name: bootstrapFixture.vault_name });
 }
 
-function chooseNoteMode(label: 'Full text' | 'Compressed') {
+function chooseNoteMode(label: 'Full text' | 'L1' | 'L2' | 'Compressed') {
   fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
 }
@@ -185,9 +185,11 @@ describe('Note text mode', () => {
       saveNote,
     })} />);
     await openNotes();
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Show compressed' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByRole('button', { name: 'Note text mode' });
+    chooseNoteMode('Compressed');
     await screen.findByText('Compressed body');
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
     act(() => typeInNote(' revised'));
     chooseNoteMode('Full text');
     const dialog = await screen.findByRole('dialog', { name: 'Could not save “Plan”.' });
@@ -248,7 +250,7 @@ describe('Note text mode', () => {
     fireEvent.click(mode);
     const menu = screen.getByRole('menu', { name: 'Note text mode' });
     const choices = within(menu).getAllByRole('menuitemradio');
-    expect(choices.map(item => item.textContent)).toEqual(['Full text', 'Compressed']);
+    expect(choices.map(item => item.textContent)).toEqual(['Full text', 'L1', 'L2', 'Compressed']);
     expect(choices[0]).toBeChecked();
     expect(choices[1]).not.toBeChecked();
     fireEvent.keyDown(choices[0], { key: 'ArrowDown' });
@@ -288,42 +290,45 @@ describe('Note text mode', () => {
     expect(screen.queryByRole('textbox', { name: 'Find' })).not.toBeInTheDocument();
   });
 
-  it('finishes a file import into the compressed row after switching to full text', async () => {
+  it.each([['Compressed', 'compressed'], ['L1', 'l1']] as const)('finishes a file import into %s after switching to full text', async (label, versionMode) => {
     const reading = deferred<{ name: string; text: string }>();
     const documents = new Map<number, Record<string, unknown>>([
-      [plan.id, noteDocument('Original text')], [40, noteDocument('Compressed body')],
+      [plan.id, noteDocument('Original text')], [40, noteDocument('Version body')],
     ]);
+    const item = { ...plan, has_compressed: versionMode === 'compressed', has_l1: versionMode === 'l1' };
     const saveNote = vi.fn(async (id: number, document: Record<string, unknown>) => { documents.set(id, document); });
-    const setNoteReadOnly = vi.fn(async (id: number, read_only: boolean) => ({ ...plan, id, read_only, has_compressed: true }));
+    const setNoteReadOnly = vi.fn(async (id: number, read_only: boolean) => ({ ...item, id, read_only }));
     render(<App client={fixtureClient({
-      listNoteItems: async () => [{ ...plan, has_compressed: true }],
+      listNoteItems: async () => [item],
       getNote: async (id, mode) => {
-        const documentId = mode === 'compressed' ? 40 : id;
+        const documentId = mode === versionMode ? 40 : id;
         return { id, document_id: documentId, document: documents.get(documentId)! };
       },
       readNoteTextFile: () => reading.promise,
       saveNote, setNoteReadOnly,
     })} />);
     await openNotes();
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Show compressed' }));
-    await screen.findByText('Compressed body');
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByRole('button', { name: 'Note text mode' });
+    chooseNoteMode(label);
+    await screen.findByText('Version body');
+    await waitFor(() => expect(noteEditor().isEditable).toBe(true));
     const prompt = screen.getByRole('textbox', { name: 'Prompt' });
     fireEvent.change(prompt, { target: { value: '/tmp/plan.txt' } });
     fireEvent.keyDown(prompt, { key: 'Enter' });
     await screen.findByText('Retrieving content…');
     chooseNoteMode('Full text');
     await screen.findByText('Original text');
-    const original = noteEditor();
+    const original = await waitFor(() => noteEditor());
     await act(async () => reading.resolve({ name: 'plan.txt', text: 'Imported body' }));
     await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(plan.id, true));
     expect(saveNote).toHaveBeenCalledExactlyOnceWith(40, noteDocument('Imported body'));
     expect(noteEditor()).toBe(original);
     expect(original.getText()).toBe('Original text');
     expect(original.isEditable).toBe(false);
-    chooseNoteMode('Compressed');
+    chooseNoteMode(label);
     await screen.findByText('Imported body');
-    expect(noteEditor().isEditable).toBe(false);
+    await waitFor(() => expect(noteEditor().isEditable).toBe(false));
   });
 });
 
@@ -1070,6 +1075,131 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
     await waitFor(() => expect(compressNote).toHaveBeenCalledOnce());
     expect(saveNote).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['button', 'Escape'] as const)('cancels summaries with %s and waits for the calls to settle', async cancelWith => {
+    const generation = deferred<string>();
+    const summaryCancel = vi.fn(async () => undefined);
+    const summaryCommit = vi.fn();
+    const bus = contextBus();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
+      summaryPlan: async () => ({ notes: [plan] }),
+      summaryGenerate: () => generation.promise,
+      summaryCancel, summaryCommit,
+    })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    const old = noteEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
+    await within(dialog).findByText('Summarizing “Plan”…');
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    expect(cancel).toHaveFocus();
+    expect(old.isEditable).toBe(false);
+    expect(screen.getByRole('button', { name: 'Note text mode' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    act(() => bus.layout('split'));
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).not.toBeInTheDocument();
+    if (cancelWith === 'button') fireEvent.click(cancel);
+    else fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    expect(dialog).toHaveTextContent('Cancelling…');
+    expect(cancel).toBeDisabled();
+    expect(summaryCancel).toHaveBeenCalledOnce();
+    expect(old.isEditable).toBe(false);
+    await act(async () => generation.resolve('Late summary'));
+    expect(dialog).not.toBeInTheDocument();
+    expect(summaryCommit).not.toHaveBeenCalled();
+    expect(noteEditor()).toBe(old);
+    expect(old.isEditable).toBe(true);
+  });
+
+  it('lets a pending save finish before closing a cancelled summary without planning', async () => {
+    const saving = deferred<void>();
+    const saveNote = vi.fn(() => saving.promise);
+    const summaryPlan = vi.fn();
+    const summaryCancel = vi.fn();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan],
+      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
+      saveNote, summaryPlan, summaryCancel,
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
+    expect(dialog).toHaveTextContent('Saving note…');
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await act(async () => saving.resolve());
+    expect(dialog).not.toBeInTheDocument();
+    expect(summaryPlan).not.toHaveBeenCalled();
+    expect(summaryCancel).not.toHaveBeenCalled();
+    expect(noteEditor().getText()).toBe('Original edited');
+    expect(noteEditor().isEditable).toBe(true);
+  });
+
+  it.each([
+    ['L1', 'l1', true, false],
+    ['L2', 'l2', true, false],
+    ['L1', 'l1', false, false],
+    ['Full text', 'full_text', true, true],
+    ['Full text', 'full_text', true, false],
+  ] as const)('applies reload rules for %s (%s), target: %s, sync: %s', async (label, mode, target, sync) => {
+    const generation = deferred<string>();
+    const bus = contextBus();
+    const other = { ...plan, id: 5, name: 'Other' };
+    let committed = false;
+    let body = 'Original';
+    const getNote = vi.fn(async (id: number, requested?: NoteTextMode) => {
+      const version = target && committed && requested !== 'full_text';
+      return { id, document_id: version ? 40 : id, document: noteDocument(version ? 'Saved version' : body) };
+    });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan, other],
+      getNote,
+      summaryPlan: async () => ({ notes: [target ? plan : other] }),
+      summaryGenerate: () => generation.promise,
+      summaryCommit: async () => { committed = true; },
+    })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original');
+    if (mode !== 'full_text') {
+      chooseNoteMode(label);
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
+        .toHaveAttribute('title', `${label} mode; showing full text`));
+    }
+    const old = noteEditor();
+    getNote.mockClear();
+    const name = target ? 'Plan' : 'Other';
+    fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
+    await within(dialog).findByText(`Summarizing “${name}”…`);
+    if (sync) {
+      body = 'Synced text';
+      act(() => bus.notesChanged());
+      expect(noteEditor()).toBe(old);
+    }
+    await act(async () => generation.resolve('Saved version'));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    if ((target && mode !== 'full_text') || sync) {
+      expect(getNote).toHaveBeenCalledExactlyOnceWith(plan.id, mode);
+      expect(noteEditor().getText()).toBe(sync ? body : 'Saved version');
+    } else {
+      expect(getNote).not.toHaveBeenCalled();
+      expect(noteEditor()).toBe(old);
+    }
+    expect(noteEditor().isEditable).toBe(true);
   });
 
   it('blocks navigation and waits for the compressed reload even if the first job status read fails', async () => {
@@ -1908,8 +2038,9 @@ describe('Notes in the application', () => {
       deleteNoteItem,
     })} />);
     await openNotes();
-    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Show compressed' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByRole('button', { name: 'Note text mode' });
+    chooseNoteMode('Compressed');
     await screen.findByText('Short');
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }));
@@ -2121,7 +2252,7 @@ it('opens annotation sources, protects generated content and reports stale entri
   fireEvent.click(screen.getByRole('button', { name: 'Actions for ANNOTATIONS' }));
   expect(screen.queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: 'Delete' })).not.toBeInTheDocument();
-  expect(screen.getByRole('menuitem', { name: 'Show compressed' })).toBeDisabled();
+  expect(screen.queryByRole('menuitem', { name: 'Show compressed' })).not.toBeInTheDocument();
   expect(screen.getByRole('menuitem', { name: 'Copy Ref ID' })).toBeEnabled();
   fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Copy Ref ID' }), { key: 'Escape' });
   stale = true;

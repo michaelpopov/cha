@@ -1012,7 +1012,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     ),
     getNote: (id, mode) => call('notes.get', { id, ...(mode === undefined ? {} : { mode }) },
       (value): value is NoteContent => isNoteContent(value) && value.id === id
-        && (mode === 'compressed' || value.document_id === id)),
+        && (value.document_id === id || (mode !== undefined && mode !== 'full_text'))),
     readNoteTextFile: (path) => call('notes.readTextFile', { path }, (value): value is TextFileRequest | null => (
       value === null || (isRecord(value) && Object.keys(value).length === 2
         && typeof value.name === 'string' && typeof value.text === 'string')

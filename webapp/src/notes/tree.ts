@@ -9,6 +9,10 @@ export type NoteTreeItem = {
   kind: 'folder' | 'note' | 'annotation';
   name: string;
   has_compressed?: boolean;
+  has_l1?: boolean;
+  has_l2?: boolean;
+  summary_excluded?: boolean;
+  folder_summary?: boolean;
   has_audio?: boolean;
   read_only?: boolean;
   is_summary?: boolean;
@@ -39,7 +43,9 @@ export type NoteTreeRow = NoteSibling & {
   noteId: number | null;
   parentId: number | null;
   parentKey: string | null;
-  hasCompressed?: boolean;
+  hasVersions?: boolean;
+  summaryExcluded?: boolean;
+  folderSummary?: boolean;
   audioReady?: boolean;
   isSummary?: boolean;
   summaryLinked?: boolean;
@@ -81,7 +87,9 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
       id,
       noteId: item.id,
       name: item.name,
-      hasCompressed: item.has_compressed ?? false,
+      hasVersions: !!(item.has_compressed || item.has_l1 || item.has_l2),
+      summaryExcluded: item.summary_excluded ?? false,
+      folderSummary: item.folder_summary ?? false,
       // Playback is only offered for read-only notes.
       audioReady: !!(item.has_audio && item.read_only),
       isSummary: item.is_summary ?? false,

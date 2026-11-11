@@ -45,6 +45,19 @@ describe('note sibling order', () => {
 });
 
 describe('note metadata index', () => {
+  it('maps summary flags and all saved versions into rows', () => {
+    const note = { id: 1, parent_id: null, kind: 'note' as const, name: 'Plan' };
+    const { rows } = buildNoteIndex([
+      note, { ...note, id: 2, has_compressed: true }, { ...note, id: 3, has_l1: true, summary_excluded: true },
+      { ...note, id: 4, has_l2: true }, { ...note, id: 5, folder_summary: true, is_summary: true },
+    ]);
+    expect(rows['1']).toMatchObject({ hasVersions: false, summaryExcluded: false, folderSummary: false });
+    expect(rows['2'].hasVersions).toBe(true);
+    expect(rows['3']).toMatchObject({ hasVersions: true, summaryExcluded: true });
+    expect(rows['4'].hasVersions).toBe(true);
+    expect(rows['5']).toMatchObject({ folderSummary: true, isSummary: true });
+  });
+
   it('preserves forum markers independently of the displayed name', () => {
     const { rows } = buildNoteIndex([
       { id: 1, parent_id: null, kind: 'folder', name: 'Forums', forum_id: '' },

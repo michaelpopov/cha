@@ -1,7 +1,7 @@
 import type { Editor } from '@tiptap/core';
 import { useReducer, useRef } from 'react';
 
-import { ChaError, publicErrorMessage, type NoteItem, type NotesClient } from '../api/client';
+import { ChaError, publicErrorMessage, type NoteItem, type NotesClient, type NoteTextMode } from '../api/client';
 import { readTextFile } from '../textFile';
 import { appendNoteHtml, createNotesEditor, insertImportedDocument, replaceNoteHtml } from './editor';
 import { noteFileHtml, noteFileTooLarge } from './fileImport';
@@ -11,7 +11,7 @@ import type { useNoteLeave } from './useNoteLeave';
 import type { NoteSaveHandle } from './useNoteSave';
 
 type ImportState = { stage: string | null; error: string | null; replacing: boolean };
-type ImportTarget = { noteId: number; documentId: number };
+type ImportTarget = { noteId: number; documentId: number; mode: NoteTextMode };
 type Source = { kind: 'page'; url: string } | { kind: 'file'; file: File | string; explicit: boolean };
 
 type Options = {
@@ -36,7 +36,7 @@ export function useNoteImports(options: Options) {
     scope.current = { epoch: options.epoch, cancel: new AbortController(), runs: new Map() };
   }
 
-  function start({ noteId, documentId }: ImportTarget, source: Source): Promise<boolean | null> {
+  function start({ noteId, documentId, mode }: ImportTarget, source: Source): Promise<boolean | null> {
     const owner = scope.current;
     if (owner.runs.get(documentId)?.stage != null) return Promise.resolve(false);
     const { client } = latest.current;
@@ -126,7 +126,7 @@ export function useNoteImports(options: Options) {
           }
         }
         if (!target) {
-          const content = await client.getNote(noteId, documentId === noteId ? 'full_text' : 'compressed');
+          const content = await client.getNote(noteId, mode);
           if (!current()) return false;
           if (content.document_id !== documentId) throw new ChaError('not_found', 'This note document is no longer available.');
           target = createNotesEditor({ content: content.document, readPicture: client.readNotePicture, onCommandError: rejected });

@@ -205,11 +205,8 @@ function ToolbarMenu({
   );
 }
 
-const noteTextLabels = { full_text: 'Full text', compressed: 'Compressed' } as const;
-function noteTextLabel(mode: NoteTextMode) {
-  return mode === 'compressed' ? noteTextLabels.compressed : noteTextLabels.full_text;
-}
-const noteTextModes = ['full_text', 'compressed'] as const;
+const noteTextLabels = { full_text: 'Full text', l1: 'L1', l2: 'L2', compressed: 'Compressed' } as const;
+const noteTextModes = ['full_text', 'l1', 'l2', 'compressed'] as const;
 
 function FormatBar({
   editor,
@@ -354,7 +351,10 @@ function FormatBar({
           editor={editor}
           icon={<NoteTextModeIcon />}
           label="Note text mode"
-          title={`${noteTextLabel(noteTextMode)} mode; showing ${noteTextLabel(loadedTextMode).toLowerCase()}`}
+          title={`${noteTextLabels[noteTextMode]} mode; showing ${
+            loadedTextMode === 'l1' || loadedTextMode === 'l2'
+              ? noteTextLabels[loadedTextMode] : noteTextLabels[loadedTextMode].toLowerCase()
+          }`}
           onOpenChange={(open) => setFormatMenu(open ? 'mode' : null)}
           open={formatMenu === 'mode'}
         >
@@ -975,6 +975,7 @@ export function NotesScreen({
   const [commandError, setCommandError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
   const fullTextLoaded = documentId !== null && documentId === activeNoteId;
+  const loadedTextMode = fullTextLoaded ? 'full_text' : noteTextMode;
   const noteAudio = useNoteAudio({ client: client.noteAudio, id: activeNoteId, editor,
     enabled: fullTextLoaded && readOnly && !immutable && phase === 'ready', menuOpen: contextMenu !== null,
     playbackRate: playbackSpeed / 10, onError: setCommandError });
@@ -1206,7 +1207,7 @@ export function NotesScreen({
     // Consume the opening even if it already has content; later edits must not retry it.
     handledImportRequest.current = request;
     if (editor.isEmpty) {
-      const target = { noteId: activeNoteId, documentId: activeNoteId };
+      const target = { noteId: activeNoteId, documentId: activeNoteId, mode: 'full_text' as const };
       if (importSource.kind === 'page') void imports.page(target, importSource.url);
       else void imports.file(target, importSource.path, true);
     }
@@ -1388,7 +1389,7 @@ export function NotesScreen({
     const epoch = epochRef.current;
     if (importing !== null || !current || noteId === null || documentId === null || !sameEditorContext(current, noteId, epoch)) return false;
     setPromptError(null);
-    const result = await imports.file({ noteId, documentId }, file);
+    const result = await imports.file({ noteId, documentId, mode: loadedTextMode }, file);
     if (sameEditorIdentity(current, noteId, epoch)) return result;
     if (result === true && sent !== undefined) clearSentPrompt(sent);
     return false;
@@ -1402,7 +1403,7 @@ export function NotesScreen({
       return { clear_input: false };
     }
     setPromptError(null);
-    const result = await imports.page({ noteId, documentId }, url);
+    const result = await imports.page({ noteId, documentId, mode: loadedTextMode }, url);
     if (sameEditorIdentity(current, noteId, epoch)) return { clear_input: result === true };
     if (result === true) clearSentPrompt(sent);
     return { clear_input: false };
@@ -1474,7 +1475,7 @@ export function NotesScreen({
           <FormatBar
             editor={editor}
             noteTextMode={noteTextMode}
-            loadedTextMode={fullTextLoaded ? 'full_text' : 'compressed'}
+            loadedTextMode={loadedTextMode}
             noteActionPending={noteActionPending}
             onNoteTextModeChange={onNoteTextModeChange}
             onHighlight={chooseHighlight}

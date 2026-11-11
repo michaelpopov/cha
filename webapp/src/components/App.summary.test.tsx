@@ -39,6 +39,70 @@ async function openTarget(wait = true) {
 beforeEach(() => window.history.replaceState(null, '', '/'));
 afterEach(() => vi.useRealTimers());
 
+describe('summarizing a notes folder', () => {
+  it.each(['Summary', 'ANNOTATIONS'] as const)('reopens %s after the folder commit with Cancel disabled', async name => {
+    const folder = noteItem({ id: 10, kind: 'folder', name: 'Study' });
+    const source = noteItem({ id: 5, parent_id: folder.id, name: 'Chapter', has_l1: true, has_l2: true });
+    const target = noteItem({ id: 6, parent_id: folder.id, name, read_only: true,
+      kind: name === 'ANNOTATIONS' ? 'annotation' : 'note',
+      folder_summary: name === 'Summary', is_summary: name === 'Summary' });
+    const section = deferred<string>();
+    const overview = deferred<string>();
+    const commit = deferred<void>();
+    const reopen = deferred<void>();
+    let committed = false;
+    let cancelDisabledAtCommit: boolean | undefined;
+    const getNote = vi.fn(async (id: number) => {
+      if (committed) await reopen.promise;
+      return { id, document_id: id, document: documentFor(committed ? 'Updated content' : 'Old content') };
+    });
+    const summaryGenerate = vi.fn((_id, part) => part === 'l3_section' ? section.promise : overview.promise);
+    const summaryCommit = vi.fn(async () => {
+      cancelDisabledAtCommit = screen.getByRole<HTMLButtonElement>('button', { name: 'Cancel' }).disabled;
+      await commit.promise;
+      committed = true;
+    });
+    const summaryCancel = vi.fn();
+    const listNoteItems = vi.fn(async () => [folder, source, target]);
+    render(<App client={fixtureClient({
+      listNoteItems, getNote, summaryPlan: async () => ({ notes: [source] }), summaryGenerate, summaryCommit, summaryCancel,
+    })} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name }));
+    await screen.findByText('Old content');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    const summarize = screen.getByRole('menuitem', { name: 'Summarize' });
+    await waitFor(() => expect(summarize).toBeEnabled());
+    fireEvent.click(summarize);
+
+    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
+    await within(dialog).findByText('Summarizing “Chapter”…');
+    expect(dialog).toHaveTextContent('Note 1 of 1');
+    await act(async () => section.resolve('Chapter section'));
+    await within(dialog).findByText('Writing the Summary note…');
+    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
+    expect(cancel).toBeEnabled();
+    await act(async () => overview.resolve('Overview'));
+    expect(summaryCommit).toHaveBeenCalledExactlyOnceWith(folder.id, 'l3', expect.any(Object));
+    expect(cancelDisabledAtCommit).toBe(true);
+    expect(cancel).toBeDisabled();
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+    expect(summaryCancel).not.toHaveBeenCalled();
+    listNoteItems.mockClear();
+    await act(async () => commit.resolve());
+    await within(dialog).findByText('Opening note…');
+    expect(listNoteItems).toHaveBeenCalled();
+    expect(cancel).toBeDisabled();
+    expect(getNote).toHaveBeenCalledTimes(2);
+    expect(getNote).toHaveBeenLastCalledWith(target.id, 'full_text');
+    await act(async () => reopen.resolve());
+    expect(dialog).not.toBeInTheDocument();
+    expect(editor().getText()).toBe('Updated content');
+    expect(editor().isEditable).toBe(false);
+  });
+});
+
 describe('saving session summaries', () => {
   it('targets the clicked inactive session, closes the menu immediately and saves after navigation', async () => {
     const ready = deferred<SessionSummaryGenerated>();

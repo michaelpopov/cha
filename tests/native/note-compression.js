@@ -83,8 +83,10 @@ async function nativeParity() {
     check(modeTitle() === 'Compressed mode; showing compressed', 'Dialog closed before the compressed editor reloaded');
     check(editor().getText() === 'Compressed café\n\n- Result', 'Compressed text did not round-trip');
     check(row('Single')?.querySelector('.cha-notes-compressed'), 'Compressed tree metadata did not refresh');
-    await action('Single', 'Show compressed');
-    await until('shortcut reopened the compressed editor', () => editor()?.isEditable && modeTitle() === 'Compressed mode; showing compressed');
+    await mode('Full text');
+    await until('full-text editor reopened', () => editor()?.isEditable && modeTitle() === 'Full text mode; showing full text');
+    await mode('Compressed');
+    await until('compressed editor reopened', () => editor()?.isEditable && modeTitle() === 'Compressed mode; showing compressed');
     editor().chain().setHardBreak().insertContent('manual edit').run();
     await mode('Full text');
     await until('full text', () => editor()?.isEditable && editor().getText().endsWith(' original edit'));

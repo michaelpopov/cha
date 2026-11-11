@@ -10,6 +10,7 @@ import {
   type NoteContent,
   type NoteItem,
   type NotePage,
+  type NoteTextMode,
   type NotesClient,
   type TextFileRequest,
 } from '../api/client';
@@ -55,6 +56,8 @@ function Harness({
   onNavigate = () => undefined,
   onSetNoteReadOnly = async (id: number, readOnly: boolean) => ({ ...plan, id, read_only: readOnly }),
   items = [plan],
+  noteTextMode = 'full_text',
+  noteAudio,
   getNote = async (id: number) => ({ id, document_id: id, document: documentWith(id === 5 ? 'Essay text' : 'Alpha') }),
   saveNote = async () => undefined,
   saveNoteScrollPosition = async () => undefined,
@@ -74,7 +77,9 @@ function Harness({
   onNavigate?: (action: AppAction) => void;
   onSetNoteReadOnly?: (id: number, readOnly: boolean) => Promise<NoteItem>;
   items?: NoteItem[];
-  getNote?: (id: number) => Promise<NoteContent>;
+  getNote?: (id: number, mode?: NoteTextMode) => Promise<NoteContent>;
+  noteTextMode?: NoteTextMode;
+  noteAudio?: NotesClient['noteAudio'];
   saveNote?: (id: number, document: Record<string, unknown>) => Promise<void>;
   saveNoteScrollPosition?: (id: number, scrollTop: number) => Promise<void>;
   readNotePage?: NotesClient['readNotePage'];
@@ -104,7 +109,8 @@ function Harness({
   const client = useRef(fixtureClient({
     listNoteItems: async () => itemsRef.current,
     setNoteReadOnly: onSetNoteReadOnly,
-    getNote: (id) => getNoteRef.current(id),
+    getNote: (id, mode) => getNoteRef.current(id, mode),
+    noteAudio,
     saveNote: (id, document) => saveNoteRef.current(id, document),
     saveNoteScrollPosition,
     readNotePage,
@@ -147,7 +153,7 @@ function Harness({
         leave={leave}
         noteItems={noteId === 5 ? [plan, essay] : items}
         noteRequest={request + extraRequest}
-        noteTextMode="full_text"
+        noteTextMode={noteTextMode}
         noteActionPending={leave.pendingKind !== null}
         onNoteTextModeChange={() => undefined}
         notesEpoch={1}
@@ -166,6 +172,35 @@ afterEach(() => {
   liveEditor = null;
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it.each([
+  ['full_text', 'Full text', 'full text', true],
+  ['l1', 'L1', 'L1', false],
+  ['l2', 'L2', 'L2', false],
+  ['compressed', 'Compressed', 'compressed', false],
+  ['l1', 'L1', 'full text', true],
+  ['l2', 'L2', 'full text', true],
+] as const)('shows %s mode (%s selected, %s loaded) with audio available: %s', async (mode, label, showing, fullText) => {
+  const info = vi.fn(async () => ({ count: 1 }));
+  const getNote = vi.fn(async (id: number) => ({
+    id, document_id: fullText ? id : 40, document: documentWith('Read-only note'),
+  }));
+  render(<Harness noteTextMode={mode} items={[{ ...plan, read_only: true }]} getNote={getNote}
+    noteAudio={{ info, contextEpoch: () => 1, startBackground: vi.fn(),
+      backgroundStatus: vi.fn(), source: vi.fn(), release: vi.fn() }} />);
+  const button = await screen.findByRole('button', { name: 'Note text mode' });
+  expect(button).toHaveAttribute('title', `${label} mode; showing ${showing}`);
+  expect(getNote).toHaveBeenCalledWith(plan.id, mode);
+  fireEvent.click(button);
+  const choices = screen.getAllByRole('menuitemradio');
+  expect(choices.map(choice => choice.textContent)).toEqual(['Full text', 'L1', 'L2', 'Compressed']);
+  const selected = screen.getByRole('menuitemradio', { name: label, checked: true });
+  expect(selected.querySelector('svg')).toBeInTheDocument();
+  expect(screen.getAllByRole('menuitemradio', { checked: true })).toEqual([selected]);
+  expect((await openedEditor()).isEditable).toBe(false);
+  if (fullText) expect(info).toHaveBeenCalledWith(plan.id);
+  else expect(info).not.toHaveBeenCalled();
 });
 
 async function openedEditor(): Promise<Editor> {

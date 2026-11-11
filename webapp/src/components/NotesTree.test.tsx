@@ -8,9 +8,9 @@ import { noteItem } from '../test/notes';
 import {
   ChaError,
   type NoteItem,
-  type NotesClient, type NoteTextMode,
+  type NotesClient,
 } from '../api/client';
-import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions } from './NotesTree';
+import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SummarizeNotes } from './NotesTree';
 
 const study: NoteItem = noteItem({ id: 1, kind: 'folder', name: 'Study' });
 const aardvark: NoteItem = noteItem({ id: 2, name: 'Aardvark' });
@@ -78,15 +78,17 @@ function renderTree({
   onBeforeCreateNote = vi.fn(async () => true),
   onDeleteItem,
   onCompressNote,
+  onSummarize = vi.fn(),
   getNoteLength = vi.fn(async () => 16),
 }: {
   items?: NoteItem[];
   notes?: NotesClient;
   activeNoteId?: number | null;
-  onOpenNote?: (id: number, importSource?: NoteImportSource, mode?: NoteTextMode) => void;
+  onOpenNote?: (id: number, importSource?: NoteImportSource) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
   onDeleteItem?: DeleteNoteItem;
   onCompressNote?: CompressNote;
+  onSummarize?: SummarizeNotes;
   getNoteLength?: (id: number) => Promise<number>;
 } = {}) {
   const onNoteItems = vi.fn();
@@ -111,9 +113,10 @@ function renderTree({
           await notesClient.compressNote(target.id, epoch, folder);
           await refresh();
         })}
+        onSummarize={onSummarize}
         onSetNoteReadOnly={notesClient.setNoteReadOnly}
         onNoteItems={onNoteItems}
-        onOpenNote={(id, importSource, mode) => { setActive(id); if (mode) onOpenNote(id, importSource, mode); else if (importSource) onOpenNote(id, importSource); else onOpenNote(id); }}
+        onOpenNote={(id, importSource) => { setActive(id); if (importSource) onOpenNote(id, importSource); else onOpenNote(id); }}
         vaultName="Personal"
       />
     );
@@ -159,27 +162,83 @@ describe('Notes tree', () => {
     ], 1, true, expect.any(Function));
   });
 
-  it('disables Show compressed without stored text and skips it with the arrow keys', async () => {
-    renderTree();
-    await screen.findByRole('treeitem', { name: 'Aardvark' });
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Aardvark' }));
-    expect(screen.getByRole('menuitem', { name: 'Show compressed' })).toBeDisabled();
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Compress' })).toBeEnabled());
-    screen.getByRole('menuitem', { name: 'Compress' }).focus();
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowDown' });
-    expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'ArrowUp' });
-    expect(screen.getByRole('menuitem', { name: 'Compress' })).toHaveFocus();
-    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
-    expect(screen.queryByRole('menuitem', { name: 'Show compressed' })).not.toBeInTheDocument();
+  it.each([false, true])('omits Show compressed when has_compressed is %s and navigates summary actions with arrow keys', async has_compressed => {
+    renderTree({ items: [{ ...aardvark, has_compressed }] });
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Aardvark' }));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Show compressed' })).not.toBeInTheDocument();
+    const compress = within(menu).getByRole('menuitem', { name: 'Compress' });
+    await waitFor(() => expect(compress).toBeEnabled());
+    const summarize = within(menu).getByRole('menuitem', { name: 'Summarize' });
+    compress.focus();
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(summarize).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Exclude from summaries' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(summarize).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(compress).toHaveFocus();
   });
 
-  it('opens the logical note in compressed mode', async () => {
-    const { onOpenNote } = renderTree({ items: [{ ...aardvark, has_compressed: true }] });
-    await screen.findByRole('treeitem', { name: 'Aardvark' });
-    await chooseAction('Aardvark', 'Show compressed');
-    expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(aardvark.id, undefined, 'compressed');
+  it('offers summaries only on ordinary notes and unmanaged folders', async () => {
+    const folderSummary = { ...plan, name: 'Summary', parent_id: study.id, folder_summary: true, is_summary: true, read_only: true };
+    const sessionSummary = { ...aardvark, name: 'Session', is_summary: true, summary_linked: true };
+    const managed = { ...philosophy, name: 'Chats', parent_id: null, forum_id: 'chat' };
+    const onSummarize = vi.fn();
+    renderTree({ items: [study, folderSummary, sessionSummary, managed], onSummarize });
+
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
+    await screen.findByRole('button', { name: 'Actions for Summary' });
+    for (const name of ['Summary', 'Session', 'Chats', 'Personal']) {
+      fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+      const menu = screen.getByRole('menu');
+      expect(within(menu).queryByRole('menuitem', { name: 'Summarize' })).not.toBeInTheDocument();
+      expect(within(menu).queryByRole('menuitemcheckbox', { name: 'Exclude from summaries' })).not.toBeInTheDocument();
+      if (name === 'Summary' || name === 'Session') {
+        expect(within(menu).queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();
+        expect(within(menu).queryByRole('menuitem', { name: 'Compress' })).not.toBeInTheDocument();
+      }
+      fireEvent.keyDown(menu, { key: 'Escape' });
+    }
+    await chooseAction('Study', 'Summarize');
+    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(study, 1, expect.any(Function));
+  });
+
+  it('refreshes the exclusion check mark and displays a refused summary plan', async () => {
+    let item = aardvark;
+    const message = 'This note is under 4 KiB and does not need summaries.';
+    const listNoteItems = vi.fn(async () => [item]);
+    const setNoteSummaryExcluded = vi.fn(async (_id: number, summary_excluded: boolean) => {
+      item = { ...item, summary_excluded };
+      return item;
+    });
+    const onSummarize = vi.fn(async () => { throw new ChaError('invalid_argument', message); });
+    renderTree({ notes: client({ listNoteItems, setNoteSummaryExcluded }), onSummarize });
+    const actions = await screen.findByRole('button', { name: 'Actions for Aardvark' });
+    fireEvent.click(actions);
+    const checkbox = () => screen.getByRole('menuitemcheckbox', { name: 'Exclude from summaries' });
+    expect(checkbox()).not.toBeChecked();
+    expect(checkbox().querySelector('svg')).toBeNull();
+    fireEvent.click(checkbox());
+    await waitFor(() => expect(actions).toBeEnabled());
+    expect(setNoteSummaryExcluded).toHaveBeenCalledExactlyOnceWith(item.id, true);
+    expect(listNoteItems).toHaveBeenCalledTimes(2);
+    fireEvent.click(actions);
+    expect(checkbox()).toBeChecked();
+    expect(checkbox().querySelector('svg')).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    await chooseAction('Aardvark', 'Summarize');
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(item, 1, expect.any(Function));
+  });
+
+  it.each(['has_compressed', 'has_l1', 'has_l2'] as const)('shows the saved version dot for %s', async field => {
+    renderTree({ items: [{ ...aardvark, [field]: true }, { ...plan, parent_id: null }] });
+    const dot = await screen.findByRole('img', { name: 'Other versions saved' });
+    expect(dot).toHaveAttribute('title', 'Other versions saved');
+    expect(dot).toHaveClass('cha-notes-compressed');
+    expect(screen.getAllByRole('img', { name: 'Other versions saved' })).toHaveLength(1);
   });
 
   it('reads status on every menu opening and cancels by note ID without a dialog', async () => {
@@ -262,7 +321,7 @@ describe('Notes tree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(listNoteItems).toHaveBeenCalledTimes(2));
     expect(screen.getByRole('treeitem', { name: 'Aardvark' })).toHaveFocus();
-    expect(screen.getByRole('img', { name: 'Compressed version saved' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Other versions saved' })).toBeInTheDocument();
   });
 
   it('colors read-only notes with saved audio and refreshes when audio changes', async () => {
@@ -1055,14 +1114,22 @@ describe('Folder store tree actions', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete folder' }));
     await waitFor(() => expect(remove).toHaveBeenCalledExactlyOnceWith(1));
   });
-  it('keeps store actions disabled after a failed status read', async () => {
-    renderTree({ items: [study], notes: client({ listNoteItems: async () => [study], storeOperation: async () => { throw new Error('private body'); } }) });
+  it('keeps Summarize available when reading store status fails', async () => {
+    const onSummarize = vi.fn();
+    renderTree({ notes: client({
+      listNoteItems: async () => [study],
+      storeOperation: async () => { throw new Error('private body'); },
+    }), onSummarize });
     await screen.findByRole('treeitem', { name: 'Study' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read store status');
     expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeDisabled();
     expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled();
     expect(document.body).not.toHaveTextContent('private body');
+    const summarize = screen.getByRole('menuitem', { name: 'Summarize' });
+    expect(summarize).toBeEnabled();
+    fireEvent.click(summarize);
+    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(study, 1, expect.any(Function));
   });
 });
 
@@ -1076,6 +1143,7 @@ it('disables conflicting folder actions while an upload is active', async () => 
   await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeEnabled());
   for (const name of ['New note', 'New folder', 'Import EPUB…', 'Rename', 'Compress'])
     expect(screen.getByRole('menuitem', { name })).toBeDisabled();
+  expect(screen.getByRole('menuitem', { name: 'Summarize' })).toBeEnabled();
 });
 
 it.each(['mouse', 'keyboard'])('shows only Export folder for both managed folders via %s', async (entry) => {
@@ -1115,8 +1183,8 @@ it('moves a menu up only as far as needed to show all of its commands', async ()
     const items: NoteItem[] = [study, { ...aardvark, name: 'Forums', kind: 'folder', forum_id: '' }];
     const noteFolderTransfer = { exportFolder: vi.fn(async () => undefined), importFolder: vi.fn(async () => undefined) };
     renderTree({ items, notes: client({ listNoteItems: async () => items, noteFolderTransfer }) });
-    // Study has 9 commands: 768 - (9 * 39 + 13) - 8 = 396. Forums has 1 command and fits below its row.
-    for (const [name, top] of [['Study', '396px'], ['Forums', '500px']]) {
+    // Study has 10 commands: 768 - (10 * 39 + 13) - 8 = 357. Forums has 1 command and fits below its row.
+    for (const [name, top] of [['Study', '357px'], ['Forums', '500px']]) {
       fireEvent.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
       expect(await screen.findByRole('menu')).toHaveStyle({ top });
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
@@ -1142,7 +1210,7 @@ it('refreshes on visibility and registered actions without an active note, defer
   const props = {
     activeNoteId: null, client: client({ listNoteItems }), vaultName: 'Personal',
     onBeforeCreateNote: async () => true, onOpenNote: vi.fn(), onNoteItems: vi.fn(),
-    onCompressNote: vi.fn(), onSetNoteReadOnly: vi.fn(), onDeleteItem: vi.fn(),
+    onCompressNote: vi.fn(), onSummarize: vi.fn(), onSetNoteReadOnly: vi.fn(), onDeleteItem: vi.fn(),
     getNoteLength: async () => 0, onRegisterNoteActions: register,
   };
   const view = render(<NotesTree {...props} browsing />);
@@ -1166,7 +1234,7 @@ it('keeps summary identity after detachment and restores only direct Rename', as
   let actions: NoteActions | null = null;
   render(<NotesTree client={client({ listNoteItems: listing })} vaultName="Personal" browsing
     activeNoteId={null} getNoteLength={async () => 0} onBeforeCreateNote={async () => true} onOpenNote={vi.fn()}
-    onDeleteItem={vi.fn()} onSetNoteReadOnly={vi.fn()} onCompressNote={vi.fn()} onNoteItems={vi.fn()}
+    onDeleteItem={vi.fn()} onSetNoteReadOnly={vi.fn()} onCompressNote={vi.fn()} onSummarize={vi.fn()} onNoteItems={vi.fn()}
     onSourceChanged={vi.fn()} onRegisterNoteActions={next => { actions = next; }} />);
   fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
   expect(screen.queryByRole('menuitem', { name: 'Rename' })).not.toBeInTheDocument();

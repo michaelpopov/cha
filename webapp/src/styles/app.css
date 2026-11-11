@@ -610,6 +610,19 @@ select:disabled {
   text-align: left;
 }
 
+.cha-session-menu button[role="menuitemcheckbox"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+}
+
+.cha-session-menu button[role="menuitemcheckbox"] > svg {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}
+
 .cha-session-menu button:hover,
 .cha-session-menu button:focus {
   outline: 0;

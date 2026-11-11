@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { noteItem } from '../test/notes';
 
-import { ChaError, type NoteItem, type NotePage } from '../api/client';
+import { ChaError, type NoteItem, type NotePage, type NoteTextMode } from '../api/client';
 import { fixtureClient } from '../test/fixtures';
 import { createNotesEditor } from './editor';
 import { noteTooLargeMessage } from './pictures';
@@ -45,9 +45,9 @@ function setup(open?: { editor: Editor; save: NoteSaveHandle }) {
     });
     return { imports, leave };
   }, { initialProps: { appEpoch: 1, openId: null as number | null } });
-  function start(documentId = note.id) {
+  function start(documentId = note.id, mode: NoteTextMode = 'full_text') {
     let done!: Promise<boolean | null>;
-    act(() => { done = hook.result.current.imports.page({ noteId: note.id, documentId }, page.url); });
+    act(() => { done = hook.result.current.imports.page({ noteId: note.id, documentId, mode }, page.url); });
     return done;
   }
   return { ...hook, start, reading, opening, saveNote, getNote, renameNoteItem, setNoteReadOnly,
@@ -117,7 +117,7 @@ describe('background note imports', () => {
   it('saves a background import to its captured compressed row and changes metadata on the logical note', async () => {
     const test = setup();
     test.getNote.mockResolvedValueOnce({ id: note.id, document_id: 18, document: { type: 'doc', content: [{ type: 'paragraph' }] } });
-    const done = test.start(18);
+    const done = test.start(18, 'compressed');
     await act(async () => { test.reading.resolve(page); await done; });
     expect(test.getNote).toHaveBeenCalledExactlyOnceWith(note.id, 'compressed');
     expect(test.saveNote).toHaveBeenCalledExactlyOnceWith(18, expect.any(Object));
@@ -125,9 +125,20 @@ describe('background note imports', () => {
     expect(test.setNoteReadOnly).toHaveBeenCalledExactlyOnceWith(note.id, true);
   });
 
+  it('reopens the captured L1 row after the user switches back to the original', async () => {
+    const test = setup();
+    test.getNote.mockResolvedValueOnce({ id: note.id, document_id: 18, document: { type: 'doc', content: [{ type: 'paragraph' }] } });
+    const done = test.start(18, 'l1');
+    test.rerender({ appEpoch: 1, openId: note.id });
+    test.opening.resolve();
+    await act(async () => { test.reading.resolve(page); await done; });
+    expect(test.getNote).toHaveBeenCalledExactlyOnceWith(note.id, 'l1');
+    expect(test.saveNote).toHaveBeenCalledExactlyOnceWith(18, expect.any(Object));
+  });
+
   it('rejects a background import when its compressed row is gone', async () => {
     const test = setup();
-    const done = test.start(18);
+    const done = test.start(18, 'compressed');
     await act(async () => { test.reading.resolve(page); expect(await done).toBe(false); });
     expect(test.saveNote).not.toHaveBeenCalled();
     expect(test.result.current.imports.state(18)?.error).toBe('This note document is no longer available.');

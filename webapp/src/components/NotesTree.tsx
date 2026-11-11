@@ -17,7 +17,6 @@ import {
   type FolderStoreOperation,
   type NoteItem,
   type NotesClient,
-  type NoteTextMode,
 } from '../api/client';
 import {
   availableNoteName,
@@ -27,6 +26,7 @@ import {
   type NoteTreeRow,
 } from '../notes/tree';
 import { useDialogElement } from './useDialogElement';
+import { CheckIcon } from './Icons';
 import { FolderStoreDialog } from './FolderStoreDialog';
 import { NoteAudioDialog, type NoteAudioTarget } from './NoteAudioDialog';
 import { newNoteImportSource } from '../notes/importSource';
@@ -94,6 +94,7 @@ export type SetNoteReadOnly = (id: number, readOnly: boolean) => Promise<NoteIte
 export type CompressNote = (
   targets: readonly Pick<NoteItem, 'id' | 'name'>[], epoch: number, folder: boolean, refresh: () => Promise<void>,
 ) => Promise<void>;
+export type SummarizeNotes = (source: NoteItem, epoch: number, refresh: () => Promise<void>) => Promise<void>;
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
@@ -106,6 +107,7 @@ export function NotesTree({
   onBeforeCreateNote,
   onDeleteItem,
   onCompressNote,
+  onSummarize,
   compressionInProgress,
   onSetNoteReadOnly,
   onNoteItems,
@@ -118,10 +120,11 @@ export function NotesTree({
   getNoteLength(id: number): Promise<number>;
   browsing: boolean;
   activeNoteId: number | null;
-  onOpenNote(id: number, importSource?: NoteImportSource, mode?: NoteTextMode): void;
+  onOpenNote(id: number, importSource?: NoteImportSource): void;
   onBeforeCreateNote(): Promise<boolean>;
   onDeleteItem: DeleteNoteItem;
   onCompressNote: CompressNote;
+  onSummarize: SummarizeNotes;
   compressionInProgress?(): boolean;
   onSetNoteReadOnly: SetNoteReadOnly;
   onNoteItems(items: NoteItem[]): void;
@@ -187,7 +190,7 @@ export function NotesTree({
   for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
   const signature = vaultName + '\n' + items.map((item) => (
-    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}`
+    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}:${item.has_l1}:${item.has_l2}:${item.summary_excluded}:${item.folder_summary}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({
@@ -559,7 +562,7 @@ export function NotesTree({
     return refreshed;
   }
 
-  function storeContextCurrent(epoch: number) {
+  function noteContextCurrent(epoch: number) {
     try { return alive.current && clientRef.current.contextEpoch() === epoch; }
     catch { return false; }
   }
@@ -586,10 +589,10 @@ export function NotesTree({
     if (note && note.kind !== 'annotation') void readCompressionStatus(opened);
     if (note?.kind === 'folder') {
       void clientRef.current.storeOperation(note.id, epoch).then(status => {
-        if (storeContextCurrent(epoch))
+        if (noteContextCurrent(epoch))
           setMenu(current => current?.identity === opened.identity ? { ...current, storeStatus: status } : current);
       }).catch(failure => {
-        if (storeContextCurrent(epoch) && currentMenu.current?.identity === opened.identity)
+        if (noteContextCurrent(epoch) && currentMenu.current?.identity === opened.identity)
           setError(publicErrorMessage(failure, 'Could not read store status. Reopen the folder menu to try again.'));
       });
     }
@@ -701,6 +704,12 @@ export function NotesTree({
     }
   }
 
+  async function refreshAfterOperation() {
+    if (!alive.current) return;
+    pendingRefresh.current = false;
+    await runList(++generation.current, true);
+  }
+
   async function startCompress() {
     const epoch = menu?.epoch;
     const source = takeMenuSource();
@@ -719,11 +728,7 @@ export function NotesTree({
     if (targets.length === 0) return;
     setError(null);
     try {
-      await onCompressNote(targets, epoch, folder, async () => {
-        if (!alive.current) return;
-        pendingRefresh.current = false;
-        await runList(++generation.current, true);
-      });
+      await onCompressNote(targets, epoch, folder, refreshAfterOperation);
     } catch (failure) {
       if (alive.current) setError(publicErrorMessage(failure, 'Could not start compression. Try again.'));
     } finally {
@@ -731,10 +736,38 @@ export function NotesTree({
     }
   }
 
-  function showCompressed() {
+  async function startSummarize() {
+    const epoch = menu?.epoch;
     const source = takeMenuSource();
-    if (!source || source.kind !== 'note' || !source.has_compressed) return;
-    onOpenNote(source.id, undefined, 'compressed');
+    if (!source || epoch === undefined || !canMutateNow()) return;
+    setError(null);
+    try {
+      await onSummarize(source, epoch, refreshAfterOperation);
+    } catch (failure) {
+      if (alive.current) setError(publicErrorMessage(failure, 'Could not start summaries. Try again.'));
+    } finally {
+      flushBackgroundRefresh();
+    }
+  }
+
+  async function toggleSummaryExcluded() {
+    const epoch = menu?.epoch;
+    const source = takeMenuSource();
+    if (!source || epoch === undefined || !canMutateNow()) return;
+    busy.current = true;
+    setError(null);
+    try {
+      if (clientRef.current.contextEpoch() !== epoch) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+      const updated = await clientRef.current.setNoteSummaryExcluded(source.id, !source.summary_excluded);
+      if (!noteContextCurrent(epoch)) return;
+      updateItem(updated);
+      await refreshAfterOperation();
+    } catch (failure) {
+      if (alive.current) setError(publicErrorMessage(failure, 'The change could not be saved.'));
+    } finally {
+      busy.current = false;
+      flushBackgroundRefresh();
+    }
   }
 
   async function copyReference() {
@@ -823,8 +856,9 @@ export function NotesTree({
   const canMutate = loaded && !stale && !listing && dialog === null && storeRun === null
     && !busy.current && !compressionInProgress?.();
   const rows = tree.getItems();
-  const menuIsNote = menu !== null && index.rows[menu.sourceId]?.kind !== 'folder';
-  const menuManaged = menu !== null && index.rows[menu.sourceId]?.forumId !== undefined;
+  const menuRow = menu ? index.rows[menu.sourceId] : undefined;
+  const menuIsNote = menu !== null && menuRow?.kind !== 'folder';
+  const menuManaged = menuRow?.forumId !== undefined;
   const menuFolderBusy = menu !== null && !menuIsNote && menu.sourceId !== 'vault'
     && (menu.storeStatus === null || menu.storeStatus.present && !menu.storeStatus.terminal);
   const menuParentId = menu?.sourceId === 'vault' ? null : Number(menu?.sourceId);
@@ -890,9 +924,9 @@ export function NotesTree({
                 {data.kind === 'folder' ? (item.isExpanded() ? '▾' : '▸') : ''}
               </span>
               <span className="cha-notes-label">{data.name}</span>
-              {data.kind === 'note' && data.hasCompressed && (
+              {data.kind === 'note' && data.hasVersions && (
                 <span className="cha-notes-compressed" role="img"
-                  aria-label="Compressed version saved" title="Compressed version saved" />
+                  aria-label="Other versions saved" title="Other versions saved" />
               )}
               <button
                 aria-expanded={menu?.sourceId === data.id ? true : undefined}
@@ -951,7 +985,7 @@ export function NotesTree({
           )}
           {!menuManaged && menu.sourceId !== 'vault' && (
             <>
-              {index.rows[menu.sourceId]?.kind !== 'annotation' && !index.rows[menu.sourceId]?.summaryLinked && <button disabled={menuFolderBusy} onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
+              {menuRow?.kind !== 'annotation' && !menuRow?.summaryLinked && !menuRow?.folderSummary && <button disabled={menuFolderBusy} onClick={() => startRename()} role="menuitem" type="button">Rename</button>}
               {menuIsNote && index.rows[menu.sourceId]?.kind === 'note' && (
                 <button onClick={() => void toggleReadOnly()} role="menuitem" type="button">
                   {items.find((item) => String(item.id) === menu.sourceId)?.read_only
@@ -976,9 +1010,15 @@ export function NotesTree({
                 disabled={menuFolderBusy || menu.compressionPending === null || (!menuIsNote && menu.compressionPending)}
                 onClick={() => void (menuIsNote && menu.compressionPending ? cancelCompression() : startCompress())}
                 role="menuitem" type="button">{menuIsNote && menu.compressionPending ? 'Cancel compression' : 'Compress'}</button>}
-              {menuIsNote && !index.rows[menu.sourceId]?.isSummary && (
-                <button disabled={!index.rows[menu.sourceId]?.hasCompressed}
-                  onClick={showCompressed} role="menuitem" type="button">Show compressed</button>
+              {menuRow && menuRow.kind !== 'annotation' && !menuRow.isSummary && (
+                <button onClick={() => void startSummarize()} role="menuitem" type="button">Summarize</button>
+              )}
+              {menuRow?.kind === 'note' && !menuRow.isSummary && (
+                <button aria-checked={menuRow.summaryExcluded ?? false} onClick={() => void toggleSummaryExcluded()}
+                  role="menuitemcheckbox" type="button">
+                  <span>Exclude from summaries</span>
+                  {menuRow.summaryExcluded && <CheckIcon />}
+                </button>
               )}
               {index.rows[menu.sourceId]?.kind !== 'annotation' && <button onClick={() => startDelete()} role="menuitem" type="button">Delete</button>}
             </>
