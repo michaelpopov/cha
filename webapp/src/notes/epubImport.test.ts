@@ -41,6 +41,33 @@ function text(document: Record<string, unknown>): string {
 }
 
 describe('EPUB import', () => {
+  it('recovers HTML entities while preserving XML markup and literal text', () => {
+    const result = prepareEpubImport(archive(book(
+      '<p>&copy; It&rsquo;s &lt;strong&gt;<br/><!-- &copy; -->&amp;copy;</p>',
+      '<dc:title>&copy; <![CDATA[&copy;]]></dc:title>',
+    )), 'file.epub', []);
+    expect(result.name).toBe('© &copy;');
+    expect(result.notes[0].document).toEqual({ type: 'doc', content: [
+      { type: 'paragraph', content: [
+        { type: 'text', text: '© It’s <strong>' },
+        { type: 'hardBreak' },
+        { type: 'text', text: '&copy;' },
+      ] },
+    ] });
+  });
+
+  it('rejects unknown entities even when their prefix is a known HTML entity', () => {
+    expect(() => prepareEpubImport(archive(book('<p>&copy; &notAnEntity;</p>')), 'file.epub', []))
+      .toThrow('Could not parse XML in “Book/text.xhtml”.');
+  });
+
+  it('imports XHTML chapters that omit the XHTML namespace', () => {
+    const files = book('');
+    files['Book/text.xhtml'] = '<html><head/><body><p>&copy; It&rsquo;s readable.</p></body></html>';
+    const result = prepareEpubImport(archive(files), 'file.epub', []);
+    expect(text(result.notes[0].document)).toBe('© It’s readable.');
+  });
+
   it.each([
     { encoding: 'UTF-16LE', littleEndian: true, bom: true },
     { encoding: 'UTF-16BE', littleEndian: false, bom: true },
@@ -100,6 +127,20 @@ describe('EPUB import', () => {
     files['Book/package.opf'] = pkg(item('text', 'text.xhtml') + '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>', ref('text'), undefined, 'toc="ncx"');
     files['Book/toc.ncx'] = '<ncx><navMap>broken';
     expect(prepareEpubImport(archive(files), 'file.epub', []).notes[0].name).toBe('001. Heading');
+  });
+
+  it.each([
+    ['<p class="calibre_34"><span class="bold">POMPEII</span></p>', 'POMPEII'],
+    ['<p> </p><p>Into battle</p><p>We do not possess any first-hand accounts of using the gladius in combat.</p>', 'Into battle'],
+    ['<p>The Mainz type<br/>The blade retained the long point of the gladius but was much smaller overall.</p>', 'The Mainz type'],
+    ['<p><strong>About the author</strong></p>', 'About the author'],
+    ['<p>The blade was much smaller overall.</p><p>The tip of the blade was long and sharp, making it suitable for thrusting.</p>', 'text'],
+    ['<p>12</p><p>The tip of the blade was long and sharp, making it suitable for thrusting.</p>', 'text'],
+    ['<p>https://example.com/book</p><p>The tip of the blade was long and sharp, making it suitable for thrusting.</p>', 'text'],
+    ['<h1>Official title</h1><p>POMPEII</p>', 'Official title'],
+  ])('chooses a chapter name from its opening text or heading (%s)', (body, title) => {
+    const result = prepareEpubImport(archive(book(body)), 'file.epub', []);
+    expect(result.notes[0].name).toBe(`001. ${title}`);
   });
 
   it.each(['Book#1', 'Book%20Title', '书籍'])('resolves literal archive paths and encoded links in %s', (directory) => {
@@ -300,14 +341,34 @@ describe('EPUB import', () => {
     expect(JSON.stringify(doc)).not.toContain('"type":"image"');
   });
 
-  it('imports empty, missing-image-only and non-XHTML spine files as empty notes', () => {
+  it('skips empty, missing-image-only and non-XHTML spine files and numbers the remaining notes', () => {
     const files = book('<img src="cover.png"/>');
-    files['Book/package.opf'] = pkg(item('text', 'text.xhtml') + item('empty', 'empty.xhtml') + '<item id="svg" href="cover.svg" media-type="image/svg+xml"/>', ref('text') + ref('empty') + ref('svg'));
-    files['Book/empty.xhtml'] = xhtml('');
+    files['Book/package.opf'] = pkg(
+      item('text', 'text.xhtml') + item('empty', 'empty.xhtml') + item('chapter', 'chapter.xhtml')
+        + '<item id="svg" href="cover.svg" media-type="image/svg+xml"/>',
+      ref('text') + ref('empty') + ref('svg') + ref('chapter'),
+    );
+    files['Book/empty.xhtml'] = xhtml('<p> &#160;<br/></p><p></p>');
+    files['Book/chapter.xhtml'] = xhtml('<h1>Chapter</h1><p>Readable text</p>');
     files['Book/cover.svg'] = 'not XML; this media must not be parsed';
     const result = prepareEpubImport(archive(files), 'file.epub', []);
-    expect(result.notes).toHaveLength(3);
-    for (const note of result.notes) expect(note.document).toEqual({ type: 'doc', content: [{ type: 'paragraph' }] });
+    expect(result.notes.map((note) => note.name)).toEqual(['001. Chapter']);
+  });
+
+  it('rejects a book with no importable content', () => {
+    expect(() => prepareEpubImport(archive(book('<img src="missing.png"/>')), 'file.epub', []))
+      .toThrow('The book has no reading-order files.');
+  });
+
+  it('excludes dropped pictures from the note and request size checks', () => {
+    // Backslashes occupy two bytes in JSON. The unused alt text exceeds the note limit.
+    const alt = '\\'.repeat(noteDocumentByteLimit / 2);
+    const files = book(`<p>Chapter text</p><img src="missing.png" alt="${alt}"/>`);
+    files['Book/cover.xhtml'] = xhtml(`<img src="missing.png" alt="${alt}"/>`);
+    files['Book/package.opf'] = pkg(item('cover', 'cover.xhtml') + item('text', 'text.xhtml'), ref('cover') + ref('text'));
+    const { notes } = prepareEpubImport(archive(files), 'file.epub', []);
+    expect(notes.map((note) => note.name)).toEqual(['001. text']);
+    expect(text(notes[0].document)).toBe('Chapter text');
   });
 
   it('cleans Unicode names, uses fallbacks and avoids existing root names', () => {
@@ -349,7 +410,7 @@ describe('EPUB import', () => {
     ['missing text', (files: Record<string, string>) => { delete files['Book/text.xhtml']; }, 'Book/text.xhtml'],
     ['broken text XML', (files: Record<string, string>) => { files['Book/text.xhtml'] = xhtml('<p>unclosed'); }, 'Book/text.xhtml'],
     ['encrypted text', (files: Record<string, string>) => { files['Book/text.xhtml'] = 'encrypted data'; }, 'Book/text.xhtml'],
-    ['text outside the XHTML namespace', (files: Record<string, string>) => { files['Book/text.xhtml'] = '<html><body><p>Text</p></body></html>'; }, 'No XHTML body in “Book/text.xhtml”'],
+    ['text in a foreign namespace', (files: Record<string, string>) => { files['Book/text.xhtml'] = '<html xmlns="urn:other"><body><p>Text</p></body></html>'; }, 'No XHTML body in “Book/text.xhtml”'],
     ['broken package', (files: Record<string, string>) => { files['Book/package.opf'] = '<package/>'; }, 'Book/package.opf'],
     ['missing package', (files: Record<string, string>) => { delete files['Book/package.opf']; }, 'Book/package.opf'],
     ['undecodable path', (files: Record<string, string>) => { files['Book/package.opf'] = pkg(item('text', 'bad%ZZ'), ref('text')); }, 'spine'],
@@ -404,5 +465,19 @@ describe('EPUB import', () => {
     expect(result.notes.map((item) => pictures(item.document))).toEqual([6, 5]);
     expect(result.notes.map((item) => text(item.document))).toEqual(['First', 'Second']);
     expect(noteDocumentByteLength(result)).toBeLessThanOrEqual(16 * 1024 * 1024 - 64 * 1024);
+  });
+
+  it('keeps the first picture when splitting paragraphs makes the last picture exceed the limit', () => {
+    const picture = '<img src="picture.jpg"/>';
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+    const chapter = (padding: string) => archive({
+      ...book(`<p>Before ${picture} between ${picture} after${padding}</p>`),
+      'Book/picture.jpg': bytes,
+    });
+    const illustrated = prepareEpubImport(chapter(''), 'file.epub', []).notes[0].document;
+    const padding = 'x'.repeat(noteDocumentByteLimit - noteDocumentByteLength(illustrated) + 1);
+    const doc = prepareEpubImport(chapter(padding), 'file.epub', []).notes[0].document;
+    expect(JSON.stringify(doc).match(/"type":"image"/gu)).toHaveLength(1);
+    expect(noteDocumentByteLength(doc)).toBeLessThanOrEqual(noteDocumentByteLimit);
   });
 });
