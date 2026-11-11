@@ -7,13 +7,15 @@ import { compareNoteSiblings } from './tree';
 
 type Section = { name: string; markdown: string };
 
-function folderSummaryDocument(overview: string, sections: Section[]) {
-  const content = markdownNoteDocument(overview).content as unknown[];
-  for (const { name, markdown } of sections) {
-    content.push({
-      type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: name }],
-    });
-    for (const node of markdownNoteDocument(markdown).content as unknown[]) content.push(node);
+// Headings are built from names, so Markdown characters in a name stay literal.
+function heading(text: string) {
+  return { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text }] };
+}
+
+function titledDocument(title: string, markdown: string, sections: Section[] = []) {
+  const content: unknown[] = [heading(title), ...markdownNoteDocument(markdown).content as unknown[]];
+  for (const section of sections) {
+    content.push(heading(section.name), ...markdownNoteDocument(section.markdown).content as unknown[]);
   }
   const document = { type: 'doc', content };
   if (noteDocumentByteLength(document) > noteDocumentByteLimit) throw new Error(summaryConversionError);
@@ -36,13 +38,13 @@ export async function summarizeAndWait(
   const folder = source.kind === 'folder';
   const sections: Section[] = [];
 
-  async function makeLevel({ id }: SummaryTarget, part: 'l1' | 'l2') {
+  async function makeLevel({ id, name }: SummaryTarget, part: 'l1' | 'l2') {
     const markdown = await client.summaryGenerate(id, part);
     if (run.requested) return;
     checkContext();
     let document;
     try {
-      document = markdownNoteDocument(markdown);
+      document = part === 'l2' ? titledDocument(name, markdown) : markdownNoteDocument(markdown);
     } catch {
       await client.summaryAbandon(id, part);
       return;
@@ -90,7 +92,7 @@ export async function summarizeAndWait(
       checkContext();
       let document;
       try {
-        document = folderSummaryDocument(overview, sections);
+        document = titledDocument(source.name, overview, sections);
       } catch {
         await client.summaryAbandon(source.id, 'l3');
         return result;

@@ -6,15 +6,17 @@ are shown below for review.
 ## 1. Export behavior
 
 **Export EPUB…** saves a selected folder as one reflowable EPUB 3 book. Use the
-folder name as the book title and the basis for the filename. Export the notes
+folder name as the book title and the basis for the filename. In L1 or L2
+mode, append ` (L1)` or ` (L2)` to the book title, for example `History (L1)`
+and `History (L1).epub`. Export the notes
 in that folder and its descendants. Each note becomes one chapter. Subfolders
 appear as groups in the reader’s table of contents.
 
 | Source | Export behavior |
 | --- | --- |
-| Ordinary notes and read-only notes | Include the full document. This includes chapters imported from an EPUB. |
+| Ordinary notes and read-only notes | Include them as chapters. This includes chapters imported from an EPUB. |
 | Saved session summaries and generated folder Summary notes | Include them as chapters. A folder’s own generated Summary note comes first in that folder. |
-| Compressed, L1, and L2 versions | Export one chapter per note using its full document, regardless of the editor’s current text mode. |
+| Note text mode | When the selected mode is L1 or L2, use each note’s L1 or L2 text. A note without that text uses its full document, as the editor shows it. In Full text and Compressed modes, use the full document. |
 | Notes marked **Exclude from summaries** | Include them. The flag controls summary generation. |
 | Generated `ANNOTATIONS` items | Omit the aggregate document. Inline comments in the source note remain in its chapter. |
 | Blank notes | Include a chapter with the note title. |
@@ -64,8 +66,9 @@ Use `NoteItem`, `NotesClient.listNoteItems()`, `NotesClient.getNote()`, and
 flow uses `notes.list` and `notes.get` through the current bridge. It builds
 the EPUB entirely in the webapp.
 
-1. In `NotesTree.tsx`, capture the folder ID and the menu’s epoch. Verify the
-   epoch before starting. Use the same mounted-tree check used for other tree
+1. In `NotesTree.tsx`, capture the folder ID, the menu’s epoch, and the
+   selected note text mode. Pass `state.noteTextMode` from `App.tsx` to
+   `NotesTree` as a new prop. Verify the epoch before starting. Use the same mounted-tree check used for other tree
    actions. Save the open note as described below before the first read.
 2. Read the current item list once. Find the selected folder by ID in that
    list and use its current name. If the folder was deleted, end the export
@@ -75,8 +78,10 @@ the EPUB entirely in the webapp.
    `folder_summary` comes first at each level. Use the flag because an
    ordinary note may be named `Summary` and a generated one may be named
    `Summary (2)`. A saved session summary follows the normal sibling order.
-3. Read notes in this order with `getNote(id, 'full_text')`. Use the
-   same ordered traversal to produce chapter entries and table-of-contents
+3. Read notes in this order with `getNote(id, mode)`. The mode is `l1` or
+   `l2` when that mode is selected, and `full_text` in all other cases.
+   `notes.get` already returns the full document when a note has no text at
+   the selected level. Use the same ordered traversal to produce chapter entries and table-of-contents
    groups. Assign chapter numbers in traversal order. The spine and the
    table of contents therefore agree, including when note titles repeat.
 4. Check the epoch and mounted tree after the save, before and after each
@@ -90,8 +95,7 @@ reads, call the existing `onBeforeCreateNote` save, which runs before
 **New note** and keeps the note editable. **Compress**, **Summarize**, and
 **Make read-only** also save the open note first. If the save fails, the
 existing Retry, Stay, and Discard choice appears. When the save returns
-`false`, end the export with no message. All chapters use the stored full
-document.
+`false`, end the export with no message. All chapters use stored documents.
 
 Folder membership and titles come from the single list read. Each stored body
 comes from its own note read. A later edit can appear if it arrives before that
@@ -179,7 +183,7 @@ EPUB/images/image-0001.png
 | --- | --- |
 | `mimetype` | First local ZIP entry. Store the exact ASCII bytes of `application/epub+zip` with no BOM, newline, compression, or ZIP extra field. |
 | `META-INF/container.xml` | OCF container namespace `urn:oasis:names:tc:opendocument:xmlns:container` and `version="1.0"`. One `rootfiles` element containing a `rootfile` with `full-path="EPUB/book.opf"` and `media-type="application/oebps-package+xml"`. |
-| `EPUB/book.opf` | OPF namespace `http://www.idpf.org/2007/opf`, `version="3.0"`, and `unique-identifier="book-id"`. Include a fresh `urn:uuid:…` in `dc:identifier`, the folder name in `dc:title`, `und` in `dc:language`, and a UTC `dcterms:modified` timestamp with seconds precision. Use the Dublin Core namespace `http://purl.org/dc/elements/1.1/`. |
+| `EPUB/book.opf` | OPF namespace `http://www.idpf.org/2007/opf`, `version="3.0"`, and `unique-identifier="book-id"`. Include a fresh `urn:uuid:…` in `dc:identifier`, the book title from section 1 in `dc:title`, `und` in `dc:language`, and a UTC `dcterms:modified` timestamp with seconds precision. Use the Dublin Core namespace `http://purl.org/dc/elements/1.1/`. |
 | Manifest in `book.opf` | One item per chapter, image, stylesheet, and navigation document. Use unique generated IDs and relative paths. Give `nav.xhtml` `properties="nav"` and use `application/xhtml+xml` for navigation and chapters. |
 | Spine in `book.opf` | One `itemref` per chapter in reading order, pointing to its manifest ID. The reader opens on the first chapter. |
 | `EPUB/nav.xhtml` | XHTML with one `<nav epub:type="toc">` using the EPUB namespace `http://www.idpf.org/2007/ops`. Set the document language to `und`. Add no heading. Each chapter is a relative link in an ordered list. Represent each nonempty subfolder as a list item with a label in `span` followed by its nested ordered list. |
@@ -200,9 +204,10 @@ EPUB import size limit specific to import. [EPUB 3.3 OCF ZIP requirements](https
 
 Build the complete archive before offering it for download. Use a Blob with
 type `application/epub+zip` and an anchor with a `download` filename, following
-the browser-download pattern in `webapp/src/download.ts`. Use the filename rule
-of **Export folder…**: replace the characters that file systems reject with
-hyphens, and append `.epub`. The book metadata keeps the original folder title.
+the browser-download pattern in `webapp/src/download.ts`. Apply the filename
+rule of **Export folder…** to the book title from section 1: replace the
+characters that file systems reject with hyphens, and append `.epub`. The book
+metadata keeps the title before this replacement.
 
 Use the existing `WKDownloadDelegate` in `packaging/macos/main.swift` and
 WebView2 `DownloadStarting` handler in `packaging/windows/main.cpp` to choose
@@ -246,12 +251,15 @@ and transfer errors.
   against the produced file and resolve conformance errors before release.
 - **Contents and ordering.** Cover nested folders, empty branches, a blank
   note, duplicate note names in different folders, a generated `Summary (2)`
-  beside an ordinary `Summary`, and a saved session summary. Check that
-  alternate text versions and the generated `ANNOTATIONS` item are absent
-  and that a summary-only folder exports successfully. Test that unsaved
-  edits in the open note are saved before the reads and appear in the book,
-  that Stay in the save-failure choice ends the export without a download,
-  and that a note open in an alternate version exports its full document.
+  beside an ordinary `Summary`, and a saved session summary. Check that the
+  generated `ANNOTATIONS` item is absent and that a summary-only folder
+  exports successfully. Test that Full text and Compressed modes export full
+  documents, and that L1 and L2 modes export the L1 or L2 text, with the full
+  document for a note that has no text at that level. Check that only L1 and
+  L2 books have ` (L1)` or ` (L2)` in the title and the filename. Test that
+  unsaved edits in the open note are saved before the reads and appear in
+  the book, and that Stay in the save-failure choice ends the export without
+  a download.
 - **Formatting and safety.** Include Unicode and XML-sensitive names and
   text, an XML-invalid control character, code containing markup, a list
   starting at a number other than 1, a comment, a web link, an unsafe link,

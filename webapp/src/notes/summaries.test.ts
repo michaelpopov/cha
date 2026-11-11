@@ -15,6 +15,7 @@ function deferred<T>() {
 const folder = noteItem({ id: 9, kind: 'folder' });
 const alpha = { id: 1, name: 'Alpha * #', has_l1: false, has_l2: false };
 const beta = { id: 2, name: 'Beta', has_l1: true, has_l2: true };
+const heading = (name: string) => ({ type: 'heading', attrs: { level: 1 }, content: [textNode(name)] });
 
 function setup(targets: SummaryTarget[] = [beta, alpha]) {
   const calls = {
@@ -52,9 +53,10 @@ describe('summarizeAndWait', () => {
       [1, 'l1'], [1, 'l2'], [1, 'l3_section'], [2, 'l3_section'],
       [9, 'l3_overview', '# Alpha * #\n\nSection 1\n\n# Beta\n\nSection 2'],
     ]);
-    const heading = (name: string) => ({ type: 'heading', attrs: { level: 1 }, content: [textNode(name)] });
+    expect(test.summaryCommit).toHaveBeenCalledWith(1, 'l2', noteDocument(heading(alpha.name), paragraph('Summary')));
     expect(test.summaryCommit).toHaveBeenLastCalledWith(9, 'l3', noteDocument(
-      paragraph('Overview'), heading(alpha.name), paragraph('Section 1'), heading(beta.name), paragraph('Section 2'),
+      heading(folder.name), paragraph('Overview'),
+      heading(alpha.name), paragraph('Section 1'), heading(beta.name), paragraph('Section 2'),
     ));
     expect(test.progress.mock.calls.map(([value]) => value)).toEqual([
       { message: 'Summarizing “Alpha * #”…', count: 'Note 1 of 2', cancelEnabled: true },
@@ -107,7 +109,7 @@ describe('summarizeAndWait', () => {
     const done = test.start().then(completed);
 
     await vi.waitFor(() => expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(
-      1, 'l2', noteDocument(paragraph('Summary')),
+      1, 'l2', noteDocument(heading(alpha.name), paragraph('Summary')),
     ));
     test.run.requested = true;
     test.run.cancelJob?.();
@@ -141,7 +143,7 @@ describe('summarizeAndWait', () => {
     test.summaryGenerate.mockImplementation(async (_id, part) => part === 'l1' || part === 'l3_section' ? '' : 'Valid');
     expect(await test.start()).toEqual({ targetIds: [1], folderSummaryCommitted: false });
     expect(test.summaryAbandon.mock.calls).toEqual([[1, 'l1'], [9, 'l3']]);
-    expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(1, 'l2', noteDocument(paragraph('Valid')));
+    expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(1, 'l2', noteDocument(heading(alpha.name), paragraph('Valid')));
   });
 
   it('abandons L3 when individually valid documents exceed the combined size limit', async () => {
@@ -160,7 +162,7 @@ describe('summarizeAndWait', () => {
     const changed = new Error('The vault changed');
     const done = test.start();
     await vi.waitFor(() => expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(
-      1, 'l2', noteDocument(paragraph('Summary')),
+      1, 'l2', noteDocument(heading(alpha.name), paragraph('Summary')),
     ));
     level.resolve(markdown);
     test.checkContext.mockImplementation(() => { throw changed; });

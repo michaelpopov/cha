@@ -54,6 +54,8 @@ async function nativeParity() {
     await until('L1 text', () => editor()?.getText() === 'L1 result');
     await mode('L2');
     await until('L2 text', () => editor()?.getText().includes('L2 result'));
+    const [title] = editor().getJSON().content;
+    check(title.type === 'heading' && title.content.map(child => child.text).join('') === 'Single', 'L2 title is missing');
     check(editor().getJSON().content.some(node => node.type === 'bulletList'), 'L2 list was lost');
     check(editor().getText().includes('Key\tValue\n\nColor\tBlue'), 'L2 table did not become plain text rows');
     completed.push('single-note dialog and L1/L2 editor modes');
@@ -67,8 +69,8 @@ async function nativeParity() {
     const first = await summaryText(1);
     const headings = first.getJSON().content.filter(node => node.type === 'heading')
       .map(node => node.content.map(child => child.text).join(''));
-    check(headings.join('|') === 'A First chapter|B Second chapter', 'Unexpected Summary headings: ' + headings);
-    for (const name of headings) {
+    check(headings.join('|') === 'Book|A First chapter|B Second chapter', 'Unexpected Summary headings: ' + headings);
+    for (const name of headings.slice(1)) {
       check(row(name)?.querySelector('[aria-label="Other versions saved"]'), 'Missing version dot for ' + name);
     }
     completed.push('folder progress, Summary headings, and version dots');
