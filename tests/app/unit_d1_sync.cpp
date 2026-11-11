@@ -1,12 +1,14 @@
 #include "app/application.h"
 #include "app/application_config.h"
 #include "app/d1_client.h"
+#include "storage/event_storage.h"
 #include "storage/sync_storage.h"
 #include "storage/note_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "util/path_name.h"
+#include "workspace/prompt_catalog.h"
 
 #include <gtest/gtest.h>
 
@@ -423,7 +425,7 @@ TEST(D1AppWiringTest, DaemonStartupRecreatesQueueAndRetriesPendingWork) {
     EXPECT_EQ(mock.count("INSERT"), 2u); // Existing note and startup prompt initialization.
     const auto initialization = nlohmann::json::parse(mock.sent.back()["record"].get<std::string>());
     EXPECT_EQ(initialization["kind"], "config.edit");
-    EXPECT_EQ(initialization["set"].size(), 5U);
+    EXPECT_EQ(initialization["set"].size(), prompt_catalog.size());
     Database db(database, Database::Mode::read_only);
     EXPECT_FALSE(sync_has_pending(db));
     application->request_shutdown();
@@ -687,6 +689,83 @@ TEST(D1VaultTest, CopyCleansDestinationRetainsSource) {
     EXPECT_TRUE(sync_has_pending(original));
     application->request_shutdown();
     EXPECT_TRUE(application->join_shutdown(5s));
+}
+
+TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
+    test::TestWorkspace source;
+    test::TestWorkspace receiver;
+    const auto source_path = test::import_test_database(source.root());
+    const auto receiver_path = receiver.root() / "workspace.sqlite3";
+    const auto compressed = note_document_from_text("Compressed");
+    const auto l1 = note_document_from_text("Level one");
+    const auto l2 = note_document_from_text("Level two");
+    const auto edited = note_document_from_text("Edited level one");
+    const auto overview = note_document_from_text("Overview");
+    NoteItem folder;
+    NoteItem chapter;
+    {
+        Database db(source_path, Database::Mode::read_write);
+        create_event_history_schema(db);
+        folder = note_create(db, {}, NoteItemKind::folder, "Book");
+        chapter = note_create(db, folder.id, NoteItemKind::note, "Chapter");
+        note_save_compressed(db, chapter.id, "Compressed");
+        note_commit_level(db, chapter.id, 2, l2, "Saved.");
+    }
+    seed_d1(source_path);
+    copy_workspace_session_database(source_path, receiver_path, {}, {});
+    {
+        Database db(receiver_path, Database::Mode::read_write);
+        auto audio = db.prepare(
+            "INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?, 0, 'audio/mp4', ?)",
+            chapter.id);
+        audio.bind_blob(2, "clip");
+        audio.run();
+    }
+    const auto source_command = make_d1_command(source, source_path, "mac");
+    const auto receiver_command = make_d1_command(receiver, receiver_path, "linux");
+
+    for (const bool editing : {false, true}) {
+        MockD1 send;
+        send.other_tables = {"q/Test/linux"};
+        {
+            auto app = Application::open(source_command, {}, {}, send.transport());
+            {
+                Database db(source_path, Database::Mode::read_write);
+                if (editing) {
+                    const auto version = note_get(db, chapter.id, NoteTextMode::l1);
+                    (void)note_save(db, version.document_id, edited, "mac");
+                } else {
+                    note_commit_level(db, chapter.id, 1, l1, "Saved.", "mac");
+                    (void)note_set_summary_excluded(db, chapter.id, true, "mac");
+                    (void)note_commit_folder_summary(db, folder.id, overview, "mac");
+                }
+            }
+            app->request_shutdown();
+            ASSERT_TRUE(app->join_shutdown(5s));
+        }
+
+        MockD1 receive;
+        receive.local_table = "q/Test/linux";
+        receive.other_tables = {"q/Test/mac"};
+        receive.incoming = std::move(send.sent);
+        auto app = Application::open(receiver_command, {}, {}, receive.transport());
+        Database db(receiver_path, Database::Mode::read_only);
+        const auto items = note_list(db);
+        const auto received = std::ranges::find(items, chapter.id, &NoteItem::id);
+        ASSERT_NE(received, items.end());
+        EXPECT_TRUE(received->summary_excluded);
+        EXPECT_EQ(note_get(db, chapter.id, NoteTextMode::l1).document, editing ? edited : l1);
+        EXPECT_EQ(note_get(db, chapter.id, NoteTextMode::l2).document, l2);
+        EXPECT_EQ(note_get(db, chapter.id, NoteTextMode::compressed).document, compressed);
+        EXPECT_EQ(note_audio_info(db, chapter.id)["count"], editing ? 0 : 1);
+        if (!editing) EXPECT_EQ(note_audio_clip(db, chapter.id, 0).bytes, "clip");
+        const auto summary = std::ranges::find(items, true, &NoteItem::folder_summary);
+        ASSERT_NE(summary, items.end());
+        EXPECT_EQ(summary->parent_id, folder.id);
+        EXPECT_EQ(note_get(db, summary->id).document, overview);
+        app->request_shutdown();
+        ASSERT_TRUE(app->join_shutdown(5s));
+    }
 }
 
 TEST(D1AppWiringTest, SwitchFlushesOldVaultAndUsesNewVaultPassword) {

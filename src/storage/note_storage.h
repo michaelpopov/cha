@@ -210,7 +210,8 @@ void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
 [[nodiscard]] bool note_apply_record(
     storage::SqliteDatabase& database, const nlohmann::json& record);
 // Exports the folder, its subfolders, notes and audio to a new SQLite file.
-// Annotations, summary links and forum links are left out.
+// Includes the folder's Summary note link. Annotations, session summary
+// links, and forum links are left out.
 void note_export_folder(storage::SqliteDatabase& database, std::int64_t folder_id,
     const std::filesystem::path& destination);
 // Copies an exported folder into parent_id and returns the new folder ID.

@@ -630,20 +630,33 @@ TEST_F(SyncNotesTest, IncomingCompressionAcceptsBothFormatsAndClearsMissingOrNul
     EXPECT_EQ(records(), outgoing);
 }
 
-TEST_F(SyncNotesTest, FolderImportQueuesOnlyOriginalsWithTheirCompressedContent) {
+TEST_F(SyncNotesTest, FolderImportQueuesOnlyOriginalsWithTheirVersionsAndFlags) {
     const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Export");
     const auto note = note_create(*database_, folder.id, NoteItemKind::note, "Note");
     note_save_compressed(*database_, note.id, "Summary");
+    const auto l1 = text_document("Level one");
+    const auto l2 = text_document("Level two");
+    note_commit_level(*database_, note.id, 1, l1, "Saved.");
+    note_commit_level(*database_, note.id, 2, l2, "Saved.");
+    (void)note_set_summary_excluded(*database_, note.id, true);
+    (void)note_commit_folder_summary(*database_, folder.id, text_document("Overview"));
     const auto file = workspace_.root() / "folder.sqlite3";
     note_export_folder(*database_, folder.id, file);
     const auto parent = note_create(*database_, {}, NoteItemKind::folder, "Imported");
     (void)note_import_folder(*database_, parent.id, file, sync_machine);
     const auto queued = records();
-    ASSERT_EQ(queued.size(), 2u);
+    ASSERT_EQ(queued.size(), 3u);
+    for (const auto& record : queued) EXPECT_EQ(record["kind"], "note.create");
     EXPECT_EQ(queued[0]["path"], nlohmann::json::array({"Imported", "Export"}));
     EXPECT_EQ(queued[1]["path"], nlohmann::json::array({"Imported", "Export", "Note"}));
     const auto bytes = decode_base64(queued[1]["compressed_content"].get<std::string>());
     EXPECT_EQ(note_parse_saved_document(bytes, 0), note_document_from_text("Summary"));
+    EXPECT_EQ(note_parse_saved_document(decode_base64(queued[1]["l1_content"].get<std::string>()), 0), l1);
+    EXPECT_EQ(note_parse_saved_document(decode_base64(queued[1]["l2_content"].get<std::string>()), 0), l2);
+    EXPECT_EQ(queued[1]["summary_excluded"], true);
+    EXPECT_EQ(queued[1]["folder_summary"], false);
+    EXPECT_EQ(queued[2]["path"], nlohmann::json::array({"Imported", "Export", "Summary"}));
+    EXPECT_EQ(queued[2]["folder_summary"], true);
 }
 
 TEST_F(SyncNotesTest, TextSaveSetsFlagAndCollectsLatestContent) {

@@ -1,11 +1,13 @@
 #include "storage/note_storage.h"
 #include "session/summary_prompt_cache.h"
+#include "storage/event_storage.h"
 #include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
+#include "util/base64.h"
 #include "util/logging.h"
 #include "workspace/workspace_config_store.h"
 
@@ -835,11 +837,70 @@ TEST_F(NoteStorageTest, AnnotationReservedNamesScopeImportAndRollback) {
 }
 
 
+TEST_F(NoteStorageTest, IncomingNoteRecordsApplyAndClearSummaryFields) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto original = note_document_from_text("Original");
+    const auto l1 = note_document_from_text("Level one");
+    const auto l2 = note_document_from_text("Level two");
+    const nlohmann::json create = {
+        {"kind", "note.create"}, {"item", "note"}, {"path", {"Book", "Chapter"}},
+        {"content", encode_base64(compressed_content(original.dump()))},
+        {"scroll_top", 0}, {"read_only", false},
+    };
+    auto with_summaries = create;
+    with_summaries["l1_content"] = encode_base64(compressed_content(l1.dump()));
+    with_summaries["l2_content"] = encode_base64(compressed_content(l2.dump()));
+    with_summaries["summary_excluded"] = true;
+    ASSERT_TRUE(note_apply_record(*database_, with_summaries));
+    const auto note = note_list(*database_).back();
+    ASSERT_EQ(note.name, "Chapter");
+    EXPECT_TRUE(note.summary_excluded);
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l1).document, l1);
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l2).document, l2);
+
+    auto update = create;
+    update["kind"] = "note.update";
+    update["l1_content"] = nullptr;
+    ASSERT_TRUE(note_apply_record(*database_, update));
+    const auto cleared = note_find_item(*database_, note.id);
+    ASSERT_TRUE(cleared);
+    EXPECT_FALSE(cleared->has_l1);
+    EXPECT_FALSE(cleared->has_l2);
+    EXPECT_FALSE(cleared->summary_excluded);
+    update["l1_content"] = with_summaries["l1_content"];
+    update["l2_content"] = with_summaries["l2_content"];
+    update["summary_excluded"] = true;
+    update["folder_summary"] = true;
+    ASSERT_TRUE(note_apply_record(*database_, update));
+    EXPECT_TRUE(note_find_item(*database_, note.id)->summary_excluded);
+    EXPECT_FALSE(note_find_item(*database_, note.id)->is_summary);
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l1).document, l1);
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l2).document, l2);
+
+    auto summary = create;
+    summary["path"] = {"Book", "Overview"};
+    summary["folder_summary"] = true;
+    ASSERT_TRUE(note_apply_record(*database_, summary));
+    const auto overview = note_list(*database_).back();
+    EXPECT_EQ(overview.name, "Overview");
+    EXPECT_EQ(overview.parent_id, folder.id);
+    EXPECT_TRUE(overview.folder_summary);
+    EXPECT_FALSE(overview.has_l1);
+    EXPECT_FALSE(overview.has_l2);
+    EXPECT_FALSE(overview.summary_excluded);
+    const auto count = item_count(*database_);
+    summary["path"] = {"Book", "Duplicate"};
+    EXPECT_THROW((void)note_apply_record(*database_, summary), NoteError);
+    EXPECT_EQ(item_count(*database_), count);
+    EXPECT_TRUE(note_find_item(*database_, overview.id)->folder_summary);
+}
+
 class NoteFolderExportTest : public NoteStorageTest {
 protected:
     void SetUp() override {
         NoteStorageTest::SetUp();
         create_folder_store_schema(*database_);
+        create_event_history_schema(*database_);
         target_path_ = workspace_.root() / "target.sqlite3";
         create_empty_workspace_session_database(target_path_);
         target_ = std::make_unique<Database>(target_path_, Database::Mode::read_write);
@@ -874,6 +935,13 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     edited["content"][0]["content"].push_back({{"type", "text"}, {"text", "Revised"}});
     EXPECT_FALSE(note_save(*database_, compressed_id, edited));
     EXPECT_EQ(note_get_text(*database_, seneca.id, true).text, "Short text\\\nRevised");
+    const auto l1 = note_document_from_text("Level one");
+    const auto l2 = note_document_from_text("Level two");
+    note_commit_level(*database_, seneca.id, 1, l1, "Saved.");
+    note_commit_level(*database_, seneca.id, 2, l2, "Saved.");
+    (void)note_set_summary_excluded(*database_, seneca.id, true);
+    const auto summary = note_document_from_text("Overview");
+    (void)note_commit_folder_summary(*database_, letters.id, summary);
     note_save_scroll_position(*database_, seneca.id, 42);
     (void)note_set_read_only(*database_, seneca.id, true);
     const auto first = workspace_.root() / "first.m4a", second = workspace_.root() / "second.m4a";
@@ -901,6 +969,13 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     const auto content = note_get(*target_, copied->id);
     EXPECT_EQ(content.document, document);
     EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::compressed).document, edited);
+    EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::l1).document, l1);
+    EXPECT_EQ(note_get(*target_, copied->id, NoteTextMode::l2).document, l2);
+    EXPECT_TRUE(copied->summary_excluded);
+    const auto copied_summary = target_item(copied_letters->id, "Summary");
+    ASSERT_TRUE(copied_summary);
+    EXPECT_TRUE(copied_summary->folder_summary);
+    EXPECT_EQ(note_get(*target_, copied_summary->id).document, summary);
     EXPECT_EQ(content.scroll_top, 42);
     EXPECT_EQ(note_audio_info(*target_, copied->id)["count"], 2);
     EXPECT_EQ(note_audio_clip(*target_, copied->id, 0).bytes, "first clip");
@@ -917,7 +992,29 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     }
     EXPECT_GT(sources, 0);
 
-    // Convert the source export to the old column layout and import it again.
+    // Convert the file to the layout with only a compressed version row.
+    {
+        Database legacy(file_, Database::Mode::read_write);
+        legacy.execute("DELETE FROM note_items WHERE level<>0");
+        legacy.execute("ALTER TABLE note_items DROP COLUMN level");
+        legacy.execute("ALTER TABLE note_items DROP COLUMN summary_excluded");
+        legacy.execute("ALTER TABLE note_items DROP COLUMN folder_summary");
+    }
+    const auto compressed_parent = note_create(*target_, {}, NoteItemKind::folder, "Older");
+    const auto compressed_root = note_import_folder(*target_, compressed_parent.id, file_);
+    const auto compressed_letters = target_item(compressed_root, "Letters");
+    ASSERT_TRUE(compressed_letters);
+    const auto compressed_note = target_item(compressed_letters->id, "Seneca");
+    ASSERT_TRUE(compressed_note);
+    EXPECT_EQ(note_get(*target_, compressed_note->id, NoteTextMode::compressed).document, edited);
+    EXPECT_FALSE(compressed_note->has_l1);
+    EXPECT_FALSE(compressed_note->has_l2);
+    EXPECT_FALSE(compressed_note->summary_excluded);
+    const auto compressed_summary = target_item(compressed_letters->id, "Summary");
+    ASSERT_TRUE(compressed_summary);
+    EXPECT_FALSE(compressed_summary->folder_summary);
+
+    // Convert the file to the oldest column layout.
     {
         Database legacy(file_, Database::Mode::read_write);
         legacy.execute("DELETE FROM note_items WHERE compressed=1");
@@ -951,7 +1048,8 @@ TEST_F(NoteFolderExportTest, InvalidCompressedDocumentRollsBackImport) {
         Database exported(file_, Database::Mode::read_write);
         exported.execute("UPDATE note_items SET content_json=X'00' WHERE compressed=1");
     }
-    EXPECT_THROW((void)note_import_folder(*target_, {}, file_), NoteError);
+    expect_note_error(NoteFailure::invalid, "This file is not a CHA folder export.",
+        [&] { (void)note_import_folder(*target_, {}, file_); });
     EXPECT_EQ(item_count(*target_), 0);
 }
 
@@ -967,6 +1065,28 @@ TEST_F(NoteFolderExportTest, RejectsCompressedRowWithoutAnOriginalNoteParent) {
     expect_note_error(NoteFailure::invalid, "This file is not a CHA folder export.",
         [&] { (void)note_import_folder(*target_, {}, file_); });
     EXPECT_EQ(item_count(*target_), 0);
+}
+
+TEST_F(NoteFolderExportTest, RejectsInvalidVersionRowsAndSummaryLinks) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto chapter = note_create(*database_, folder.id, NoteItemKind::note, "Chapter");
+    note_save_compressed(*database_, chapter.id, "Compressed");
+    note_commit_level(*database_, chapter.id, 1, note_document_from_text("Level one"), "Saved.");
+    (void)note_commit_folder_summary(*database_, folder.id, note_document_from_text("Overview"));
+    for (const auto sql : {
+             "UPDATE note_items SET level=3 WHERE level=1",
+             "UPDATE note_items SET level=0 WHERE level=1",
+             "UPDATE note_items SET folder_summary=1 WHERE name='Chapter' AND compressed=0",
+             "UPDATE note_items SET folder_summary=1 WHERE level=1",
+             "UPDATE note_items SET parent_id=(SELECT id FROM note_items WHERE folder_summary=1) "
+             "WHERE name='Chapter' AND compressed=0",
+         }) {
+        note_export_folder(*database_, folder.id, file_);
+        Database(file_, Database::Mode::read_write).execute(sql);
+        expect_note_error(NoteFailure::invalid, "This file is not a CHA folder export.",
+            [&] { (void)note_import_folder(*target_, {}, file_); });
+        EXPECT_EQ(item_count(*target_), 0);
+    }
 }
 
 TEST_F(NoteFolderExportTest, ImportRejectsDuplicateNamesAndOtherFilesWithoutChanges) {

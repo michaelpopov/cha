@@ -2090,6 +2090,7 @@ TEST_F(
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PromptInitializationIsAtomicAndRecordsStartupSync) {
+    ASSERT_EQ(prompt_catalog.size(), 9u);
     {
         Database handle(database(), Database::Mode::read_write);
         handle.prepare("INSERT INTO config VALUES (?1, ?2)", "system/keys/api_key_1/config.toml",
@@ -2129,6 +2130,41 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PromptInitializationIsAtomicAndRecordsSt
     EXPECT_EQ(record["kind"], "config.edit");
     EXPECT_EQ(record["set"].size(), prompt_catalog.size());
     EXPECT_EQ(config_contents(database()), initialized);
+}
+
+TEST_F(RuntimeWorkspaceConfigStoreTest, SummaryPromptsFallBackInAnExistingVaultAndSaveCreatesARow) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        for (const auto id : {"note-compression", "session-short-summary", "session-long-summary",
+                 "page-formatting", "youtube-transcript"}) {
+            const auto* entry = find_prompt_catalog_entry(id);
+            ASSERT_NE(entry, nullptr);
+            handle.prepare("INSERT INTO config VALUES (?1, ?2)", entry->path(), "Saved prompt").run();
+        }
+    }
+    const auto original = config_contents(database());
+    const auto store = open_store();
+    const auto snapshot = store->snapshot();
+    EXPECT_EQ(snapshot->prompts().size(), prompt_catalog.size());
+    EXPECT_EQ(snapshot->find_prompt("note-compression")->text, "Saved prompt");
+    for (const auto id : {"summary-l1", "summary-l2", "summary-l3-section", "summary-l3-overview"}) {
+        SCOPED_TRACE(id);
+        const auto* entry = find_prompt_catalog_entry(id);
+        const auto* prompt = snapshot->find_prompt(id);
+        ASSERT_NE(entry, nullptr);
+        ASSERT_NE(prompt, nullptr);
+        EXPECT_FALSE(prompt->text.empty());
+        EXPECT_EQ(prompt->text, normalize_prompt_text(entry->embedded_text()));
+    }
+    EXPECT_NE(find_prompt_catalog_entry("summary-l1")->embedded_text,
+        prompt_catalog.front().embedded_text);
+    EXPECT_EQ(config_contents(database()), original);
+
+    store->apply_prompt_text("summary-l2", "Custom L2 prompt");
+    auto expected = original;
+    expected.emplace("system/prompts/summary-l2.md", "Custom L2 prompt");
+    EXPECT_EQ(config_contents(database()), expected);
+    EXPECT_EQ(store->snapshot()->find_prompt("summary-l2")->text, "Custom L2 prompt");
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, PromptFallbackAndSavePreserveRawRowsAndSnapshots) {

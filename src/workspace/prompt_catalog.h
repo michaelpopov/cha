@@ -19,7 +19,7 @@ struct PromptCatalogEntry {
     [[nodiscard]] std::string path() const;
 };
 
-extern const std::array<PromptCatalogEntry, 5> prompt_catalog;
+extern const std::array<PromptCatalogEntry, 9> prompt_catalog;
 [[nodiscard]] const PromptCatalogEntry* find_prompt_catalog_entry(std::string_view id);
 [[nodiscard]] std::string normalize_prompt_text(std::string_view text);
 [[nodiscard]] std::vector<ConfigFile> default_prompt_config_files();

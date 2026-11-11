@@ -377,7 +377,7 @@ async function nativeParity() {
       await click('Prompts', settingsPage);
       const prompts = await screen('Prompts');
       await until('prompt list', () => button('Note compression', prompts));
-      check(prompts.querySelectorAll('.cha-settings-row').length === 5, 'Expected five predefined prompts');
+      check(prompts.querySelectorAll('.cha-settings-row').length === 9, 'Expected nine predefined prompts');
       await click('Note compression', prompts);
       const promptPage = await screen('Note compression');
       const promptText = await until('literal prompt', () => promptPage.querySelector('.cha-prompt-text'));

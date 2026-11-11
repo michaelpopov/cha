@@ -182,7 +182,7 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
         EXPECT_NO_THROW(validate_workspace_session_contents(database));
         const std::vector<ConfigFile> configuration =
             read_workspace_config_files(database);
-        ASSERT_EQ(configuration.size(), 7U);
+        ASSERT_EQ(configuration.size(), prompt_catalog.size() + 2);
         EXPECT_EQ(configuration[0].name, "system/assistant/character.toml");
         EXPECT_EQ(
             configuration.back().name,

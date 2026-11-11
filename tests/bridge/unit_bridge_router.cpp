@@ -247,8 +247,13 @@ TEST_F(BridgeRouterTest, PromptMethodsUseExactParametersAndVaultEpoch) {
     EXPECT_EQ(call("prompt.list")["result"], fixture["list"]);
     const auto original = call("prompt.get", fixture["get"])["result"];
     EXPECT_FALSE(original["text"].get<std::string>().empty());
+    const nlohmann::json l1_request{{"prompt_id", "summary-l1"}};
+    const auto l1 = call("prompt.get", l1_request)["result"];
+    ASSERT_EQ(l1["id"], "summary-l1");
+    EXPECT_FALSE(l1["text"].get<std::string>().empty());
     EXPECT_EQ(call("prompt.update", fixture["update"])["result"], fixture["detail"]);
     EXPECT_EQ(call("prompt.get", fixture["get"])["result"], fixture["detail"]);
+    EXPECT_EQ(call("prompt.get", l1_request)["result"], l1);
     for (const auto method : {"prompt.get", "prompt.update"}) {
         nlohmann::json params{{"prompt_id", "unknown-prompt"}};
         if (std::string_view(method) == "prompt.update") params["text"] = "";

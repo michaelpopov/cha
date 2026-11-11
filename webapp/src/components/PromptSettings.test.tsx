@@ -27,6 +27,10 @@ describe('Prompt settings', () => {
     const navigate = vi.fn();
     const listPrompts = vi.fn().mockRejectedValueOnce(new Error()).mockResolvedValueOnce([
       { id: detail.id, display_name: detail.display_name },
+      { id: 'summary-l1', display_name: 'Summary L1' },
+      { id: 'summary-l2', display_name: 'Summary L2' },
+      { id: 'summary-l3-section', display_name: 'Summary L3 section' },
+      { id: 'summary-l3-overview', display_name: 'Summary L3 overview' },
       { id: 'session-short-summary', display_name: 'Short session summary' },
       { id: 'session-long-summary', display_name: 'Long session summary' },
       { id: 'page-formatting', display_name: 'Page formatting' },
@@ -36,7 +40,8 @@ describe('Prompt settings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     await screen.findByRole('button', { name: detail.display_name });
     expect(screen.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Settings', 'Note compression', 'Short session summary', 'Long session summary',
+      'Settings', 'Note compression', 'Summary L1', 'Summary L2', 'Summary L3 section',
+      'Summary L3 overview', 'Short session summary', 'Long session summary',
       'Page formatting', 'YouTube transcript formatting',
     ]);
     fireEvent.click(screen.getByRole('button', { name: detail.display_name }));

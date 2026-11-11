@@ -7,13 +7,21 @@
 namespace cha {
 
 std::string_view embedded_compression_prompt();
+std::string_view embedded_summary_l1_prompt();
+std::string_view embedded_summary_l2_prompt();
+std::string_view embedded_summary_l3_section_prompt();
+std::string_view embedded_summary_l3_overview_prompt();
 std::string_view embedded_session_short_summary_prompt();
 std::string_view embedded_session_long_summary_prompt();
 std::string_view embedded_page_formatting_prompt();
 std::string_view embedded_youtube_transcript_prompt();
 
-const std::array<PromptCatalogEntry, 5> prompt_catalog{{
+const std::array<PromptCatalogEntry, 9> prompt_catalog{{
     {"note-compression", "Note compression", embedded_compression_prompt},
+    {"summary-l1", "Summary L1", embedded_summary_l1_prompt},
+    {"summary-l2", "Summary L2", embedded_summary_l2_prompt},
+    {"summary-l3-section", "Summary L3 section", embedded_summary_l3_section_prompt},
+    {"summary-l3-overview", "Summary L3 overview", embedded_summary_l3_overview_prompt},
     {"session-short-summary", "Short session summary", embedded_session_short_summary_prompt},
     {"session-long-summary", "Long session summary", embedded_session_long_summary_prompt},
     {"page-formatting", "Page formatting", embedded_page_formatting_prompt},

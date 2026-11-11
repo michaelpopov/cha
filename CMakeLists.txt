@@ -279,6 +279,10 @@ add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/session_short_summary_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/session_long_summary_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/compression_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l1_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l2_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l3_section_prompt.cpp
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l3_overview_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/youtube_transcript_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/page_formatting_prompt.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
@@ -410,6 +414,34 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
     COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/compression-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/compression_prompt.cpp -DSYMBOL=embedded_compression_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
     DEPENDS resources/compression-prompt.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l1_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/summary-l1-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l1_prompt.cpp -DSYMBOL=embedded_summary_l1_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/summary-l1-prompt.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l2_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/summary-l2-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l2_prompt.cpp -DSYMBOL=embedded_summary_l2_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/summary-l2-prompt.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l3_section_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/summary-l3-section-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l3_section_prompt.cpp -DSYMBOL=embedded_summary_l3_section_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/summary-l3-section-prompt.md cmake/embed_text.cmake
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l3_overview_prompt.cpp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/resources/summary-l3-overview-prompt.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/summary_l3_overview_prompt.cpp -DSYMBOL=embedded_summary_l3_overview_prompt -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
+    DEPENDS resources/summary-l3-overview-prompt.md cmake/embed_text.cmake
     VERBATIM)
 
 add_custom_command(
