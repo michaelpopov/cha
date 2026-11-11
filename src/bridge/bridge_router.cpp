@@ -60,18 +60,6 @@ std::optional<std::string> nullable_string(
     return value;
 }
 
-std::uint64_t require_safe_id(const nlohmann::json& params, std::string_view key) {
-    const std::string name(key);
-    if (!params.contains(name)) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    const auto value = as_safe_uint(params[name]);
-    if (!value || *value == 0) {
-        throw std::invalid_argument("The request was not valid.");
-    }
-    return *value;
-}
-
 VoiceSynthesis parse_synthesis_fields(const nlohmann::json& params) {
     return decode_voice_synthesis(params);
 }
@@ -84,6 +72,7 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_import:
     case Method::vault_export:
     case Method::vault_r2_download:
+    case Method::notes_summary_generate:
     case Method::session_summary_generate:
     case Method::notes_read_page:
     case Method::cloud_store_list:
@@ -1450,6 +1439,32 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = app::media_resource_json(resource.resource_id, resource.mime_type, resource.byte_length);
                 break;
             }
+            case Method::notes_summary_generate: {
+                const auto name = require_string(params, "part");
+                app::SummaryPart part;
+                if (name == "l1") part = app::SummaryPart::l1;
+                else if (name == "l2") part = app::SummaryPart::l2;
+                else if (name == "l3_section") part = app::SummaryPart::l3_section;
+                else if (name == "l3_overview") part = app::SummaryPart::l3_overview;
+                else throw std::invalid_argument("The summary part is not valid.");
+
+                std::string source;
+                if (part == app::SummaryPart::l3_overview) {
+                    require_only_keys(params, {"id", "part", "text"});
+                    source = require_string(params, "text");
+                    if (source.empty()) throw std::invalid_argument("The overview text must not be empty.");
+                } else {
+                    require_only_keys(params, {"id", "part"});
+                }
+                start_background(connection_id, id, application.generate_summary_part(connection_id,
+                    static_cast<std::int64_t>(require_safe_id(params, "id")), part, std::move(source), epoch), true);
+                return;
+            }
+            case Method::notes_summary_cancel:
+                require_only_keys(params, {});
+                application.cancel_summary_parts(connection_id, epoch);
+                result = nlohmann::json::object();
+                break;
             case Method::notes_compress_start:
                 if (params.contains("skip_ineligible")) require_only_keys(params, {"id", "skip_ineligible"});
                 else require_only_keys(params, {"id"});

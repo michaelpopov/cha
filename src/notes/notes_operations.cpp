@@ -8,6 +8,7 @@
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
+#include "util/text_file.h"
 #include "workspace/builtins.h"
 
 #include <algorithm>
@@ -270,6 +271,89 @@ std::string summary_target_label(const FullSessionId& identity, std::string_view
     return "“" + std::string(label) + "” (" + identity.forum_id + "/" + identity.session_id + ")";
 }
 
+constexpr std::string_view summary_cancelled = "Summary generation was cancelled.";
+constexpr std::string_view summary_start_failed = "Could not start summary generation. Try again.";
+constexpr std::string_view missing_summary_target = "That note or folder was not found.";
+
+void require_note_answer(const NotePromptAnswer& answer, const std::atomic_bool& cancel) {
+    const auto& result = answer.result;
+    if (cancel.load() || result.outcome == GenerationOutcome::cancelled)
+        throw ApplicationError(ErrorCode::operation_cancelled, std::string(summary_cancelled));
+    if (result.refused) throw ApplicationError(ErrorCode::internal_error, "The provider refused this request.");
+    if (result.outcome != GenerationOutcome::completed) {
+        if (result.message == "Prompt exceeds the model's context window.")
+            throw ApplicationError(ErrorCode::invalid_argument, result.message);
+        const std::initializer_list<std::string_view> safe_reasons{
+            "HTTP request failed: idle timeout reached", "HTTP request failed: Timeout was reached",
+            "Provider quota or billing limit exceeded.", "Provider authentication or permission was rejected.",
+            "Provider rate limit exceeded.",
+        };
+        const bool safe = std::find(safe_reasons.begin(), safe_reasons.end(), result.message) != safe_reasons.end();
+        throw ApplicationError(ErrorCode::internal_error, safe ? result.message
+            : "The provider request failed. Check the connection and provider settings, then try again.");
+    }
+    if (!result.finish_reason.empty() && result.finish_reason != "stop" && result.finish_reason != "end_turn")
+        throw ApplicationError(ErrorCode::internal_error, "The provider returned an incomplete result.");
+    if (trim_view(answer.text).empty()) throw ApplicationError(ErrorCode::internal_error, "The provider returned no text.");
+    if (answer.text.size() > note_document_byte_limit)
+        throw ApplicationError(ErrorCode::body_too_large, "The result exceeds 12 MiB.");
+}
+
+bool folder_summary_part(SummaryPart part) {
+    return part == SummaryPart::l3 || part == SummaryPart::l3_overview;
+}
+
+std::string_view summary_part_label(SummaryPart part) {
+    switch (part) {
+    case SummaryPart::l1: return "L1";
+    case SummaryPart::l2: return "L2";
+    case SummaryPart::l3_section: return "L3 section";
+    case SummaryPart::l3_overview: return "L3 overview";
+    case SummaryPart::l3: return "Summary note";
+    }
+    throw ApplicationError(ErrorCode::invalid_argument);
+}
+
+std::string note_summary_target(std::int64_t id, std::string_view name, bool folder) {
+    if (name.empty()) return std::string(folder ? "folder " : "note ") + std::to_string(id);
+    if (!folder) return compression_target(id, name);
+    return "“" + std::string(name) + "” (folder " + std::to_string(id) + ")";
+}
+
+void record_note_summary_failure(WorkspaceConfigStore& store, SummaryPart part,
+    std::string_view target, std::string_view reason, bool conversion_failed = false) noexcept {
+    try {
+        std::string message = part == SummaryPart::l3 ? "Could not save the " : "Could not make ";
+        if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview) message += "the ";
+        message.append(summary_part_label(part)).append(" for ").append(target).append(": ").append(reason);
+        if (!message.ends_with('.')) message += '.';
+        if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview
+            || (part == SummaryPart::l3 && conversion_failed))
+            message += " The Summary note was not changed.";
+        store.append_event(EventSeverity::error, message);
+    } catch (...) { log_warn("Could not record note summary outcome."); }
+}
+
+void require_summary_target(const NoteItem& item, bool folder) {
+    if (folder) {
+        if (item.kind != NoteItemKind::folder)
+            throw ApplicationError(ErrorCode::invalid_argument, "That item is not a folder.");
+        if (item.forum_id) throw ApplicationError(ErrorCode::invalid_argument, "This folder is managed by CHA.");
+    } else if (item.kind != NoteItemKind::note || item.is_summary) {
+        throw ApplicationError(ErrorCode::invalid_argument, "That item is not a note.");
+    }
+}
+
+std::string_view summary_prompt(SummaryPart part) {
+    switch (part) {
+    case SummaryPart::l1: return "summary-l1";
+    case SummaryPart::l2: return "summary-l2";
+    case SummaryPart::l3_section: return "summary-l3-section";
+    case SummaryPart::l3_overview: return "summary-l3-overview";
+    default: throw ApplicationError(ErrorCode::invalid_argument);
+    }
+}
+
 void require_summary_answer(const NotePromptAnswer& answer, const std::atomic_bool& cancel) {
     const auto& result = answer.result;
     if (cancel.load() || result.outcome == GenerationOutcome::cancelled)
@@ -502,6 +586,208 @@ void NotesService::Impl::retire_deleted_compressions_locked(const std::vector<st
             retire_compression(id, control, epoch, EventSeverity::info, "Compression cancelled: note deleted.");
         }
     }
+}
+
+nlohmann::json NotesService::summary_plan(std::int64_t id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try {
+        const auto item = impl_->store->get_note_item(id);
+        if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
+        const bool folder = item->kind == NoteItemKind::folder;
+        require_summary_target(*item, folder);
+        if (!folder) {
+            const auto bytes = impl_->store->get_note_text(id).text.size();
+            if (bytes < note_compression_min_bytes)
+                throw ApplicationError(ErrorCode::invalid_argument, "This note is under 4 KiB and does not need summaries.");
+            if (bytes > text_file_byte_limit)
+                throw ApplicationError(ErrorCode::invalid_argument,
+                    "This note is over 256 KiB. Summaries are limited to 256 KiB of text.");
+        }
+        const auto workspace = impl_->store->snapshot();
+        (void)prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+            *workspace->find_prompt("summary-l1"));
+
+        auto notes = nlohmann::json::array();
+        const auto add_target = [&](const NoteItem& note) {
+            notes.push_back({{"id", note.id}, {"name", note.name}, {"has_l1", note.has_l1}, {"has_l2", note.has_l2}});
+        };
+        if (!folder) {
+            add_target(*item);
+        } else {
+            for (const auto& note : impl_->store->list_note_items()) {
+                if (note.parent_id == id && note.kind == NoteItemKind::note && !note.is_summary && !note.summary_excluded
+                    && impl_->store->get_note_text(note.id).text.size() >= note_compression_min_bytes)
+                    add_target(note);
+            }
+        }
+        return {{"notes", std::move(notes)}};
+    } catch (const NoteError& error) { rethrow_note(error); }
+}
+
+std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string connection_id,
+    std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    const auto prompt = summary_prompt(part);
+    const bool folder = folder_summary_part(part);
+    auto target = note_summary_target(id, "", folder);
+    SharedCharacterDefinition definition;
+    try {
+        const auto item = impl_->store->get_note_item(id);
+        if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
+        target = note_summary_target(id, item->name, folder);
+        require_summary_target(*item, folder);
+        if (folder) {
+            if (text.empty()) throw ApplicationError(ErrorCode::invalid_argument, "The overview text must not be empty.");
+            if (text.size() > note_document_byte_limit)
+                throw ApplicationError(ErrorCode::body_too_large, "The overview text exceeds 12 MiB.");
+        } else {
+            const bool section = part == SummaryPart::l3_section;
+            text = impl_->store->get_note_text(id, section).text;
+            if (text.size() > text_file_byte_limit) {
+                std::string reason = "the note has more than 256 KiB of text";
+                if (section && item->has_compressed) reason = "the compressed text has more than 256 KiB";
+                else if (section) reason += ". Compress the note, then run Summarize again";
+                throw ApplicationError(ErrorCode::invalid_argument, std::move(reason));
+            }
+        }
+        const auto workspace = impl_->store->snapshot();
+        definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys, *workspace->find_prompt(prompt));
+    } catch (const NoteError& error) {
+        record_note_summary_failure(*impl_->store, part, target, error.what());
+        rethrow_note(error);
+    } catch (const ApplicationError& error) {
+        record_note_summary_failure(*impl_->store, part, target, error.what());
+        throw;
+    } catch (...) {
+        record_note_summary_failure(*impl_->store, part, target, summary_start_failed);
+        throw;
+    }
+
+    auto reply = std::make_shared<OperationReply>();
+    auto call = std::make_shared<Impl::SummaryCall>();
+    call->connection_id = std::move(connection_id);
+    impl_->summary_calls.push_back(call);
+    try {
+        if (impl_->background_jobs.launch(
+            [owner = impl_.get(), call, reply, epoch, part, target,
+             definition = std::move(definition), text = std::move(text)](std::atomic_bool& cancel) {
+                NotePromptAnswer answer;
+                ErrorCode code = ErrorCode::internal_error;
+                std::string failure;
+                try {
+                    for (unsigned retries = 0;; ++retries) {
+                        std::unique_ptr<ProviderClient> client;
+                        {
+                            const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                            if (cancel.load())
+                                throw ApplicationError(ErrorCode::operation_cancelled, std::string(summary_cancelled));
+                            owner->require_admitted(epoch);
+                            client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys);
+                        }
+                        answer = collect_note_prompt(*client, definition, text, cancel);
+                        if (!answer.result.retryable || cancel.load() || retries == 3) break;
+                        const auto seconds = 10 << retries;
+                        if (owner->settings.test_hooks.note_compression_wait) owner->settings.test_hooks.note_compression_wait(seconds);
+                        else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                    require_note_answer(answer, cancel);
+                } catch (const ApplicationError& error) { code = error.code; failure = error.what(); }
+                catch (...) { failure = "Check the Notes provider settings and try again."; }
+
+                {
+                    const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                    owner->remove_summary_call(call);
+                    if (owner->published_epoch.load() != epoch) {
+                        code = ErrorCode::vault_changed;
+                        failure = "The vault changed.";
+                    } else if (cancel.load() || code == ErrorCode::operation_cancelled) {
+                        code = ErrorCode::operation_cancelled;
+                        failure = summary_cancelled;
+                        try {
+                            owner->store->append_event(EventSeverity::info,
+                                std::string(summary_part_label(part)) + " cancelled for " + target + ".");
+                        } catch (...) { log_warn("Could not record note summary cancellation."); }
+                    } else if (!failure.empty()) {
+                        record_note_summary_failure(*owner->store, part, target, failure);
+                    }
+                }
+                if (failure.empty()) reply->complete({{"markdown", std::move(answer.text)}});
+                else reply->fail(code, failure);
+            }, call->cancel)) return reply;
+    } catch (...) {
+        // Launch can throw if the worker thread cannot be created.
+    }
+    impl_->remove_summary_call(call);
+    record_note_summary_failure(*impl_->store, part, target, summary_start_failed);
+    throw ApplicationError(ErrorCode::command_queue_full, std::string(summary_start_failed));
+}
+
+void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
+    const nlohmann::json& document, std::uint64_t epoch) {
+    std::unique_lock lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
+        throw ApplicationError(ErrorCode::invalid_argument);
+    const bool folder = folder_summary_part(part);
+    auto target = note_summary_target(id, "", folder);
+    NoteItem saved;
+    try {
+        if (const auto item = impl_->store->get_note_item(id)) target = note_summary_target(id, item->name, folder);
+        if (!folder) {
+            impl_->store->commit_note_level(id, part == SummaryPart::l1 ? 1 : 2, document,
+                std::string(summary_part_label(part)) + " ready for " + target + ".");
+            return;
+        }
+        saved = impl_->store->commit_folder_summary(id, document);
+    } catch (const NoteError& error) {
+        record_note_summary_failure(*impl_->store, part, target, error.what());
+        rethrow_note(error);
+    }
+    try { impl_->interrupt_abandoned_audio(); }
+    catch (...) { log_warn("Could not interrupt abandoned summary audio."); }
+    try {
+        const auto notify = impl_->note_audio_changed;
+        lifecycle.unlock();
+        if (notify) notify(saved.id, epoch);
+    } catch (...) { log_warn("Could not deliver summary audio notification."); }
+}
+
+void NotesService::abandon_summary_part(std::int64_t id, SummaryPart part, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
+        throw ApplicationError(ErrorCode::invalid_argument);
+    try {
+        const auto item = impl_->store->get_note_item(id);
+        if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
+        record_note_summary_failure(*impl_->store, part, note_summary_target(id, item->name, folder_summary_part(part)),
+            "the result could not be converted to a note", true);
+    } catch (const NoteError& error) { rethrow_note(error); }
+}
+
+void NotesService::Impl::remove_summary_call(const std::shared_ptr<SummaryCall>& call) {
+    std::erase(summary_calls, call);
+}
+
+void NotesService::Impl::cancel_summary_calls(std::optional<std::string_view> connection_id) {
+    for (const auto& call : summary_calls)
+        if (!connection_id || call->connection_id == *connection_id) call->cancel->store(true);
+}
+
+void NotesService::cancel_summary_parts(std::string_view connection_id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    impl_->cancel_summary_calls(connection_id);
+}
+
+NoteItem NotesService::set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    try { return impl_->store->set_note_summary_excluded(id, excluded); }
+    catch (const NoteError& error) { rethrow_note(error); }
 }
 
 std::shared_ptr<OperationReply> NotesService::generate_session_summary(
@@ -787,6 +1073,7 @@ void NotesService::Impl::retire_summary(const FullSessionId& identity, const std
 }
 
 void NotesService::cancel_summaries_locked(std::optional<std::string_view> connection_id) {
+    impl_->cancel_summary_calls(connection_id);
     for (auto it = impl_->summaries.begin(); it != impl_->summaries.end();) {
         const auto [identity, run] = *it++;
         if (!connection_id || run->connection_id == *connection_id)

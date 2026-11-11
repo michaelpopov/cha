@@ -6,6 +6,8 @@
 
 namespace cha::app {
 
+enum class SummaryPart { l1, l2, l3_section, l3_overview, l3 };
+
 using NoteAudioChanged = std::function<void(std::int64_t, std::uint64_t)>;
 
 struct FolderStoreChoiceView {

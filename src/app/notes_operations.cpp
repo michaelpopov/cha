@@ -26,6 +26,32 @@ void Application::set_note_compression_changed(NoteAudioChanged callback) {
     impl_->notes->set_note_compression_changed(std::move(callback));
 }
 
+nlohmann::json Application::summary_plan(std::int64_t id, std::uint64_t epoch) {
+    return impl_->notes->summary_plan(id, epoch);
+}
+
+std::shared_ptr<OperationReply> Application::generate_summary_part(std::string connection_id,
+    std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch) {
+    return impl_->notes->generate_summary_part(std::move(connection_id), id, part, std::move(text), epoch);
+}
+
+void Application::commit_summary_part(std::int64_t id, SummaryPart part,
+    const nlohmann::json& document, std::uint64_t epoch) {
+    impl_->notes->commit_summary_part(id, part, document, epoch);
+}
+
+void Application::abandon_summary_part(std::int64_t id, SummaryPart part, std::uint64_t epoch) {
+    impl_->notes->abandon_summary_part(id, part, epoch);
+}
+
+void Application::cancel_summary_parts(std::string_view connection_id, std::uint64_t epoch) {
+    impl_->notes->cancel_summary_parts(connection_id, epoch);
+}
+
+NoteItem Application::set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch) {
+    return impl_->notes->set_note_summary_excluded(id, excluded, epoch);
+}
+
 nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, bool skip_ineligible) {
     return impl_->notes->compress_note(id, epoch, skip_ineligible);
 }

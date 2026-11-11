@@ -3887,6 +3887,409 @@ TEST_F(BridgeRouterTest, SummaryCanGenerateWhileBulkCompressionWaitsAndRejectsIn
     blocked.join();
 }
 
+TEST_F(BridgeRouterTest, NoteSummaryPlanChecksSizeAndFiltersFolderTargets) {
+    bootstrap_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Book", epoch_);
+    const auto nested = application_->create_note_item(folder.id, NoteItemKind::folder, "Nested", epoch_);
+    const auto create = [&](std::int64_t parent, std::string name, std::size_t size) {
+        auto note = application_->create_note_item(parent, NoteItemKind::note, std::move(name), epoch_);
+        application_->save_note(note.id, text_document(std::string(size, 'a')), epoch_);
+        return note.id;
+    };
+    const auto short_note = create(folder.id, "Short", 4095);
+    const auto min_note = create(folder.id, "Minimum", 4096);
+    const auto max_note = create(folder.id, "Maximum", 262144);
+    const auto long_note = create(folder.id, "Long", 262145);
+    const auto excluded = create(folder.id, "Excluded", 4096);
+    create(nested.id, "Descendant", 4096);
+    ASSERT_TRUE(call("notes.setSummaryExcluded", {{"id", excluded}, {"excluded", true}})["ok"]);
+    const auto plan = [&](std::int64_t id) { return call("notes.summaryPlan", {{"id", id}}); };
+    expect_note_error(plan(short_note), "invalid_argument", "This note is under 4 KiB and does not need summaries.");
+    expect_note_error(plan(long_note), "invalid_argument",
+        "This note is over 256 KiB. Summaries are limited to 256 KiB of text.");
+    expect_note_error(plan(min_note), "invalid_argument", "Select a compression provider in Notes settings.");
+    expect_note_error(plan(folder.id), "invalid_argument", "Select a compression provider in Notes settings.");
+    expect_note_error(plan(987654), "not_found", "That note or folder was not found.");
+
+    (void)application_->save_notes_settings({"test"}, epoch_);
+    ASSERT_TRUE(call("notes.summaryCommit", {{"id", min_note}, {"part", "l1"}, {"document", text_document("L1")}})["ok"]);
+    ASSERT_TRUE(call("notes.summaryCommit", {{"id", max_note}, {"part", "l2"}, {"document", text_document("L2")}})["ok"]);
+    ASSERT_TRUE(call("notes.summaryCommit",
+        {{"id", folder.id}, {"part", "l3"}, {"document", text_document(std::string(4096, 's'))}})["ok"]);
+    const auto events_before = call("events.list")["result"];
+    const auto items = application_->list_note_items(epoch_);
+    const auto summary = std::ranges::find_if(items, [](const auto& item) { return item.folder_summary; });
+    ASSERT_NE(summary, items.end());
+    expect_note_error(plan(summary->id), "invalid_argument", "That item is not a note.");
+    const auto managed = std::ranges::find_if(items, [](const auto& item) { return item.forum_id.has_value(); });
+    ASSERT_NE(managed, items.end());
+    expect_note_error(plan(managed->id), "invalid_argument", "This folder is managed by CHA.");
+
+    const nlohmann::json minimum{{"id", min_note}, {"name", "Minimum"}, {"has_l1", true}, {"has_l2", false}};
+    const nlohmann::json maximum{{"id", max_note}, {"name", "Maximum"}, {"has_l1", false}, {"has_l2", true}};
+    const nlohmann::json large{{"id", long_note}, {"name", "Long"}, {"has_l1", false}, {"has_l2", false}};
+    EXPECT_EQ(plan(min_note)["result"]["notes"], nlohmann::json::array({minimum}));
+    EXPECT_EQ(plan(max_note)["result"]["notes"], nlohmann::json::array({maximum}));
+    EXPECT_EQ(plan(excluded)["result"]["notes"].size(), 1U);
+    EXPECT_EQ(plan(folder.id)["result"], (nlohmann::json{{"notes", nlohmann::json::array({minimum, maximum, large})}}));
+    EXPECT_EQ(call("events.list")["result"], events_before);
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryMethodsRequireExactKeysPartsAndEpoch) {
+    bootstrap_epoch();
+    using Json = nlohmann::json;
+    const auto note = compression_source(*application_, epoch_);
+    const auto id = note.id;
+    const std::pair<std::string_view, Json> requests[] = {
+        {"notes.summaryPlan", {{"id", id}}},
+        {"notes.summaryGenerate", {{"id", id}, {"part", "l1"}}},
+        {"notes.summaryCommit", {{"id", id}, {"part", "l1"}, {"document", text_document("L1")}}},
+        {"notes.summaryAbandon", {{"id", id}, {"part", "l2"}}},
+        {"notes.summaryCancel", Json::object()},
+        {"notes.setSummaryExcluded", {{"id", id}, {"excluded", true}}},
+    };
+    const auto invalid = [&](std::string_view method, const Json& params) {
+        EXPECT_EQ(call(method, params)["error"]["code"], "invalid_argument") << method << " " << params;
+    };
+    for (const auto& [method, params] : requests) {
+        auto extra = params;
+        extra["extra"] = true;
+        invalid(method, extra);
+        for (auto key = params.begin(); key != params.end(); ++key) {
+            auto missing = params;
+            missing.erase(key.key());
+            invalid(method, missing);
+        }
+    }
+    for (const auto& part : {Json("l3"), Json("unknown"), Json(1)}) {
+        invalid("notes.summaryGenerate", {{"id", id}, {"part", part}});
+    }
+    for (const auto part : {"l1", "l2", "l3_section"}) {
+        invalid("notes.summaryGenerate", {{"id", id}, {"part", part}, {"text", "unexpected"}});
+    }
+    invalid("notes.summaryGenerate", {{"id", id}, {"part", "l3_overview"}});
+    for (const auto& text : {Json(""), Json(123), Json(nullptr)}) {
+        invalid("notes.summaryGenerate", {{"id", id}, {"part", "l3_overview"}, {"text", text}});
+    }
+    for (const auto& part : {Json("l3_section"), Json("l3_overview"), Json("unknown"), Json(nullptr)}) {
+        invalid("notes.summaryCommit", {{"id", id}, {"part", part}, {"document", text_document("L1")}});
+        invalid("notes.summaryAbandon", {{"id", id}, {"part", part}});
+    }
+    invalid("notes.summaryCommit", {{"id", id}, {"part", "l1"}, {"document", Json::array()}});
+    invalid("notes.setSummaryExcluded", {{"id", id}, {"excluded", "true"}});
+    invalid("notes.get", {{"id", id}, {"mode", "l3"}});
+    const auto events = call("events.list")["result"]["items"];
+    EXPECT_TRUE(events.empty());
+    ++epoch_;
+    for (const auto& [method, params] : requests)
+        EXPECT_EQ(call(method, params)["error"]["code"], "vault_changed") << method;
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryGenerateUsesPartPromptsAndSavedSource) {
+    router_.reset();
+    router_ = std::make_unique<BridgeRouter>(*application_,
+        BridgeRouter::Options{.platform = "test", .command_deadline = 0ms});
+    connection_ = router_->open_connection();
+    bootstrap_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Chapter", epoch_);
+    application_->save_note(note.id, text_document("Original Markdown"), epoch_);
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Book", epoch_);
+    const auto response = compression_response("chat_completions", false, "Generated Markdown");
+    MockHttpServer server({response, response, response, response, response});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    const std::array parts{"l1", "l2", "l3_section", "l3_overview"};
+    const std::array prompts{"summary-l1", "summary-l2", "summary-l3-section", "summary-l3-overview"};
+    for (const auto* prompt : prompts) (void)application_->update_prompt(prompt, {prompt}, epoch_);
+    const auto generate = [&](nlohmann::json params) {
+        const auto reply = call("notes.summaryGenerate", std::move(params));
+        ASSERT_TRUE(reply.value("ok", false)) << reply;
+        EXPECT_EQ(reply["result"], (nlohmann::json{{"markdown", "Generated Markdown"}}));
+    };
+    const auto first = queue_request(*router_, connection_, next_id_, epoch_, "notes.summaryGenerate",
+        {{"id", note.id}, {"part", "l3_section"}});
+    router_->expire_timeouts();
+    const auto replies = wait_replies(*router_, connection_, {first});
+    ASSERT_EQ(replies.size(), 1U);
+    EXPECT_EQ(replies.at(first)["result"], (nlohmann::json{{"markdown", "Generated Markdown"}}));
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, "Compressed Markdown");
+    }
+    for (const auto* part : parts) {
+        if (std::string_view(part) == "l3_overview")
+            generate({{"id", folder.id}, {"part", part}, {"text", "Sections Markdown"}});
+        else generate({{"id", note.id}, {"part", part}});
+    }
+    server.join();
+    const std::array expected_prompts{prompts[2], prompts[0], prompts[1], prompts[2], prompts[3]};
+    const std::array expected_text{"Original Markdown", "Original Markdown", "Original Markdown",
+        "Compressed Markdown", "Sections Markdown"};
+    ASSERT_EQ(server.requests().size(), expected_prompts.size());
+    for (std::size_t i = 0; i < expected_prompts.size(); ++i) {
+        const auto body = nlohmann::json::parse(request_body(server.requests()[i]));
+        EXPECT_EQ(body["messages"][0]["content"], expected_prompts[i]);
+        EXPECT_EQ(body["messages"][1]["content"], std::string("from User:\n") + expected_text[i]);
+        EXPECT_FALSE(body.contains("tools"));
+    }
+    ASSERT_TRUE(call("notes.summaryCancel")["ok"]);
+    EXPECT_TRUE(call("events.list")["result"]["items"].empty());
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryGenerateRecordsInputSizeErrors) {
+    bootstrap_epoch();
+    const auto note = application_->create_note_item({}, NoteItemKind::note, "Chapter", epoch_);
+    const std::string large(262145, 'a');
+    application_->save_note(note.id, text_document(large), epoch_);
+    const auto target = " for “Chapter” (note " + std::to_string(note.id) + "): ";
+    const auto check = [&](std::string_view part, std::string_view label, std::string reason, bool section) {
+        expect_note_error(call("notes.summaryGenerate", {{"id", note.id}, {"part", part}}),
+            "invalid_argument", reason);
+        const auto item = call("events.list")["result"]["items"].front();
+        EXPECT_EQ(item["severity"], "error");
+        EXPECT_EQ(item["message"], "Could not make " + std::string(label) + target + reason
+            + (section ? ". The Summary note was not changed." : "."));
+    };
+    check("l1", "L1", "the note has more than 256 KiB of text", false);
+    check("l2", "L2", "the note has more than 256 KiB of text", false);
+    check("l3_section", "the L3 section",
+        "the note has more than 256 KiB of text. Compress the note, then run Summarize again", true);
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, note.id, large);
+    }
+    check("l3_section", "the L3 section", "the compressed text has more than 256 KiB", true);
+    EXPECT_EQ(call("events.list")["result"]["items"].size(), 4U);
+    expect_note_error(call("notes.summaryGenerate", {{"id", note.id}, {"part", "l3_overview"}, {"text", "Overview"}}),
+        "invalid_argument", "That item is not a folder.");
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Book", epoch_);
+    expect_note_error(call("notes.summaryGenerate", {{"id", folder.id}, {"part", "l1"}}),
+        "invalid_argument", "That item is not a note.");
+    expect_note_error(call("notes.summaryGenerate", {{"id", folder.id}, {"part", "l3_overview"},
+        {"text", std::string(note_document_byte_limit + 1, 'a')}}),
+        "body_too_large", "The overview text exceeds 12 MiB.");
+    const auto overview_event = call("events.list")["result"]["items"].front();
+    EXPECT_EQ(overview_event["severity"], "error");
+    EXPECT_EQ(overview_event["message"], "Could not make the L3 overview for “Book” (folder "
+        + std::to_string(folder.id) + "): The overview text exceeds 12 MiB. The Summary note was not changed.");
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryRetriesAndReportsSafeProviderErrors) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    const std::string unavailable = "HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    const auto result = [](std::string_view text, bool incomplete = false) {
+        return compression_response("chat_completions", false, text, incomplete);
+    };
+    const std::string context_limit = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer server({unavailable, unavailable, unavailable, unavailable, result("Partial", true),
+        compression_refusal("chat_completions", false, false), context_limit,
+        result(std::string(note_document_byte_limit + 1, 'x')), result(" "), result("Success")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    std::vector<int> waits;
+    compression_wait_ = [&](int seconds) { waits.push_back(seconds); };
+    const auto generate = [&] { return call("notes.summaryGenerate", {{"id", note.id}, {"part", "l1"}}); };
+    expect_note_error(generate(), "internal_error",
+        "The provider request failed. Check the connection and provider settings, then try again.");
+    EXPECT_EQ(waits, (std::vector<int>{10, 20, 40}));
+    expect_note_error(generate(), "internal_error", "The provider returned an incomplete result.");
+    expect_note_error(generate(), "internal_error", "The provider refused this request.");
+    expect_note_error(generate(), "invalid_argument", "Prompt exceeds the model's context window.");
+    expect_note_error(generate(), "body_too_large", "The result exceeds 12 MiB.");
+    expect_note_error(generate(), "internal_error", "The provider returned no text.");
+    EXPECT_EQ(generate()["result"]["markdown"], "Success");
+    ASSERT_TRUE(call("notes.summaryCancel")["ok"]);
+    const auto events = call("events.list")["result"]["items"];
+    ASSERT_EQ(events.size(), 6U);
+    EXPECT_EQ(events.front()["severity"], "error");
+    EXPECT_EQ(events.front()["message"], "Could not make L1 for “Source” (note " + std::to_string(note.id)
+        + "): The provider returned no text.");
+    server.join();
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryStartupFailureKeepsStorageDetailsOutOfEvents) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    const auto generate = [&](std::int64_t id) {
+        return call("notes.summaryGenerate", {{"id", id}, {"part", "l1"}});
+    };
+    expect_note_error(generate(987654), "not_found", "That note or folder was not found.");
+    auto event = call("events.list")["result"]["items"].front();
+    EXPECT_EQ(event["message"], "Could not make L1 for note 987654: That note or folder was not found.");
+
+    storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+    database.execute("ALTER TABLE note_audio RENAME TO unavailable_note_audio");
+    EXPECT_EQ(generate(note.id)["error"]["code"], "internal_error");
+    event = call("events.list")["result"]["items"].front();
+    EXPECT_EQ(event["severity"], "error");
+    EXPECT_EQ(event["message"], "Could not make L1 for note " + std::to_string(note.id)
+        + ": Could not start summary generation. Try again.");
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryCommitAbandonAndCompressionPreserveVersions) {
+    bootstrap_epoch();
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Book", epoch_);
+    const auto note = application_->create_note_item(folder.id, NoteItemKind::note, "Chapter", epoch_);
+    application_->save_note(note.id, text_document(std::string(4096, 'a')), epoch_);
+    const auto expect_event = [&](std::string_view severity, std::string_view message) {
+        const auto events = call("events.list")["result"]["items"];
+        ASSERT_FALSE(events.empty());
+        EXPECT_EQ(events.front()["severity"], severity);
+        EXPECT_EQ(events.front()["message"], message);
+    };
+    const auto note_target = "“Chapter” (note " + std::to_string(note.id) + ")";
+    const auto folder_target = "“Book” (folder " + std::to_string(folder.id) + ")";
+    for (const auto& [mode, label] : {std::pair{"l1", "L1"}, std::pair{"l2", "L2"}}) {
+        const auto doc = text_document(label);
+        ASSERT_EQ(call("notes.summaryCommit",
+            {{"id", note.id}, {"part", mode}, {"document", doc}})["result"], nlohmann::json::object());
+        expect_event("success", std::string(label) + " ready for " + note_target + ".");
+        ASSERT_EQ(call("notes.summaryAbandon", {{"id", note.id}, {"part", mode}})["result"], nlohmann::json::object());
+        expect_event("error", "Could not make " + std::string(label) + " for " + note_target
+            + ": the result could not be converted to a note.");
+        EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", mode}})["result"]["document"], doc);
+    }
+
+    const auto l3 = [&](nlohmann::json document) {
+        return call("notes.summaryCommit", {{"id", folder.id}, {"part", "l3"}, {"document", std::move(document)}});
+    };
+    ASSERT_EQ(l3(text_document("First folder summary"))["result"], nlohmann::json::object());
+    const auto items = application_->list_note_items(epoch_);
+    const auto summary = std::ranges::find_if(items, [](const auto& item) { return item.folder_summary; });
+    ASSERT_NE(summary, items.end());
+    EXPECT_TRUE(summary->is_summary);
+    EXPECT_TRUE(summary->read_only);
+    expect_event("success", "Summary ready for “Book” (folder " + std::to_string(folder.id)
+        + ", note " + std::to_string(summary->id) + ").");
+    ASSERT_TRUE(l3(text_document("Replacement folder summary"))["ok"]);
+    ASSERT_TRUE(call("notes.summaryAbandon", {{"id", folder.id}, {"part", "l3"}})["ok"]);
+    expect_event("error", "Could not save the Summary note for " + folder_target
+        + ": the result could not be converted to a note. The Summary note was not changed.");
+    expect_note_error(l3(nlohmann::json::object()), "invalid_argument", "The summary document has no readable text.");
+    expect_event("error", "Could not save the Summary note for " + folder_target
+        + ": The summary document has no readable text.");
+    EXPECT_EQ(call("notes.get", {{"id", summary->id}})["result"]["document"], text_document("Replacement folder summary"));
+
+    const auto event_count = application_->list_events(epoch_).size();
+    EXPECT_EQ(call("notes.compressStart", {{"id", summary->id}, {"skip_ineligible", true}})["result"]["skipped"], true);
+    EXPECT_EQ(call("notes.compressStart", {{"id", summary->id}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(application_->list_events(epoch_).size(), event_count);
+    MockHttpServer server({compression_response("chat_completions", false, "Compressed")});
+    server.start();
+    configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(compress_and_wait({{"id", note.id}, {"skip_ineligible", true}})["ok"]);
+    server.join();
+    EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", "l1"}})["result"]["document"], text_document("L1"));
+    EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", "l2"}})["result"]["document"], text_document("L2"));
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryCancelIsConnectionScopedAndAllowsParallelCalls) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    const auto other_connection = router_->open_connection();
+    MockHttpServer compression({blocked_compression_response}, true);
+    compression.start();
+    configure_compression(*application_, compression.port(), "chat_completions", false, epoch_);
+    ASSERT_TRUE(call("notes.compressStart", {{"id", note.id}})["ok"]);
+    ASSERT_TRUE(compression.wait_for_requests(1, 2s));
+
+    MockHttpServer first({blocked_compression_response}, true);
+    MockHttpServer second({blocked_compression_response}, true);
+    MockHttpServer third({blocked_compression_response}, true);
+    MockHttpServer other({compression_response("chat_completions", false, "Other connection")});
+    other.pause_before_response(1);
+    const auto start = [&](MockHttpServer& server, std::string_view part, const std::string& connection) {
+        server.start();
+        configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+        const auto id = queue_request(*router_, connection, next_id_, epoch_, "notes.summaryGenerate",
+            {{"id", note.id}, {"part", part}});
+        router_->run_ordinary_tasks();
+        EXPECT_TRUE(server.wait_for_requests(1, 2s));
+        return id;
+    };
+    const auto a = start(first, "l1", connection_);
+    const auto b = start(second, "l2", connection_);
+    const auto c = start(third, "l3_section", connection_);
+    const auto d = start(other, "l1", other_connection);
+    const auto cancel = queue_request(*router_, connection_, next_id_, epoch_, "notes.summaryCancel", nlohmann::json::object());
+    const auto replies = wait_replies(*router_, connection_, {a, b, c, cancel});
+    ASSERT_EQ(replies.size(), 4U);
+    EXPECT_EQ(replies.at(cancel)["result"], nlohmann::json::object());
+    for (auto id : {a, b, c}) EXPECT_EQ(replies.at(id)["error"]["code"], "operation_cancelled");
+    first.join();
+    second.join();
+    third.join();
+    other.resume_responses();
+    const auto other_replies = wait_replies(*router_, other_connection, {d});
+    ASSERT_EQ(other_replies.size(), 1U);
+    EXPECT_EQ(other_replies.at(d)["result"]["markdown"], "Other connection");
+    other.join();
+    const auto events = call("events.list")["result"]["items"];
+    for (const auto label : {"L1", "L2", "L3 section"}) {
+        const auto message = std::string(label) + " cancelled for “Source” (note " + std::to_string(note.id) + ").";
+        EXPECT_EQ(std::ranges::count_if(events, [&](const auto& event) {
+            return event["severity"] == "info" && event["message"] == message;
+        }), 1);
+    }
+    EXPECT_EQ(call("notes.compressionStatus", {{"id", note.id}})["result"]["pending"], true);
+    ASSERT_TRUE(call("notes.compressCancel", {{"id", note.id}})["ok"]);
+    compression.join();
+}
+
+TEST_F(BridgeRouterTest, NoteSummaryConnectionCloseAndVaultChangeCancelHeldCalls) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    const auto begin = [&](MockHttpServer& server, const std::string& connection) {
+        server.start();
+        configure_compression(*application_, server.port(), "chat_completions", false, epoch_);
+        const auto id = queue_request(*router_, connection, next_id_, epoch_, "notes.summaryGenerate",
+            {{"id", note.id}, {"part", "l1"}});
+        router_->run_ordinary_tasks();
+        EXPECT_TRUE(server.wait_for_requests(1, 2s));
+        return id;
+    };
+    MockHttpServer closed({blocked_compression_response}, true);
+    MockHttpServer kept({compression_response("chat_completions", false, "Still open")});
+    kept.pause_before_response(1);
+    (void)begin(closed, connection_);
+    const auto other = router_->open_connection();
+    const auto kept_id = begin(kept, other);
+    router_->close_connection(connection_);
+    closed.join();
+    kept.resume_responses();
+    const auto kept_replies = wait_replies(*router_, other, {kept_id});
+    ASSERT_EQ(kept_replies.size(), 1U);
+    EXPECT_EQ(kept_replies.at(kept_id)["result"]["markdown"], "Still open");
+    kept.join();
+    const auto cancelled = "L1 cancelled for “Source” (note " + std::to_string(note.id) + ").";
+    for (const auto deadline = std::chrono::steady_clock::now() + 5s;
+         summary_events(cancelled) == 0 && std::chrono::steady_clock::now() < deadline;)
+        std::this_thread::sleep_for(2ms);
+    EXPECT_EQ(summary_events(cancelled), 1U);
+
+    connection_ = router_->open_connection();
+    const auto vault = application_->create_vault(
+        VaultCreate{.display_name = "Other summary vault", .copy_from = "Test", .password = {}}, epoch_);
+    MockHttpServer old_first({blocked_compression_response}, true);
+    MockHttpServer old_second({blocked_compression_response}, true);
+    const auto a = begin(old_first, connection_);
+    const auto b = begin(old_second, other);
+    const auto switched = application_->switch_vault(vault.name, {}, epoch_);
+    epoch_ = switched.context_epoch;
+    const auto first = wait_replies(*router_, connection_, {a});
+    const auto second = wait_replies(*router_, other, {b});
+    ASSERT_EQ(first.size(), 1U);
+    ASSERT_EQ(second.size(), 1U);
+    EXPECT_EQ(first.at(a)["error"]["code"], "vault_changed");
+    EXPECT_EQ(second.at(b)["error"]["code"], "vault_changed");
+    old_first.join();
+    old_second.join();
+    EXPECT_EQ(summary_events(cancelled), 1U);
+    epoch_ = application_->switch_vault("Test", {}, epoch_).context_epoch;
+    EXPECT_EQ(summary_events(cancelled), 1U);
+}
+
 TEST_F(BridgeRouterTest, CompressionUsesSavedTextAndOmitsEmptyResponsesInstructions) {
     bootstrap_epoch();
     MockHttpServer server({compression_response("responses", false, "First"),

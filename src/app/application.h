@@ -545,6 +545,15 @@ public:
     void set_note_compression_changed(NoteAudioChanged callback);
     using NotesChanged = std::function<void(std::uint64_t epoch)>;
     void set_notes_changed(NotesChanged callback);
+    [[nodiscard]] nlohmann::json summary_plan(std::int64_t id, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> generate_summary_part(std::string connection_id,
+        std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch);
+    void commit_summary_part(std::int64_t id, SummaryPart part,
+        const nlohmann::json& document, std::uint64_t epoch);
+    void abandon_summary_part(std::int64_t id, SummaryPart part, std::uint64_t epoch);
+    void cancel_summary_parts(std::string_view connection_id, std::uint64_t epoch);
+    [[nodiscard]] NoteItem set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch);
+
     [[nodiscard]] nlohmann::json compress_note(
         std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
     [[nodiscard]] nlohmann::json note_compression_status(std::int64_t id, std::uint64_t epoch);

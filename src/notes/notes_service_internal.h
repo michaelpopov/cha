@@ -70,6 +70,15 @@ struct NotesService::Impl {
     void retire_compression(std::int64_t id, const std::shared_ptr<CompressionControl>& control,
         std::uint64_t epoch, EventSeverity severity, const std::string& message) noexcept;
 
+    struct SummaryCall {
+        std::string connection_id;
+        std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);
+    };
+    // Guarded by lifecycle_mutex.
+    std::vector<std::shared_ptr<SummaryCall>> summary_calls;
+    void remove_summary_call(const std::shared_ptr<SummaryCall>& call);
+    void cancel_summary_calls(std::optional<std::string_view> connection_id);
+
     struct SummaryRun {
         std::int64_t run_id{};
         std::string connection_id;
