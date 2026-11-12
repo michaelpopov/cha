@@ -123,6 +123,43 @@ function historyAction(name: 'Undo' | 'Redo') {
 }
 
 describe('Note text mode', () => {
+  it('shows a distinct toolbar icon for each selected mode, also on full text fallback', async () => {
+    const originalOnly = noteItem({ id: 5, name: 'Original only' });
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [{ ...plan, has_l1: true, has_l2: true, has_compressed: true }, originalOnly],
+      getNote: async (id, mode) => {
+        const isVersion = id === plan.id && mode !== undefined && mode !== 'full_text';
+        return {
+          id,
+          document_id: isVersion ? 40 : id,
+          document: noteDocument(isVersion ? `Version ${mode}` : `Original note ${id}`),
+        };
+      },
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Original note 4');
+    const toolbarIcon = () => screen.getByRole('button', { name: 'Note text mode' }).querySelector('svg')?.innerHTML;
+    const fullTextIcon = toolbarIcon();
+    expect(fullTextIcon).toBeTruthy();
+    const icons = new Set([fullTextIcon]);
+    for (const [label, mode] of [['L1', 'l1'], ['L2', 'l2'], ['Compressed', 'compressed']] as const) {
+      chooseNoteMode(label);
+      await screen.findByText(`Version ${mode}`);
+      const icon = toolbarIcon();
+      expect(icon).toBeTruthy();
+      icons.add(icon);
+    }
+    expect(icons.size).toBe(4);
+    const compressedIcon = toolbarIcon();
+
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Original only' }));
+    await screen.findByText('Original note 5');
+    expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing full text');
+    expect(toolbarIcon()).toBe(compressedIcon);
+  });
+
   it('keeps fallback edits on the original row even when compression appears before the save', async () => {
     const documents = new Map<number, Record<string, unknown>>([[plan.id, noteDocument('Original text')]]);
     const positions = new Map<number, number>([[plan.id, 20], [40, 70]]);

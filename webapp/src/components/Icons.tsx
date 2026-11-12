@@ -1,5 +1,7 @@
 import type { SVGProps } from 'react';
 
+import type { NoteTextMode } from '../api/client';
+
 type IconProps = SVGProps<SVGSVGElement>;
 
 function Icon({ children, ...props }: IconProps) {
@@ -323,10 +325,17 @@ export function TextLinesIcon(props: IconProps) {
   );
 }
 
-export function NoteTextModeIcon(props: IconProps) {
+const noteTextModePaths: Record<NoteTextMode, string> = {
+  full_text: 'M12 6.5C9.5 4.5 6.5 4 3 5v14c3.5-1 6.5-.5 9 1.5 2.5-2 5.5-2.5 9-1.5V5c-3.5-1-6.5-.5-9 1.5ZM12 6.5v14',
+  l1: 'm3 7 9-4 9 4-9 4-9-4ZM3 12l9 4 9-4M3 17l9 4 9-4',
+  l2: 'm3 9 9-4 9 4-9 4-9-4ZM3 15l9 4 9-4',
+  compressed: 'm20 4-6 6m0-5v5h5M4 20l6-6m-5 0h5v5',
+};
+
+export function NoteTextModeIcon({ mode, ...props }: IconProps & { mode: NoteTextMode }) {
   return (
     <Icon {...props}>
-      <path d="M10 5h11M10 12h11M10 19h11m-18-9 3-3-3-3m0 16 3-3-3-3" {...stroke} />
+      <path d={noteTextModePaths[mode]} {...stroke} />
     </Icon>
   );
 }

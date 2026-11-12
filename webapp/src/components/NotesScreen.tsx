@@ -349,7 +349,7 @@ function FormatBar({
         <ToolbarMenu
           disabled={noteActionPending}
           editor={editor}
-          icon={<NoteTextModeIcon />}
+          icon={<NoteTextModeIcon mode={noteTextMode} />}
           label="Note text mode"
           title={`${noteTextLabels[noteTextMode]} mode; showing ${
             loadedTextMode === 'l1' || loadedTextMode === 'l2'
