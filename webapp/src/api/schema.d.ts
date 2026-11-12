@@ -858,6 +858,7 @@ export interface components {
             folder_summary: boolean;
             has_compressed: boolean;
             has_audio: boolean;
+            has_l1_audio: boolean;
             read_only: boolean;
             name: string;
         };

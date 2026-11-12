@@ -994,19 +994,20 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     EXPECT_EQ(note_get_text(*database_, seneca.id, true).text, "Short text\\\nRevised");
     const auto l1 = note_document_from_text("Level one");
     const auto l2 = note_document_from_text("Level two");
-    note_commit_level(*database_, seneca.id, 1, l1, "Saved.");
+    const auto l1_id = note_commit_level(*database_, seneca.id, 1, l1, "Saved.");
     note_commit_level(*database_, seneca.id, 2, l2, "Saved.");
     (void)note_set_summary_excluded(*database_, seneca.id, true);
     const auto summary = note_document_from_text("Overview");
     (void)note_commit_folder_summary(*database_, letters.id, summary);
     note_save_scroll_position(*database_, seneca.id, 42);
     note_save_scroll_position(*database_, compressed_id, 101);
-    note_save_scroll_position(*database_, note_get(*database_, seneca.id, NoteTextMode::l1).document_id, 102);
+    note_save_scroll_position(*database_, l1_id, 102);
     note_save_scroll_position(*database_, note_get(*database_, seneca.id, NoteTextMode::l2).document_id, 103);
     (void)note_set_read_only(*database_, seneca.id, true);
     const auto first = workspace_.root() / "first.m4a", second = workspace_.root() / "second.m4a";
     { std::ofstream(first, std::ios::binary) << "first clip"; std::ofstream(second, std::ios::binary) << "second clip"; }
     note_save_audio(*database_, seneca.id, {first, second});
+    note_save_audio(*database_, l1_id, {second});
 
     note_export_folder(*database_, folder.id, file_);
     EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(file_) += ".partial"));
@@ -1043,6 +1044,11 @@ TEST_F(NoteFolderExportTest, CopiesSubtreeContentAndAudioIntoAnotherVault) {
     EXPECT_EQ(note_audio_info(*target_, copied->id)["count"], 2);
     EXPECT_EQ(note_audio_clip(*target_, copied->id, 0).bytes, "first clip");
     EXPECT_EQ(note_audio_clip(*target_, copied->id, 1).bytes, "second clip");
+    const auto copied_l1 = note_get(*target_, copied->id, NoteTextMode::l1);
+    EXPECT_NE(copied_l1.document_id, l1_id);
+    EXPECT_TRUE(copied->has_l1_audio);
+    EXPECT_EQ(note_audio_info(*target_, copied_l1.document_id)["count"], 1);
+    EXPECT_EQ(note_audio_clip(*target_, copied_l1.document_id, 0).bytes, "second clip");
     // ANNOTATIONS is rebuilt from the copied note, so it points to the new note ID.
     const auto annotations = target_item(copied_letters->id, "ANNOTATIONS");
     ASSERT_TRUE(annotations);
@@ -2542,6 +2548,111 @@ TEST_F(NoteStorageTest, AudioAttemptTransactionsAndExactIdentity) {
     (void)note_set_read_only(*database_, note.id, false);
     EXPECT_FALSE(note_audio_attempt_for_note(*database_, note.id));
     EXPECT_EQ(event_list(*database_)[0].severity, EventSeverity::warning);
+}
+
+TEST_F(NoteStorageTest, L1AudioFollowsTheOwnerAndRetiresWhenTheDocumentChanges) {
+    create_event_history_schema(*database_);
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Chapter");
+    auto summary = note_document_from_text("Summary");
+    const auto l1 = note_commit_level(*database_, note.id, 1, summary, "Saved.");
+    const auto l2 = note_commit_level(*database_, note.id, 2, summary, "Saved.");
+    note_save_compressed(*database_, note.id, "Compressed");
+    const auto compressed = note_get(*database_, note.id, NoteTextMode::compressed).document_id;
+    const auto start = [&](std::int64_t id, bool only_if_missing = false) {
+        return note_audio_accept(*database_, id, 1, "https://audio.test", "key", [](const auto&) {}, only_if_missing);
+    };
+    EXPECT_THROW(start(l1), NoteError);
+    (void)note_set_read_only(*database_, note.id, true);
+    EXPECT_THROW(start(l2), NoteError);
+    EXPECT_THROW(start(compressed), NoteError);
+    (void)note_rename(*database_, note.id, "New name");
+    const auto full = start(note.id);
+    const auto attempt = start(l1);
+    ASSERT_TRUE(full && attempt);
+    EXPECT_EQ(note_audio_target(*attempt), "L1 of “New name” (note " + std::to_string(note.id) + ")");
+    (void)note_rename(*database_, note.id, "Later name");
+    EXPECT_EQ(note_audio_target(*note_audio_attempt_by_id(*database_, attempt->id)), note_audio_target(*attempt));
+    EXPECT_FALSE(start(l1, true));
+    const auto clip = workspace_.root() / "clip.m4a";
+    std::ofstream(clip) << "clip";
+    ASSERT_TRUE(note_audio_finish(*database_, full->id, {clip}));
+    ASSERT_TRUE(note_audio_finish(*database_, attempt->id, {clip}));
+    EXPECT_TRUE(note_find_item(*database_, note.id)->has_audio);
+    EXPECT_TRUE(note_find_item(*database_, note.id)->has_l1_audio);
+    EXPECT_FALSE(start(l1, true));
+
+    summary["content"][0]["content"][0]["marks"] = {{{"type", "highlight"}}};
+    summary["content"].push_back(nlohmann::json::parse(R"({
+        "type":"paragraph","content":[{"type":"text","text":"Comment",
+        "marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}]
+    })"));
+    const auto abandoned = start(l1);
+    ASSERT_TRUE(abandoned);
+    EXPECT_FALSE(note_save(*database_, l1, summary));
+    EXPECT_TRUE(note_audio_attempt_by_id(*database_, abandoned->id));
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 1);
+    (void)note_set_read_only(*database_, note.id, false);
+    EXPECT_FALSE(note_audio_finish(*database_, abandoned->id, {clip}));
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 1);
+
+    (void)note_set_read_only(*database_, note.id, true);
+    const auto stale = start(l1);
+    ASSERT_TRUE(stale);
+    EXPECT_EQ(note_commit_level(*database_, note.id, 1, note_document_from_text("Replaced"), "Saved."), l1);
+    EXPECT_FALSE(note_audio_finish(*database_, stale->id, {clip}));
+    EXPECT_FALSE(note_find_item(*database_, note.id)->has_l1_audio);
+    EXPECT_EQ(note_audio_clip(*database_, note.id, 0).bytes, "clip");
+
+    const auto deleted = start(l1);
+    ASSERT_TRUE(deleted);
+    note_delete(*database_, note.id);
+    EXPECT_FALSE(note_audio_finish(*database_, deleted->id, {clip}));
+}
+
+TEST_F(NoteStorageTest, IncomingL1ChangesCleanUpAttemptsBeforeReplacingOrDeletingRows) {
+    create_event_history_schema(*database_);
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Chapter");
+    const auto summary = note_document_from_text("Summary");
+    const auto l1 = note_commit_level(*database_, note.id, 1, summary, "Saved.");
+    (void)note_set_read_only(*database_, note.id, true);
+    const auto clip = workspace_.root() / "clip.m4a";
+    std::ofstream(clip) << "clip";
+    const auto start = [&] {
+        note_save_audio(*database_, l1, {clip});
+        return note_audio_accept(*database_, l1, 1, "https://audio.test", "key", [](const auto&) {});
+    };
+    const auto editable = start();
+    ASSERT_TRUE(editable);
+    ASSERT_TRUE(note_apply_record(*database_, {{"kind", "note.read_only"}, {"path", {"Chapter"}}, {"read_only", false}}));
+    EXPECT_FALSE(note_audio_finish(*database_, editable->id, {clip}));
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 1);
+    (void)note_set_read_only(*database_, note.id, true);
+
+    note_save_audio(*database_, note.id, {clip});
+    const auto replaced = start();
+    ASSERT_TRUE(replaced);
+    const auto content = encode_base64(compressed_content(summary.dump()));
+    ASSERT_TRUE(note_apply_record(*database_, {{"kind", "note.level"}, {"path", {"Chapter"}},
+        {"level", "l1"}, {"content", content}}));
+    EXPECT_FALSE(note_audio_finish(*database_, replaced->id, {clip}));
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 0);
+    EXPECT_EQ(note_audio_info(*database_, note.id)["count"], 1);
+
+    auto update = nlohmann::json{{"kind", "note.update"}, {"path", {"Chapter"}}, {"content", content},
+        {"scroll_top", 0}, {"read_only", true}, {"l1_content", content}};
+    const auto updated = start();
+    ASSERT_TRUE(updated);
+    ASSERT_TRUE(note_apply_record(*database_, update));
+    EXPECT_FALSE(note_audio_finish(*database_, updated->id, {clip}));
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 0);
+
+    const auto removed = start();
+    ASSERT_TRUE(removed);
+    update["l1_content"] = nullptr;
+    ASSERT_TRUE(note_apply_record(*database_, update));
+    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::l1).document_id, note.id);
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 0);
+    EXPECT_FALSE(note_audio_finish(*database_, removed->id, {clip}));
 }
 
 TEST_F(NoteStorageTest, AudioAttemptDeletionAbandonsDescendantsAtomically) {

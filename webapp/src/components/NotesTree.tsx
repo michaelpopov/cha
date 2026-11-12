@@ -1,7 +1,6 @@
 import type { NoteImportSource } from '../notes/importSource';
 import { hotkeysCoreFeature, syncDataLoaderFeature } from '@headless-tree/core';
 import { useTree } from '@headless-tree/react';
-import { getSchema } from '@tiptap/core';
 import {
   useEffect,
   useLayoutEffect,
@@ -35,8 +34,6 @@ import { FolderStoreDialog } from './FolderStoreDialog';
 import { NoteAudioDialog, type NoteAudioTarget } from './NoteAudioDialog';
 import { newNoteImportSource } from '../notes/importSource';
 import { noteReference } from '../notes/reference';
-import { notesExtensions } from '../notes/editor';
-import { noteAudioBlocks } from '../notes/useNoteAudio';
 
 type CreateKind = 'note' | 'folder';
 
@@ -146,7 +143,9 @@ export function NotesTree({
   const [storeRun, setStoreRun] = useState<{ source: NoteItem; epoch: number } | null>(null);
   const storeRunRef = useRef(storeRun);
   storeRunRef.current = storeRun;
-  const [audioRun, setAudioRun] = useState<{ targets: NoteAudioTarget[]; epoch: number; folderMode: boolean } | null>(null);
+  const [audioRun, setAudioRun] = useState<{
+    targets: NoteAudioTarget[]; epoch: number; folderMode: boolean; mode: 'full_text' | 'l1';
+  } | null>(null);
   const [items, setItems] = useState<NoteItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [stale, setStale] = useState(false);
@@ -202,7 +201,7 @@ export function NotesTree({
   for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
   const signature = vaultName + '\n' + items.map((item) => (
-    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}:${item.has_l1}:${item.has_l2}:${item.summary_excluded}:${item.folder_summary}`
+    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.has_l1_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}:${item.has_l1}:${item.has_l2}:${item.summary_excluded}:${item.folder_summary}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({
@@ -631,7 +630,7 @@ export function NotesTree({
     const rect = anchor.getBoundingClientRect();
     const note = itemsRef.current.find(entry => String(entry.id) === sourceId);
     const audio = clientRef.current.noteAudio;
-    const checkAudio = audio && note?.kind === 'note' && note.read_only;
+    const checkAudio = noteTextMode === 'full_text' && audio && note?.kind === 'note' && note.read_only;
     let epoch: number;
     try { epoch = clientRef.current.contextEpoch(); }
     catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); return; }
@@ -911,6 +910,8 @@ export function NotesTree({
   const rows = tree.getItems();
   const menuRow = menu ? index.rows[menu.sourceId] : undefined;
   const menuIsNote = menu !== null && menuRow?.kind !== 'folder';
+  const menuNote = menuIsNote ? items.find(item => item.id === menuRow?.noteId) : undefined;
+  const audioMode = noteTextMode === 'full_text' || noteTextMode === 'l1' ? noteTextMode : null;
   const menuManaged = menuRow?.forumId !== undefined;
   const menuFolderBusy = menu !== null && !menuIsNote && menu.sourceId !== 'vault'
     && (menu.storeStatus === null || menu.storeStatus.present && !menu.storeStatus.terminal);
@@ -964,13 +965,14 @@ export function NotesTree({
           const data = item.getItemData();
           const props = item.getProps();
           const current = data.noteId !== null && data.noteId === activeNoteId;
+          const audioReady = audioMode === 'full_text' ? data.audioReady : audioMode === 'l1' && data.l1AudioReady;
           const level = item.getItemMeta()?.level ?? 0;
           return (
             <div
               key={item.getId()}
               {...props}
               aria-current={current ? 'true' : undefined}
-              className={`cha-notes-row${current ? ' is-current' : ''}${data.audioReady ? ' has-audio' : ''}${props.className ? ` ${props.className}` : ''}`}
+              className={`cha-notes-row${current ? ' is-current' : ''}${audioReady ? ' has-audio' : ''}${props.className ? ` ${props.className}` : ''}`}
               style={{ paddingLeft: `${0.45 + level * 0.85}rem` }}
             >
               <span aria-hidden="true" className="cha-notes-twist">
@@ -1050,17 +1052,20 @@ export function NotesTree({
                 </button>
               )}
               {client.noteAudio && index.rows[menu.sourceId]?.kind !== 'annotation' && <button
-                disabled={menuFolderBusy || menu.audioPending || (menuIsNote && !items.find(item => String(item.id) === menu.sourceId)?.read_only)}
+                disabled={menuFolderBusy || !audioMode || (audioMode === 'full_text' && menu.audioPending)
+                  || (menuIsNote && (!menuNote?.read_only || (audioMode === 'l1' && !menuNote.has_l1)))}
                 onClick={() => {
+                  if (!audioMode) return;
                   const source = takeMenuSource();
                   if (!source) return;
                   const folderMode = source.kind === 'folder';
                   const targets = folderMode ? (index.children[String(source.id)] ?? []).flatMap(key => {
                     const note = items.find(item => String(item.id) === key);
-                    return note?.kind === 'note' && note.read_only ? [{ id: note.id, name: note.name }] : [];
+                    return note?.kind === 'note' && note.read_only && (audioMode === 'full_text' || note.has_l1)
+                      ? [{ id: note.id, name: note.name }] : [];
                   }) : [{ id: source.id, name: source.name }];
                   notifyAudioChanged(source.id);
-                  try { setAudioRun({ targets, folderMode, epoch: client.noteAudio!.contextEpoch() }); }
+                  try { setAudioRun({ targets, folderMode, mode: audioMode, epoch: client.noteAudio!.contextEpoch() }); }
                   catch (failure) { setError(publicErrorMessage(failure, 'The connection to CHA ended.')); }
                 }} role="menuitem" type="button">Generate audio</button>}
               {index.rows[menu.sourceId]?.kind !== 'annotation' && !index.rows[menu.sourceId]?.isSummary && <button
@@ -1096,11 +1101,7 @@ export function NotesTree({
         epoch={storeRun.epoch} onClose={() => setStoreRun(null)} />}
       {audioRun !== null && client.noteAudio && <NoteAudioDialog client={client.noteAudio}
         targets={audioRun.targets} epoch={audioRun.epoch} folderMode={audioRun.folderMode}
-        prepare={async id => {
-          const note = await client.getNote(id);
-          return noteAudioBlocks(getSchema(notesExtensions()).nodeFromJSON({ type: 'doc', ...note.document }))
-            .map(block => block.text);
-        }}
+        mode={audioRun.mode} getNote={client.getNote}
         onClose={() => setAudioRun(null)} />}
       {dialog?.action === 'create' && (
         <NameDialog

@@ -2872,6 +2872,14 @@ nlohmann::json WorkspaceConfigStore::get_note_audio_info(std::int64_t id) const 
     const std::lock_guard lock(impl_->mutex);
     return note_audio_info(*impl_->database, id);
 }
+std::optional<NoteAudioOwner> WorkspaceConfigStore::get_note_audio_owner(std::int64_t document_id) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_audio_owner(*impl_->database, document_id);
+}
+std::optional<std::int64_t> WorkspaceConfigStore::get_note_l1_document_id(std::int64_t id) const {
+    const std::lock_guard lock(impl_->mutex);
+    return note_l1_document_id(*impl_->database, id);
+}
 NoteAudioClip WorkspaceConfigStore::get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const {
     const std::lock_guard lock(impl_->mutex);
     return note_audio_clip(*impl_->database, id, ordinal);
@@ -3010,10 +3018,10 @@ bool WorkspaceConfigStore::commit_compressed_note(std::int64_t id, std::string_v
     return note_commit_compressed(*impl_->database, id, source, text, success_message, impl_->sync_machine);
 }
 
-void WorkspaceConfigStore::commit_note_level(std::int64_t id, int level,
+std::int64_t WorkspaceConfigStore::commit_note_level(std::int64_t id, int level,
     const nlohmann::json& document, std::string_view success_message) {
     const std::lock_guard lock(impl_->mutex);
-    note_commit_level(*impl_->database, id, level, document, success_message, impl_->sync_machine);
+    return note_commit_level(*impl_->database, id, level, document, success_message, impl_->sync_machine);
 }
 
 NoteItem WorkspaceConfigStore::commit_folder_summary(std::int64_t folder_id, const nlohmann::json& document) {

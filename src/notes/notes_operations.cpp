@@ -723,15 +723,16 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
         throw ApplicationError(ErrorCode::invalid_argument);
     const bool folder = folder_summary_part(part);
     auto target = note_summary_target(id, "", folder);
-    NoteItem saved;
+    std::int64_t document_id;
     try {
         if (const auto item = impl_->store->get_note_item(id)) target = note_summary_target(id, item->name, folder);
         if (!folder) {
-            impl_->store->commit_note_level(id, part == SummaryPart::l1 ? 1 : 2, document,
+            document_id = impl_->store->commit_note_level(id, part == SummaryPart::l1 ? 1 : 2, document,
                 std::string(summary_part_label(part)) + " ready for " + target + ".");
-            return;
+            if (part == SummaryPart::l2) return;
+        } else {
+            document_id = impl_->store->commit_folder_summary(id, document).id;
         }
-        saved = impl_->store->commit_folder_summary(id, document);
     } catch (const NoteError& error) {
         record_note_summary_failure(*impl_->store, part, target, error.what());
         rethrow_note(error);
@@ -741,7 +742,7 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
     try {
         const auto notify = impl_->note_audio_changed;
         lifecycle.unlock();
-        if (notify) notify(saved.id, epoch);
+        if (notify) notify(document_id, epoch);
     } catch (...) { log_warn("Could not deliver summary audio notification."); }
 }
 

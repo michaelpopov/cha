@@ -178,16 +178,17 @@ afterEach(() => {
 });
 
 it.each([
-  ['full_text', 'Full text', 'full text', true],
-  ['l1', 'L1', 'L1', false],
-  ['l2', 'L2', 'L2', false],
-  ['compressed', 'Compressed', 'compressed', false],
-  ['l1', 'L1', 'full text', true],
-  ['l2', 'L2', 'full text', true],
-] as const)('shows %s mode (%s selected, %s loaded) with audio available: %s', async (mode, label, showing, fullText) => {
+  ['full_text', 'Full text', 'full text', plan.id],
+  ['l1', 'L1', 'L1', 40],
+  ['l2', 'L2', 'L2', null],
+  ['compressed', 'Compressed', 'compressed', null],
+  ['l1', 'L1', 'full text', plan.id],
+  ['l2', 'L2', 'full text', plan.id],
+  ['compressed', 'Compressed', 'full text', plan.id],
+] as const)('shows %s mode (%s selected, %s loaded) with audio document %s', async (mode, label, showing, audioId) => {
   const info = vi.fn(async () => ({ count: 1 }));
   const getNote = vi.fn(async (id: number) => ({
-    id, document_id: fullText ? id : 40, document: documentWith('Read-only note'),
+    id, document_id: showing === 'full text' ? id : 40, document: documentWith('Read-only note'),
   }));
   render(<Harness noteTextMode={mode} items={[{ ...plan, read_only: true }]} getNote={getNote}
     noteAudio={{ info, contextEpoch: () => 1, startBackground: vi.fn(),
@@ -202,7 +203,7 @@ it.each([
   expect(selected.querySelector('svg')).toBeInTheDocument();
   expect(screen.getAllByRole('menuitemradio', { checked: true })).toEqual([selected]);
   expect((await openedEditor()).isEditable).toBe(false);
-  if (fullText) expect(info).toHaveBeenCalledWith(plan.id);
+  if (audioId !== null) expect(info).toHaveBeenCalledWith(audioId);
   else expect(info).not.toHaveBeenCalled();
 });
 

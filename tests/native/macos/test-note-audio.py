@@ -241,15 +241,36 @@ def main():
                 assert saved == [("A first", 1), ("A saved", 1), ("Audio check", 3), ("C remaining", 1), ("D last", 1), ("F existing", 3), ("Recovery check", 3)], saved
                 assert database.execute("SELECT COUNT(*) FROM event_history").fetchone()[0] == 16
                 assert database.execute("SELECT COUNT(*) FROM note_audio_attempts").fetchone()[0] == 0
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database, database:
+                audio_note = database.execute("SELECT id FROM note_items WHERE name='Audio check'").fetchone()[0]
+                document = {"type": "doc", "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "Summary narration."}]},
+                ]}
+                l1_id = database.execute(
+                    "INSERT INTO note_items (parent_id,kind,name,content_json,compressed,level) VALUES (?,'note','Earlier name',?,1,1)",
+                    (audio_note, zlib.compress(json.dumps(document).encode()))).lastrowid
+            summary_source = root / "summary.js"
+            # The full-text test has already run. This pass uses its saved clips
+            # and requests a new batch only for L1.
+            summary_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true, summary: 'generate' });\n")
+            environment["CHA_NATIVE_PARITY_SCRIPT"] = str(summary_source)
+            post_count = len(submitted)
+            run_host()
+            assert submitted[post_count:] == ["Summary narration."], submitted
+            with closing(sqlite3.connect(root / "test.sqlite3")) as database:
+                assert database.execute("SELECT count(*) FROM note_audio WHERE note_id=?", (audio_note,)).fetchone() == (3,)
+                assert database.execute("SELECT count(*) FROM note_audio WHERE note_id=?", (l1_id,)).fetchone() == (1,)
+                assert database.execute("SELECT message FROM event_history ORDER BY id DESC LIMIT 1").fetchone() == (
+                    f'Audio ready for L1 of “Audio check” (note {audio_note}): 1 clips saved.',)
             server.shutdown()
             server.server_close()
             thread.join()
             # Restart the host with the same vault and no running service.
             offline_source = root / "offline.js"
-            offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true });\n")
+            offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true, summary: 'playback' });\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(offline_source)
             run_host()
-            print("PASS background acceptance, automatic submission retry after HTTP 503, registered restart without POST, unrelated playback, independent folder completion/skip/error/focus, and offline playback", flush=True)
+            print("PASS full-text and L1 generation, background retry and recovery, folder eligibility, and offline playback", flush=True)
         finally:
             server.shutdown()
             server.server_close()

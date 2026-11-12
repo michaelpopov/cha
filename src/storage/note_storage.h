@@ -52,6 +52,7 @@ struct NoteItem {
     std::string name;
     bool has_compressed{};
     bool has_audio{};
+    bool has_l1_audio{};
     bool read_only{};
     std::optional<std::string> forum_id;
     bool is_summary{};
@@ -158,7 +159,7 @@ bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
     std::string_view source, std::string_view text, std::string_view success_message,
     std::string_view sync_machine = {});
 // Writes the L1 or L2 row, the success event, and the sync record together.
-void note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
+std::int64_t note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
     int level, const nlohmann::json& document, std::string_view success_message,
     std::string_view sync_machine = {});
 // Creates or replaces the Summary note of folder_id in one transaction.
@@ -181,11 +182,20 @@ void note_delete(storage::SqliteDatabase& database, std::int64_t id,
     std::string_view sync_machine = {});
 // Caller owns the transaction.
 void note_delete_in_transaction(storage::SqliteDatabase& database, std::int64_t id);
+struct NoteAudioOwner {
+    std::int64_t id{};
+    std::string name;
+};
 struct NoteAudioAttempt {
     std::int64_t id{}, note_id{}, clip_count{};
-    std::string note_name, service_origin, api_key_id;
+    NoteAudioOwner owner;
+    std::string service_origin, api_key_id;
     std::optional<std::string> batch_id;
 };
+// The ID of the note's L1 version row, if it has one.
+std::optional<std::int64_t> note_l1_document_id(storage::SqliteDatabase& database, std::int64_t id);
+std::optional<NoteAudioOwner> note_audio_owner(storage::SqliteDatabase& database, std::int64_t document_id);
+std::string note_audio_target(std::int64_t document_id, const NoteAudioOwner& owner);
 std::string note_audio_target(const NoteAudioAttempt& attempt);
 std::optional<NoteAudioAttempt> note_audio_attempt_by_id(storage::SqliteDatabase& database, std::int64_t id);
 std::optional<NoteAudioAttempt> note_audio_attempt_for_note(storage::SqliteDatabase& database, std::int64_t id);

@@ -1960,7 +1960,7 @@ components:
     NoteItem:
       type: object
       additionalProperties: false
-      required: [id, parent_id, kind, name, has_compressed, has_audio, read_only, is_summary, summary_linked, has_l1, has_l2, summary_excluded, folder_summary]
+      required: [id, parent_id, kind, name, has_compressed, has_audio, has_l1_audio, read_only, is_summary, summary_linked, has_l1, has_l2, summary_excluded, folder_summary]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         parent_id:
@@ -1979,6 +1979,8 @@ components:
         has_compressed:
           type: boolean
         has_audio:
+          type: boolean
+        has_l1_audio:
           type: boolean
         read_only:
           type: boolean

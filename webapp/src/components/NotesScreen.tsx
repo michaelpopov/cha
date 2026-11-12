@@ -979,8 +979,9 @@ export function NotesScreen({
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; position: number } | null>(null);
   const fullTextLoaded = documentId !== null && documentId === activeNoteId;
   const loadedTextMode = fullTextLoaded ? 'full_text' : noteTextMode;
-  const noteAudio = useNoteAudio({ client: client.noteAudio, id: activeNoteId, editor,
-    enabled: fullTextLoaded && readOnly && !immutable && phase === 'ready', menuOpen: contextMenu !== null,
+  const noteAudio = useNoteAudio({ client: client.noteAudio, id: documentId, editor,
+    enabled: (loadedTextMode === 'full_text' || loadedTextMode === 'l1') && readOnly && !immutable && phase === 'ready',
+    menuOpen: contextMenu !== null,
     playbackRate: playbackSpeed / 10, onError: setCommandError });
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const findRef = useRef<HTMLDivElement | null>(null);

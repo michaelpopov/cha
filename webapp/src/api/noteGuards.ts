@@ -15,7 +15,7 @@ export function hasExactKeys(value: Record<string, unknown>, keys: readonly stri
 
 export function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'has_audio', 'read_only', 'is_summary',
+    && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'has_audio', 'has_l1_audio', 'read_only', 'is_summary',
       'summary_linked', 'has_l1', 'has_l2', 'summary_excluded', 'folder_summary',
       ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
     && (!Object.hasOwn(value, 'forum_id') || (value.kind === 'folder' && typeof value.forum_id === 'string'))
@@ -25,6 +25,7 @@ export function isNoteItem(value: unknown): value is NoteItem {
     && typeof value.name === 'string' && value.name.length > 0
     && typeof value.has_compressed === 'boolean'
     && typeof value.has_audio === 'boolean'
+    && typeof value.has_l1_audio === 'boolean'
     && typeof value.read_only === 'boolean'
     && typeof value.is_summary === 'boolean' && typeof value.summary_linked === 'boolean'
     && typeof value.has_l1 === 'boolean' && typeof value.has_l2 === 'boolean'

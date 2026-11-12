@@ -5118,13 +5118,14 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     EXPECT_EQ(folder["result"]["parent_id"], nullptr);
     EXPECT_EQ(folder["result"]["kind"], "folder");
     EXPECT_EQ(folder["result"]["name"], "Plan");
-    EXPECT_EQ(folder["result"].size(), 13);
+    EXPECT_EQ(folder["result"].size(), 14);
     EXPECT_EQ(folder["result"]["has_compressed"], false);
     EXPECT_EQ(folder["result"]["has_l1"], false);
     EXPECT_EQ(folder["result"]["has_l2"], false);
     EXPECT_EQ(folder["result"]["summary_excluded"], false);
     EXPECT_EQ(folder["result"]["folder_summary"], false);
     EXPECT_EQ(folder["result"]["has_audio"], false);
+    EXPECT_EQ(folder["result"]["has_l1_audio"], false);
     EXPECT_EQ(folder["result"]["read_only"], false);
     const auto folder_id = folder["result"]["id"].get<std::int64_t>();
 

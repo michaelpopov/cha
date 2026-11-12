@@ -253,10 +253,15 @@ Application::Impl::Impl(
               for (const auto& note : store->list_note_items()) {
                   if (note.kind != NoteItemKind::note) continue;
                   auto audio = notes->background_audio_status_locked(note.id);
+                  const auto l1 = note.has_l1 ? store->get_note_l1_document_id(note.id) : std::nullopt;
+                  auto l1_audio = l1 ? notes->background_audio_status_locked(*l1)
+                      : nlohmann::json{{"pending", false}};
                   auto compression = notes->compression_status_locked(note.id);
-                  if (audio.at("pending") == true || compression.at("pending") == true)
+                  if (audio.at("pending") == true || l1_audio.at("pending") == true
+                      || compression.at("pending") == true)
                       pending.push_back({{"note_id", note.id}, {"name", note.name},
-                          {"audio", std::move(audio)}, {"compression", std::move(compression)}});
+                          {"audio", std::move(audio)}, {"l1_audio", std::move(l1_audio)},
+                          {"compression", std::move(compression)}});
               }
               return pending;
           },

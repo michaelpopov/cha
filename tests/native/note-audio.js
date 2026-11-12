@@ -1,10 +1,10 @@
 // Run with CHA_NATIVE_PARITY_SCRIPT against a disposable vault containing the
 // read-only "Audio check" note and a configured local fake audio service.
-async function nativeParity({ offline = false } = {}) {
+async function nativeParity({ offline = false, summary } = {}) {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const check = (condition, message) => { if (!condition) throw new Error(message); };
   const until = async (label, condition) => {
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + (summary ? 12000 : 30000);
     while (Date.now() < deadline) {
       const result = condition();
       if (result) return result;
@@ -107,6 +107,46 @@ async function nativeParity({ offline = false } = {}) {
     check(again.textContent.includes('Existing audio will be replaced after successful generation.'), 'replacement consequence missing');
     await click('Close', again);
     completed.push('explicit Stop and fresh voice on reopen');
+
+    if (summary) {
+      const chooseMode = async label => {
+        await click('Note text mode');
+        await click(label, await until('mode menu', () => document.querySelector('[role="menu"][aria-label="Note text mode"]')));
+      };
+      await chooseMode('L1');
+      await until('L1 document', () => editor()?.getText() === 'Summary narration.');
+      if (summary === 'generate') {
+        check(!noteRow().classList.contains('has-audio'), 'L1 mode tinted full-text audio');
+        await click('Actions for Audio check');
+        await click('Generate audio', await until('L1 actions', () => document.querySelector('[role="menu"]')));
+        const setup = await until('L1 audio dialog', () => document.querySelector('dialog[aria-label="Generate note audio"]'));
+        const voice = setup.querySelector('select');
+        await until('L1 voice selector', () => !voice.disabled);
+        check(!setup.textContent.includes('Existing audio'), 'full-text clips counted as L1 clips');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'Kore');
+        voice.dispatchEvent(new Event('change', { bubbles: true }));
+        await click('Generate', setup);
+        await until('L1 setup closed', () => !setup.isConnected);
+      }
+      await until('L1 tint', () => noteRow().classList.contains('has-audio'));
+      const paragraph = editor().view.dom.querySelector('p');
+      playbackMenu = await openMenu(paragraph);
+      await click('Play from here', playbackMenu);
+      await until('L1 playback', () => paragraph.classList.contains('cha-note-audio-current'));
+      editor().view.dom.dispatchEvent(key(false));
+      await chooseMode('Full text');
+      await until('full text restored', () => editor()?.getText().includes('Second paragraph'));
+      check(!paragraph.classList.contains('cha-note-audio-current'), 'mode switch kept L1 playback active');
+      await chooseMode('L1');
+      await until('L1 restored', () => editor()?.getText() === 'Summary narration.');
+      (await until('note with full-text audio only', () => [...document.querySelectorAll('[role="treeitem"]')]
+        .find(node => node.textContent.includes('Recovery check')))).click();
+      await until('full-text fallback', () => editor()?.getText().includes('Second paragraph'));
+      const fallback = editor().view.dom.querySelector('p');
+      await click('Play from here', await openMenu(fallback));
+      await until('full-text fallback playback', () => fallback.classList.contains('cha-note-audio-current'));
+      completed.push('L1 tint, L1 playback, mode switch, and full-text fallback playback');
+    }
     return { ok: true, completed };
   } catch (error) { return { ok: false, completed, reason: String(error), alerts: [...document.querySelectorAll('[role="alert"]')].map(node => node.textContent) }; }
 }

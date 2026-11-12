@@ -408,7 +408,7 @@ public:
     void save_compressed_note(std::int64_t id, std::string_view text);
     bool commit_compressed_note(std::int64_t id, std::string_view source,
         std::string_view text, std::string_view success_message);
-    void commit_note_level(std::int64_t id, int level, const nlohmann::json& document,
+    std::int64_t commit_note_level(std::int64_t id, int level, const nlohmann::json& document,
         std::string_view success_message);
     [[nodiscard]] NoteItem commit_folder_summary(std::int64_t folder_id, const nlohmann::json& document);
     [[nodiscard]] NoteItem set_note_summary_excluded(std::int64_t id, bool excluded);
@@ -422,6 +422,8 @@ public:
     [[nodiscard]] FolderStoreCapture capture_folder_store(
         std::int64_t folder_id, FolderStoreService service);
     nlohmann::json get_note_audio_info(std::int64_t id) const;
+    std::optional<NoteAudioOwner> get_note_audio_owner(std::int64_t document_id) const;
+    std::optional<std::int64_t> get_note_l1_document_id(std::int64_t id) const;
     NoteAudioClip get_note_audio_clip(std::int64_t id, std::int64_t ordinal) const;
     std::optional<NoteAudioAttempt> get_note_audio_attempt_by_id(std::int64_t id) const;
     std::optional<NoteAudioAttempt> get_note_audio_attempt_for_note(std::int64_t id) const;

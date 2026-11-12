@@ -820,6 +820,50 @@ TEST_F(NoteAudioBackground, NativeRecoveryReadsSavedBatchImmediatelyWithoutSubmi
     EXPECT_EQ(completions.load(), 1);
 }
 
+TEST_F(NoteAudioBackground, RecoversL1AudioAndReportsTheOriginalNote) {
+    const auto summary = note_document_from_text("Summary narration.");
+    const auto l1 = application->store().commit_note_level(note.id, 1, summary, "Saved.");
+    (void)application->rename_note_item(note.id, "Renamed chapter", epoch);
+    const auto target = "L1 of “Renamed chapter” (note " + std::to_string(note.id) + ")";
+    activate();
+    EXPECT_EQ(application->start_background_note_audio(l1, "Kore", {}, epoch, true),
+        (nlohmann::json{{"skipped", true}}));
+    EXPECT_EQ(application->list_events(epoch).front().message, "Audio skipped for " + target + ": No text to narrate.");
+    application->set_note_audio_changed({});
+
+    MockHttpServer server({audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+    const auto attempt = application->store().accept_note_audio(l1, 1,
+        "http://127.0.0.1:" + std::to_string(server.port()), key_id, [](const auto&) {});
+    ASSERT_TRUE(attempt);
+    ASSERT_TRUE(application->store().register_note_audio(attempt->id, audio_batch, "Kore"));
+    application.reset();
+    application = Application::open(make_command(workspace, path));
+    epoch = application->context_epoch();
+    server.pause_before_response(1);
+    server.start();
+    activate();
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    try {
+        (void)application->start_background_note_audio(l1, "Kore", {"Summary narration."}, epoch);
+        ADD_FAILURE() << "Accepted another L1 job while one was pending";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_TRUE(std::string(error.what()).starts_with("Audio generation is already running for " + target));
+    }
+    server.resume_responses();
+    ASSERT_TRUE(finished(l1));
+    server.join();
+    EXPECT_EQ(application->get_note_audio_info(l1, epoch)["count"], 1);
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
+    EXPECT_EQ(completed_id.load(), l1);
+    EXPECT_EQ(application->list_events(epoch).front().message, "Audio ready for " + target + ": 1 clips saved.");
+
+    application->commit_summary_part(note.id, SummaryPart::l1, note_document_from_text("Replacement"), epoch);
+    EXPECT_EQ(application->get_note_audio_info(l1, epoch)["count"], 0);
+    EXPECT_EQ(completed_id.load(), l1);
+    EXPECT_EQ(completions.load(), 2);
+}
+
 TEST_F(NoteAudioBackground, UnknownSubmissionRetiresOnceAndSecondaryProcessLeavesItIntact) {
     const auto attempt = saved_attempt(1, false);
     auto secondary = Application::open(make_command(workspace, path));

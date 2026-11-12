@@ -37,20 +37,19 @@ nlohmann::json NotesService::start_background_note_audio(std::int64_t id, std::s
         throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to generate note audio.");
     try { impl_->store->require_main(); }
     catch (const SecondaryProcessError&) { throw ApplicationError(ErrorCode::invalid_argument, vault_in_use_message); }
-    const auto items = impl_->store->list_note_items();
-    const auto item = std::find_if(items.begin(), items.end(), [id](const auto& note) { return note.id == id; });
+    const auto owner = impl_->store->get_note_audio_owner(id);
     const auto pending = impl_->store->get_note_audio_attempt_for_note(id);
-    if (only_if_missing && (item == items.end() || item->kind != NoteItemKind::note || !item->read_only
+    if (only_if_missing && (!owner
         || pending || impl_->store->get_note_audio_info(id).at("count").get<std::int64_t>() > 0))
         return {{"skipped", true}};
     if (pending) throw ApplicationError(ErrorCode::invalid_argument, "Audio generation is already running for "
         + note_audio_target(*pending) + ". Make that note editable to abandon the attempt.");
-    if (item == items.end() || item->kind != NoteItemKind::note || !item->read_only)
+    if (!owner)
         throw ApplicationError(ErrorCode::invalid_argument, "Make the note read-only to generate audio.");
     const auto skip = [&](std::string_view reason) -> nlohmann::json {
         try {
-            impl_->store->append_event(EventSeverity::warning, "Audio skipped for “" + item->name
-                + "” (note " + std::to_string(id) + "): " + std::string(reason));
+            impl_->store->append_event(EventSeverity::warning, "Audio skipped for " + note_audio_target(id, *owner)
+                + ": " + std::string(reason));
         } catch (const std::exception&) {
             throw ApplicationError(ErrorCode::invalid_argument,
                 "Could not record the audio skip. No job was started for this note. Check disk space and file access.");

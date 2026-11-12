@@ -14,6 +14,7 @@ export type NoteTreeItem = {
   summary_excluded?: boolean;
   folder_summary?: boolean;
   has_audio?: boolean;
+  has_l1_audio?: boolean;
   read_only?: boolean;
   is_summary?: boolean;
   summary_linked?: boolean;
@@ -47,6 +48,7 @@ export type NoteTreeRow = NoteSibling & {
   summaryExcluded?: boolean;
   folderSummary?: boolean;
   audioReady?: boolean;
+  l1AudioReady?: boolean;
   isSummary?: boolean;
   summaryLinked?: boolean;
   forumId?: string;
@@ -92,6 +94,7 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
       folderSummary: item.folder_summary ?? false,
       // Playback is only offered for read-only notes.
       audioReady: !!(item.has_audio && item.read_only),
+      l1AudioReady: !!(item.has_l1_audio && item.read_only),
       isSummary: item.is_summary ?? false,
       summaryLinked: item.summary_linked ?? false,
       forumId: item.forum_id,

@@ -118,6 +118,21 @@ void abandon_note_audio(storage::SqliteDatabase& database,
     }
 }
 
+void clear_note_audio(storage::SqliteDatabase& database, std::int64_t id, std::string_view reason) {
+    abandon_note_audio(database, id, reason);
+    database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
+}
+
+void clear_l1_audio(storage::SqliteDatabase& database, std::int64_t id, std::string_view reason) {
+    if (const auto l1 = note_l1_document_id(database, id)) clear_note_audio(database, *l1, reason);
+}
+
+void abandon_editable_note_audio(storage::SqliteDatabase& database, std::int64_t id) {
+    constexpr std::string_view reason = "note made editable.";
+    abandon_note_audio(database, id, reason);
+    if (const auto l1 = note_l1_document_id(database, id)) abandon_note_audio(database, *l1, reason);
+}
+
 std::string_view kind_name(NoteItemKind kind) {
     switch (kind) {
     case NoteItemKind::folder: return "folder";
@@ -178,6 +193,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     item.has_l2 = statement.integer(11) != 0;
     item.summary_excluded = statement.integer(12) != 0;
     item.folder_summary = statement.integer(13) != 0;
+    item.has_l1_audio = statement.integer(14) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -263,7 +279,9 @@ constexpr std::string_view note_item_select =
     "EXISTS (SELECT 1 FROM note_audio a WHERE a.note_id=n.id), "
     "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
     "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
-    "n.summary_excluded, n.folder_summary "
+    "n.summary_excluded, n.folder_summary, "
+    "EXISTS (SELECT 1 FROM note_items v JOIN note_audio a ON a.note_id=v.id "
+    "WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1) "
     "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id ";
 
 std::optional<NoteItem> find_item(
@@ -281,19 +299,28 @@ struct DocumentOwner {
     NoteItemKind kind;
     std::optional<std::int64_t> parent_id;
     bool read_only;
+    std::string name;
+    int level;
 };
 
-DocumentOwner document_owner(storage::SqliteDatabase& database, std::int64_t id) {
+std::optional<DocumentOwner> find_document_owner(storage::SqliteDatabase& database, std::int64_t id) {
     auto row = database.prepare(
-        "SELECT n.id, n.kind, n.parent_id, n.read_only FROM note_items d "
+        "SELECT n.id, n.kind, n.parent_id, n.read_only, n.name, d.level FROM note_items d "
         "JOIN note_items n ON n.id=CASE WHEN d.compressed=1 THEN d.parent_id ELSE d.id END "
         "WHERE d.id=?1 AND n.compressed=0 AND (d.compressed=0 OR n.kind='note')", id);
-    if (!row.step()) fail(NoteFailure::not_found, missing_note_message);
+    if (!row.step()) return {};
     const auto kind = row.text(1);
-    return {row.integer(0),
+    return DocumentOwner{row.integer(0),
         kind == "note" ? NoteItemKind::note
             : kind == "annotation" ? NoteItemKind::annotation : NoteItemKind::folder,
-        row.is_null(2) ? std::nullopt : std::optional(row.integer(2)), row.integer(3) != 0};
+        row.is_null(2) ? std::nullopt : std::optional(row.integer(2)), row.integer(3) != 0,
+        row.text(4), static_cast<int>(row.integer(5))};
+}
+
+DocumentOwner document_owner(storage::SqliteDatabase& database, std::int64_t id) {
+    auto owner = find_document_owner(database, id);
+    if (!owner) fail(NoteFailure::not_found, missing_note_message);
+    return std::move(*owner);
 }
 
 std::string compact_document(
@@ -371,8 +398,9 @@ std::string encode_compressed_note(std::string_view text, std::int64_t id) {
 }
 
 void replace_summary_note(storage::SqliteDatabase& database, std::int64_t id, std::string_view blob) {
-    abandon_note_audio(database, id, "summary replaced.");
-    database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
+    constexpr std::string_view reason = "summary replaced.";
+    clear_note_audio(database, id, reason);
+    clear_l1_audio(database, id, reason);
     database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1", id).run();
     auto update = database.prepare("UPDATE note_items SET content_json=?, read_only=1, scroll_top=0 WHERE id=?");
     update.bind_blob(1, blob);
@@ -387,24 +415,24 @@ void delete_version_row(storage::SqliteDatabase& database, std::int64_t id, int 
 
 // Caller owns the transaction. An update keeps the version row's ID and scroll position.
 // compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
-void write_version_row(
+std::int64_t write_version_row(
     storage::SqliteDatabase& database, std::int64_t id, int level, std::string_view blob) {
     auto note = database.prepare(
         "SELECT name FROM note_items WHERE id=? AND kind='note' AND compressed=0", id);
     if (!note.step()) fail(NoteFailure::not_found, missing_note_message);
     auto update = database.prepare(
-        "UPDATE note_items SET content_json=? WHERE parent_id=? AND compressed=1 AND level=?");
+        "UPDATE note_items SET content_json=? WHERE parent_id=? AND compressed=1 AND level=? RETURNING id");
     update.bind_blob(1, blob);
     update.bind(2, id);
     update.bind(3, level);
-    update.run();
-    if (database.changes() != 0) return;
+    if (update.step()) return update.integer(0);
     auto insert = database.prepare(
         "INSERT INTO note_items(parent_id, kind, name, content_json, compressed, level) VALUES (?, 'note', ?, ?, 1, ?)",
         id, note.text(0));
     insert.bind_blob(3, blob);
     insert.bind(4, level);
     insert.run();
+    return database.last_insert_rowid();
 }
 
 // Highlighting can split a text node. Merge matching neighbours after removing
@@ -817,6 +845,7 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"name", item.name},
         {"has_compressed", item.has_compressed},
         {"has_audio", item.has_audio},
+        {"has_l1_audio", item.has_l1_audio},
         {"read_only", item.read_only},
         {"is_summary", item.is_summary},
         {"summary_linked", item.summary_linked},
@@ -1572,7 +1601,7 @@ NoteItem note_set_read_only(
         auto item = find_item(database, id);
         if (!item) fail(NoteFailure::not_found, missing_note_message);
         if (item->kind != NoteItemKind::note) fail(NoteFailure::invalid, not_note_message);
-        if (!read_only) abandon_note_audio(database, id, "note made editable.");
+        if (!read_only) abandon_editable_note_audio(database, id);
         auto update = database.prepare("UPDATE note_items SET read_only = ?1 WHERE id = ?2");
         update.bind(1, static_cast<std::int64_t>(read_only));
         update.bind(2, id);
@@ -1645,7 +1674,7 @@ bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
     }
 }
 
-void note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
+std::int64_t note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
     int level, const nlohmann::json& document, std::string_view success_message,
     std::string_view sync_machine) {
     try {
@@ -1657,12 +1686,14 @@ void note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
         if (!document.contains("type") || document["type"] != "doc")
             fail(NoteFailure::invalid, "Summary content must have a doc root.");
         const auto blob = compress_document(compact_document(document, id, true));
-        write_version_row(database, id, level, blob);
+        if (level == 1) clear_l1_audio(database, id, "L1 replaced.");
+        const auto document_id = write_version_row(database, id, level, blob);
         event_append_in_transaction(database, EventSeverity::success, success_message);
         if (sync_connected(database, sync_machine))
             sync_record_note(database, id, {{"level", level == 1 ? "l1" : "l2"},
                 {"content", encode_base64(blob)}}, "note.level");
         transaction.commit();
+        return document_id;
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, saving_message);
     }
@@ -1958,10 +1989,22 @@ NoteAudioClip note_audio_clip(storage::SqliteDatabase& database, std::int64_t id
     return {statement.text(0), statement.blob(1)};
 }
 
+std::optional<std::int64_t> note_l1_document_id(storage::SqliteDatabase& database, std::int64_t id) {
+    auto row = database.prepare("SELECT id FROM note_items WHERE parent_id=? AND compressed=1 AND level=1", id);
+    if (!row.step()) return {};
+    return row.integer(0);
+}
+
+std::optional<NoteAudioOwner> note_audio_owner(storage::SqliteDatabase& database, std::int64_t document_id) {
+    auto owner = find_document_owner(database, document_id);
+    if (!owner || owner->kind != NoteItemKind::note || !owner->read_only
+        || (owner->id != document_id && owner->level != 1)) return {};
+    return NoteAudioOwner{owner->id, std::move(owner->name)};
+}
+
 static void save_audio_in_transaction(storage::SqliteDatabase& database, std::int64_t id,
     const std::vector<std::filesystem::path>& clips) {
-    auto note = database.prepare("SELECT 1 FROM note_items WHERE id=? AND kind='note' AND read_only=1", id);
-    if (!note.step()) throw NoteError(NoteFailure::not_found, "That note was not found.");
+    if (!note_audio_owner(database, id)) fail(NoteFailure::not_found, missing_note_message);
     if (clips.empty()) throw NoteError(NoteFailure::invalid, "No audio clips to save.");
     database.prepare("DELETE FROM note_audio WHERE note_id=?", id).run();
     for (std::size_t i = 0; i < clips.size(); ++i) {
@@ -1986,30 +2029,41 @@ void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
     transaction.commit();
 }
 
+std::string note_audio_target(std::int64_t document_id, const NoteAudioOwner& owner) {
+    const auto label = "“" + owner.name + "” (note " + std::to_string(owner.id) + ")";
+    return document_id == owner.id ? label : "L1 of " + label;
+}
+
 std::string note_audio_target(const NoteAudioAttempt& attempt) {
-    return "“" + attempt.note_name + "” (note " + std::to_string(attempt.note_id) + ")";
+    return note_audio_target(attempt.note_id, attempt.owner);
 }
 
 namespace {
+constexpr std::string_view audio_attempt_select =
+    "SELECT a.id, a.note_id, a.clip_count, CASE WHEN d.compressed=1 THEN d.parent_id ELSE d.id END, "
+    "a.note_name, a.service_origin, a.api_key_id, a.batch_id "
+    "FROM note_audio_attempts a JOIN note_items d ON d.id=a.note_id ";
+
 NoteAudioAttempt decode_audio_attempt(storage::SqliteStatement& row) {
-    NoteAudioAttempt result{row.integer(0), row.integer(1), row.integer(2), row.text(3), row.text(4), row.text(5), {}};
-    if (!row.is_null(6)) result.batch_id = row.text(6);
+    NoteAudioAttempt result{row.integer(0), row.integer(1), row.integer(2),
+        {row.integer(3), row.text(4)}, row.text(5), row.text(6), {}};
+    if (!row.is_null(7)) result.batch_id = row.text(7);
     return result;
 }
 }
 
 std::optional<NoteAudioAttempt> note_audio_attempt_by_id(storage::SqliteDatabase& database, std::int64_t id) {
-    auto row = database.prepare("SELECT id, note_id, clip_count, note_name, service_origin, api_key_id, batch_id FROM note_audio_attempts WHERE id=?", id);
+    auto row = database.prepare(std::string(audio_attempt_select) + "WHERE a.id=?", id);
     if (!row.step()) return {};
     return decode_audio_attempt(row);
 }
 std::optional<NoteAudioAttempt> note_audio_attempt_for_note(storage::SqliteDatabase& database, std::int64_t id) {
-    auto row = database.prepare("SELECT id, note_id, clip_count, note_name, service_origin, api_key_id, batch_id FROM note_audio_attempts WHERE note_id=?", id);
+    auto row = database.prepare(std::string(audio_attempt_select) + "WHERE a.note_id=?", id);
     if (!row.step()) return {};
     return decode_audio_attempt(row);
 }
 std::vector<NoteAudioAttempt> note_audio_attempts(storage::SqliteDatabase& database) {
-    auto row = database.prepare("SELECT id, note_id, clip_count, note_name, service_origin, api_key_id, batch_id FROM note_audio_attempts ORDER BY id");
+    auto row = database.prepare(std::string(audio_attempt_select) + "ORDER BY a.id");
     std::vector<NoteAudioAttempt> result;
     while (row.step()) result.push_back(decode_audio_attempt(row));
     return result;
@@ -2018,17 +2072,17 @@ std::optional<NoteAudioAttempt> note_audio_accept(storage::SqliteDatabase& datab
     std::int64_t count, std::string_view origin, std::string_view key_id,
     const std::function<void(const NoteAudioAttempt&)>& launch, bool only_if_missing) {
     storage::SqliteTransaction transaction(database);
-    const auto item = find_item(database, note_id);
+    const auto owner = note_audio_owner(database, note_id);
     const auto pending = note_audio_attempt_for_note(database, note_id);
-    if (only_if_missing && (!item || item->kind != NoteItemKind::note || !item->read_only
+    if (only_if_missing && (!owner
         || pending || note_audio_info(database, note_id).at("count").get<std::int64_t>() > 0)) return {};
     if (pending)
         throw NoteError(NoteFailure::invalid, "Audio generation is already running for " + note_audio_target(*pending)
             + ". Make that note editable to abandon the attempt.");
-    if (!item || item->kind != NoteItemKind::note || !item->read_only)
+    if (!owner)
         throw NoteError(NoteFailure::invalid, "Make the note read-only to generate audio.");
     database.prepare("INSERT INTO note_audio_attempts(note_id,note_name,clip_count,service_origin,api_key_id) "
-        "VALUES (?,?,?,?,?)", note_id, item->name, count, origin, key_id).run();
+        "VALUES (?,?,?,?,?)", note_id, owner->name, count, origin, key_id).run();
     const auto attempt = *note_audio_attempt_by_id(database, database.last_insert_rowid());
     launch(attempt);
     transaction.commit();
@@ -2235,6 +2289,15 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
         std::map<std::int64_t, std::int64_t> new_ids;
         std::vector<std::int64_t> folders;
         std::vector<std::int64_t> created;
+        const auto copy_audio = [&](std::int64_t source_id, std::int64_t target_id) {
+            auto clips = file.prepare("SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", source_id);
+            while (clips.step()) {
+                auto clip = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?1, ?2, ?3, ?4)",
+                    target_id, clips.integer(0), clips.text(1));
+                clip.bind_blob(4, clips.blob(2));
+                clip.run();
+            }
+        };
         const auto copy_item = [&](storage::SqliteStatement& row, std::optional<std::int64_t> new_parent) {
             const auto kind = row.text(1);
             if (kind != "folder" && kind != "note") fail(NoteFailure::invalid, not_export_message);
@@ -2259,7 +2322,7 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
             if (kind == "folder") folders.push_back(row.integer(0));
             else if (has_version_rows) {
                 auto versions = file.prepare(
-                    "SELECT " + file_level + ", content_json, scroll_top FROM note_items WHERE parent_id=? AND compressed=1",
+                    "SELECT " + file_level + ", content_json, scroll_top, id FROM note_items WHERE parent_id=? AND compressed=1",
                     row.integer(0));
                 while (versions.step()) {
                     const auto blob = versions.blob(1);
@@ -2269,21 +2332,16 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
                         fail(NoteFailure::invalid, not_export_message);
                     }
                     const auto level = static_cast<int>(versions.integer(0));
-                    write_version_row(database, id, level, blob);
+                    const auto document_id = write_version_row(database, id, level, blob);
                     database.prepare(
-                        "UPDATE note_items SET scroll_top=? WHERE parent_id=? AND compressed=1 AND level=?",
-                        versions.integer(2), id, level).run();
+                        "UPDATE note_items SET scroll_top=? WHERE id=?",
+                        versions.integer(2), document_id).run();
+                    if (level == 1) copy_audio(versions.integer(3), document_id);
                 }
             } else if (!row.is_null(8)) {
                 write_version_row(database, id, 0, encode_compressed_note(row.text(8), id));
             }
-            auto clips = file.prepare("SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", row.integer(0));
-            while (clips.step()) {
-                auto clip = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?1, ?2, ?3, ?4)",
-                    id, clips.integer(0), clips.text(1));
-                clip.bind_blob(4, clips.blob(2));
-                clip.run();
-            }
+            copy_audio(row.integer(0), id);
         };
         std::string columns = "SELECT id, kind, name, content_json, read_only, scroll_top";
         columns += has_levels ? ", summary_excluded, folder_summary" : ", 0, 0";
@@ -2426,6 +2484,7 @@ void bind_note_content(storage::SqliteStatement& statement, int first,
 
 void apply_version_content(storage::SqliteDatabase& database, std::int64_t id,
     const nlohmann::json& record, std::string_view key, int level, bool required = false) {
+    if (level == 1) clear_l1_audio(database, id, "incoming change replaced L1.");
     auto field = record.find(key);
     const bool legacy = level == 0 && field == record.end();
     if (legacy) field = record.find("compressed_text");
@@ -2512,8 +2571,7 @@ bool apply_note_update(storage::SqliteDatabase& database, const nlohmann::json& 
         fail(NoteFailure::invalid, "The incoming note record is invalid.");
     const std::string blob = apply_content(record);
     const auto document = parse_document(blob, item->id);
-    abandon_note_audio(database, item->id, "incoming change replaced the note.");
-    database.prepare("DELETE FROM note_audio WHERE note_id=?", item->id).run();
+    clear_note_audio(database, item->id, "incoming change replaced the note.");
     auto update = database.prepare(
         "UPDATE note_items SET content_json=?1, "
         "scroll_top=?2, read_only=?3, summary_excluded=?4, changed=0 WHERE id=?5");
@@ -2557,7 +2615,7 @@ bool apply_note_read_only(storage::SqliteDatabase& database, const nlohmann::jso
     if (item.kind != NoteItemKind::note)
         fail(NoteFailure::invalid, "The incoming note record is invalid.");
     const bool read_only = record.at("read_only").get<bool>();
-    if (!read_only) abandon_note_audio(database, item.id, "note made editable.");
+    if (!read_only) abandon_editable_note_audio(database, item.id);
     database.prepare("UPDATE note_items SET read_only=? WHERE id=?",
         read_only ? 1 : 0, item.id).run();
     return true;

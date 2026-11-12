@@ -589,24 +589,32 @@ Json inspect_services(
 
 Json inspect_notes(const WorkspaceConfigStore& store) {
     const auto attempts = store.get_note_audio_attempts();
+    // Saved when the attempt started; current settings can differ.
+    const auto saved_attempt = [&](std::int64_t document_id) -> Json {
+        for (const auto& attempt : attempts) {
+            if (attempt.note_id != document_id) continue;
+            return {
+                {"id", attempt.id},
+                {"clip_count", attempt.clip_count},
+                {"service_origin", attempt.service_origin},
+                {"api_key_id", attempt.api_key_id},
+                {"batch_id", optional_json(attempt.batch_id)},
+            };
+        }
+        return nullptr;
+    };
     Json items = Json::array();
     for (const NoteItem& note : store.list_note_items()) {
         Json item = note;
         item["ref_id"] = note_item_ref_id(note.id);
         item["audio_attempt"] = nullptr;
+        item["l1_audio_attempt"] = nullptr;
         if (note.kind == NoteItemKind::note) {
             item["audio_clips"] = store.get_note_audio_info(note.id);
-            for (const auto& attempt : attempts) {
-                if (attempt.note_id != note.id) continue;
-                // Saved when the attempt started; current settings can differ.
-                item["audio_attempt"] = {
-                    {"id", attempt.id},
-                    {"clip_count", attempt.clip_count},
-                    {"service_origin", attempt.service_origin},
-                    {"api_key_id", attempt.api_key_id},
-                    {"batch_id", optional_json(attempt.batch_id)},
-                };
-            }
+            item["audio_attempt"] = saved_attempt(note.id);
+            const auto l1 = note.has_l1 ? store.get_note_l1_document_id(note.id) : std::nullopt;
+            item["l1_audio_clips"] = l1 ? store.get_note_audio_info(*l1) : Json{{"count", 0}};
+            if (l1) item["l1_audio_attempt"] = saved_attempt(*l1);
         }
         items.push_back(std::move(item));
     }

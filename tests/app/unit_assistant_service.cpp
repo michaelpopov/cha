@@ -1439,6 +1439,42 @@ TEST(AssistantInspect, SecretsAreExcludedAndPendingAudioUsesSavedAttempt) {
     }
 }
 
+TEST(AssistantInspect, NotesShowL1AudioApartFromFullTextAudio) {
+    ServiceHarness harness;
+    auto& store = harness.store();
+    const auto note = store.create_note_item({}, NoteItemKind::note, "Chapter");
+    const Json text{{"type", "text"}, {"text", "Summary"}};
+    const Json paragraph{{"type", "paragraph"}, {"content", Json::array({text})}};
+    const auto l1 = store.commit_note_level(
+        note.id, 1, {{"type", "doc"}, {"content", Json::array({paragraph})}}, "Saved.");
+    (void)store.set_note_read_only(note.id, true);
+    const auto clip = harness.config_directory() / "clip.m4a";
+    std::ofstream(clip, std::ios::binary) << "clip";
+    store.save_note_audio(note.id, {clip});
+    store.save_note_audio(l1, {clip, clip});
+    const auto find_note = [&] {
+        const auto result = harness.run("assistant_inspect", inspect_arguments("notes"));
+        const auto found = std::ranges::find_if(result["items"], [&](const Json& item) {
+            return item["id"] == note.id;
+        });
+        return found == result["items"].end() ? Json() : *found;
+    };
+
+    auto item = find_note();
+    EXPECT_EQ(item["audio_clips"]["count"], 1);
+    EXPECT_EQ(item["l1_audio_clips"]["count"], 2);
+    EXPECT_EQ(item["audio_attempt"], nullptr);
+    EXPECT_EQ(item["l1_audio_attempt"], nullptr);
+
+    const auto attempt = store.accept_note_audio(
+        l1, 3, "https://saved.invalid", "key", [](const NoteAudioAttempt&) {});
+    ASSERT_TRUE(attempt);
+    item = find_note();
+    EXPECT_EQ(item["audio_attempt"], nullptr);
+    EXPECT_EQ(item["l1_audio_attempt"]["id"], attempt->id);
+    EXPECT_EQ(item["l1_audio_attempt"]["clip_count"], 3);
+}
+
 TEST(AssistantInspect, RedactsValuesWithoutChangingJsonSyntax) {
     ServiceHarness harness;
     ApiKeyStore keys(harness.store());

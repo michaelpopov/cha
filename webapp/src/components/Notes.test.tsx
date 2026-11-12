@@ -691,6 +691,116 @@ describe('Notes in the application', () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it.each(['replaced', 'removed', 'recreated'] as const)('rechecks the L1 document when it was %s after setup', async change => {
+    let documentId = 40;
+    let text = 'Original L1';
+    const getNote = vi.fn<NotesClient['getNote']>(async (id, mode) => ({
+      id, document_id: mode === 'l1' ? documentId : id, document: noteDocument(mode === 'l1' ? text : 'Full text'),
+    }));
+    const startBackground = vi.fn().mockResolvedValue({ attempt_id: 1 });
+    const backgroundStatus = vi.fn().mockResolvedValue({ pending: true, attempt_id: 1 });
+    const info = vi.fn(async (id: number) => ({ count: id === 40 ? 1 : 0 }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [{ ...plan, read_only: true, has_l1: true }],
+      getNote,
+      noteAudio: { contextEpoch: () => 1, startBackground, backgroundStatus, info, source: vi.fn(), release: vi.fn() },
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Full text');
+    chooseNoteMode('L1');
+    await screen.findByText('Original L1');
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
+    const generateAudio = screen.getByRole('menuitem', { name: 'Generate audio' });
+    expect(generateAudio).toBeEnabled();
+    expect(backgroundStatus).not.toHaveBeenCalled();
+    fireEvent.click(generateAudio);
+    const dialog = await screen.findByRole('dialog', { name: 'Generate note audio' });
+    await within(dialog).findByText('Existing audio will be replaced after successful generation.');
+    documentId = change === 'removed' ? plan.id : change === 'recreated' ? 41 : 40;
+    text = 'New L1';
+    fireEvent.change(within(dialog).getByLabelText('Voice'), { target: { value: 'Kore' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Generate' }));
+    if (change === 'replaced') {
+      await waitFor(() => expect(dialog).not.toBeInTheDocument());
+      expect(startBackground).toHaveBeenCalledExactlyOnceWith(40, 'Kore', ['New L1']);
+    } else {
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent('Reopen the dialog');
+      expect(startBackground).not.toHaveBeenCalled();
+    }
+    expect(getNote).toHaveBeenLastCalledWith(plan.id, 'l1');
+    expect(screen.getByRole('button', { name: 'Note text mode' })).toHaveAttribute('title', 'L1 mode; showing L1');
+  });
+
+  it('uses the selected audio mode for tint and folder targets', async () => {
+    const chapter = { ...plan, parent_id: study.id, read_only: true, has_audio: true, has_l1: true };
+    const existing = { ...chapter, id: 5, name: 'Has L1 audio', has_audio: false, has_l1_audio: true };
+    const pending = { ...chapter, id: 6, name: 'Pending L1 audio' };
+    const noL1 = { ...chapter, id: 7, name: 'No L1', has_l1: false };
+    const editable = { ...chapter, id: 8, name: 'Editable', read_only: false };
+    const removed = { ...chapter, id: 9, name: 'Removed L1' };
+    let items = [study, chapter, existing, pending, noL1, editable, removed];
+    let removedId = 109;
+    const listNoteItems = vi.fn(async () => items);
+    const getNote = vi.fn<NotesClient['getNote']>(async (id, mode) => ({
+      id, document_id: mode === 'l1' && id !== noL1.id ? id === removed.id ? removedId : id + 100 : id,
+      document: noteDocument(mode === 'l1' ? `L1 ${id}` : `Full ${id}`),
+    }));
+    const startBackground = vi.fn().mockResolvedValue({ attempt_id: 1 });
+    const info = vi.fn(async (id: number) => ({ count: id === 105 || id === chapter.id ? 1 : 0 }));
+    render(<App client={fixtureClient({
+      listNoteItems, getNote,
+      noteAudio: { contextEpoch: () => 1, startBackground, info, source: vi.fn(), release: vi.fn(),
+        backgroundStatus: async id => id === 106 ? { pending: true, attempt_id: 2 } : { pending: false } },
+    })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
+    const row = await screen.findByRole('treeitem', { name: 'Plan' });
+    fireEvent.click(row);
+    await screen.findByText('Full 4');
+    expect(row).toHaveClass('has-audio');
+    const existingRow = screen.getByRole('treeitem', { name: existing.name });
+    expect(existingRow).not.toHaveClass('has-audio');
+    const openAudioMenu = async (name: string) => {
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` })));
+      return screen.getByRole('menuitem', { name: 'Generate audio' });
+    };
+    const closeMenu = () => fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    const listsBeforeModes = listNoteItems.mock.calls.length;
+    for (const mode of ['L2', 'Compressed'] as const) {
+      chooseNoteMode(mode);
+      await waitFor(() => expect(row).not.toHaveClass('has-audio'));
+      expect(await openAudioMenu('Plan')).toBeDisabled();
+      closeMenu();
+      expect(await openAudioMenu('Study')).toBeDisabled();
+      closeMenu();
+    }
+    chooseNoteMode('L1');
+    await screen.findByText('L1 4');
+    expect(row).not.toHaveClass('has-audio');
+    expect(existingRow).toHaveClass('has-audio');
+    expect(listNoteItems).toHaveBeenCalledTimes(listsBeforeModes);
+    for (const item of [noL1, editable]) {
+      expect(await openAudioMenu(item.name)).toBeDisabled();
+      closeMenu();
+    }
+    fireEvent.click(await openAudioMenu('Study'));
+    const dialog = await screen.findByRole('dialog', { name: 'Generate note audio' });
+    const voice = within(dialog).getByLabelText('Voice');
+    await waitFor(() => expect(voice).toBeEnabled());
+    removedId = removed.id;
+    fireEvent.change(voice, { target: { value: 'Kore' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(getNote).not.toHaveBeenCalledWith(noL1.id, 'l1');
+    expect(getNote).not.toHaveBeenCalledWith(editable.id, 'l1');
+    expect(startBackground).toHaveBeenCalledExactlyOnceWith(104, 'Kore', ['L1 4'], true);
+
+    items = items.map(item => item.id === chapter.id ? { ...item, has_l1_audio: true } : item);
+    act(() => window.dispatchEvent(new CustomEvent('cha-note-audio-changed', { detail: { id: 104, affectedNoteOnly: true } })));
+    await waitFor(() => expect(row).toHaveClass('has-audio'));
+  });
+
   it.each([false, true])('opens another read-only book note after earlier deletion: %s', async (deleteEarlier) => {
     const first = { ...plan, read_only: true };
     const second = { ...first, id: 5, name: 'Next chapter' };
