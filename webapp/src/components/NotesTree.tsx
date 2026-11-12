@@ -18,7 +18,10 @@ import {
   type FolderStoreOperation,
   type NoteItem,
   type NotesClient,
+  type NoteTextMode,
 } from '../api/client';
+import { downloadEpub, noteFolderFilename } from '../download';
+import { buildFolderEpub, EpubExportError } from '../notes/epubExport';
 import {
   availableNoteName,
   buildNoteIndex,
@@ -99,11 +102,18 @@ export type SummarizeNotes = (source: NoteItem, epoch: number, refresh: () => Pr
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
+const folderTransferStatus = {
+  export: 'Exporting folder…',
+  import: 'Importing folder…',
+  epub: 'Exporting EPUB…',
+};
+
 export function NotesTree({
   client,
   getNoteLength,
   browsing,
   activeNoteId,
+  noteTextMode,
   onOpenNote,
   onBeforeCreateNote,
   onDeleteItem,
@@ -121,6 +131,7 @@ export function NotesTree({
   getNoteLength(id: number): Promise<number>;
   browsing: boolean;
   activeNoteId: number | null;
+  noteTextMode: NoteTextMode;
   onOpenNote(id: number, importSource?: NoteImportSource): void;
   onBeforeCreateNote(): Promise<boolean>;
   onDeleteItem: DeleteNoteItem;
@@ -143,7 +154,7 @@ export function NotesTree({
   const [listError, setListError] = useState<string | null>(null);
   const [listing, setListing] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [folderTransfer, setFolderTransfer] = useState<'export' | 'import' | null>(null);
+  const [folderTransfer, setFolderTransfer] = useState<keyof typeof folderTransferStatus | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const generation = useRef(0);
@@ -520,10 +531,52 @@ export function NotesTree({
     setFolderTransfer('export');
     setError(null);
     try {
-      // Characters that file systems reject become hyphens.
-      await transfer.exportFolder(`${source.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')}.sqlite`, source.id);
+      await transfer.exportFolder(noteFolderFilename(source.name, 'sqlite'), source.id);
     } catch (failure: unknown) {
       if (alive.current) setError(publicErrorMessage(failure, 'The folder could not be exported.'));
+    } finally {
+      busy.current = false;
+      flushBackgroundRefresh();
+      if (alive.current) setFolderTransfer(null);
+    }
+  }
+
+  async function exportEpub() {
+    const epoch = menu?.epoch;
+    const source = takeMenuSource();
+    if (source?.kind !== 'folder' || epoch === undefined || !canMutateNow()) return;
+    const exportClient = clientRef.current;
+
+    function requireContext() {
+      if (!alive.current) throw new Error('Notes tree unmounted');
+      if (clientRef.current !== exportClient || exportClient.contextEpoch() !== epoch) {
+        throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+      }
+    }
+
+    async function readCurrent<T>(read: () => Promise<T>): Promise<T> {
+      requireContext();
+      try { return await read(); }
+      finally { requireContext(); }
+    }
+
+    busy.current = true;
+    setFolderTransfer('epub');
+    setError(null);
+    try {
+      requireContext();
+      if (!await beforeCreateRef.current()) return;
+      const listing = await readCurrent(() => exportClient.listNoteItems());
+      const book = await buildFolderEpub(source.id, listing, noteTextMode, (note, mode) =>
+        readCurrent(async () => (await exportClient.getNote(note.id, mode)).document));
+      requireContext();
+      downloadEpub(book.title, book.bytes);
+    } catch (failure: unknown) {
+      if (alive.current) {
+        const expected = failure instanceof EpubExportError
+          || failure instanceof ChaError && (failure.code === 'vault_changed' || failure.code === 'application_unavailable');
+        setError(expected ? failure.message : 'The EPUB could not be exported.');
+      }
     } finally {
       busy.current = false;
       flushBackgroundRefresh();
@@ -886,7 +939,7 @@ export function NotesTree({
       )}
       {!loaded && !error && !listError && <p role="status">Loading notes…</p>}
       {importing && <p role="status">Importing EPUB…</p>}
-      {folderTransfer && <p role="status">{folderTransfer === 'export' ? 'Exporting folder…' : 'Importing folder…'}</p>}
+      {folderTransfer && <p role="status">{folderTransferStatus[folderTransfer]}</p>}
       <input
         accept=".epub"
         aria-label="EPUB file"
@@ -982,6 +1035,10 @@ export function NotesTree({
           {client.noteFolderTransfer && !menuIsNote && menu.sourceId !== 'vault' && (
             <button disabled={menuFolderBusy && !menuManaged} onClick={() => void exportFolder()}
               role="menuitem" type="button">Export folder…</button>
+          )}
+          {menuRow?.kind === 'folder' && menu.sourceId !== 'vault' && (
+            <button disabled={menuFolderBusy && !menuManaged} onClick={() => void exportEpub()}
+              role="menuitem" type="button">Export EPUB…</button>
           )}
           {!menuManaged && menu.sourceId !== 'vault' && (
             <>

@@ -1,16 +1,25 @@
 import type { NoteImportSource } from '../notes/importSource';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { strFromU8, unzipSync } from 'fflate';
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { noteItem } from '../test/notes';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { noteDocument, noteItem, paragraph } from '../test/notes';
 
 import {
   ChaError,
+  type NoteContent,
   type NoteItem,
   type NotesClient,
+  type NoteTextMode,
 } from '../api/client';
+import { downloadEpub } from '../download';
 import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SummarizeNotes } from './NotesTree';
+
+vi.mock('../download', async importOriginal => ({
+  ...await importOriginal<typeof import('../download')>(),
+  downloadEpub: vi.fn(),
+}));
 
 const study: NoteItem = noteItem({ id: 1, kind: 'folder', name: 'Study' });
 const aardvark: NoteItem = noteItem({ id: 2, name: 'Aardvark' });
@@ -88,9 +97,11 @@ function renderTree({
   onCompressNote,
   onSummarize = vi.fn(),
   getNoteLength = vi.fn(async () => 16),
+  noteTextMode = 'full_text' as NoteTextMode,
 }: {
   items?: NoteItem[];
   notes?: NotesClient;
+  noteTextMode?: NoteTextMode;
   activeNoteId?: number | null;
   onOpenNote?: (id: number, importSource?: NoteImportSource) => void;
   onBeforeCreateNote?: () => Promise<boolean>;
@@ -115,6 +126,7 @@ function renderTree({
         browsing
         client={notesClient}
         getNoteLength={getNoteLength}
+        noteTextMode={noteTextMode}
         onBeforeCreateNote={onBeforeCreateNote}
         onDeleteItem={deleteItem}
         onCompressNote={onCompressNote ?? (async ([target], epoch, folder, refresh) => {
@@ -507,11 +519,12 @@ describe('Notes tree', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
     const menu = screen.getByRole('menu');
     expect([...menu.querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]')].map(node => node.textContent))
-      .toEqual(['New note', 'New folder', 'Import EPUB…', 'Import folder…', 'Export folder…',
+      .toEqual(['New note', 'New folder', 'Import EPUB…', 'Import folder…', 'Export folder…', 'Export EPUB…',
         'Rename', 'Generate audio', 'Compress', 'Summarize', 'Delete', 'Upload to store']);
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Aardvark' }));
     expect(screen.queryByRole('menuitem', { name: 'Export folder…' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Export EPUB…' })).not.toBeInTheDocument();
   });
 
   it('exports a folder under its name and shows progress until the save ends', async () => {
@@ -1147,11 +1160,11 @@ it('disables conflicting folder actions while an upload is active', async () => 
   await screen.findByRole('treeitem', { name: 'Study' });
   fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
   await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Upload to store' })).toBeEnabled());
-  for (const name of ['New note', 'New folder', 'Import EPUB…', 'Rename', 'Compress', 'Summarize'])
+  for (const name of ['New note', 'New folder', 'Import EPUB…', 'Export EPUB…', 'Rename', 'Compress', 'Summarize'])
     expect(screen.getByRole('menuitem', { name })).toBeDisabled();
 });
 
-it.each(['mouse', 'keyboard'])('shows only Export folder for both managed folders via %s', async (entry) => {
+it.each(['mouse', 'keyboard'])('shows the export commands for both managed folders via %s', async (entry) => {
   const items: NoteItem[] = [
     { ...study, name: 'Forums', forum_id: '' },
     { ...philosophy, name: 'Research', forum_id: 'research' },
@@ -1169,8 +1182,8 @@ it.each(['mouse', 'keyboard'])('shows only Export folder for both managed folder
       fireEvent.keyDown(row, { key: 'F10', code: 'F10', shiftKey: true });
     } else fireEvent.click(within(row).getByRole('button', { name: `Actions for ${name}` }));
     const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Export folder…']);
-    expect(within(menu).getByRole('menuitem')).toHaveFocus();
+    expect(within(menu).getAllByRole('menuitem').map(item => item.textContent)).toEqual(['Export folder…', 'Export EPUB…']);
+    expect(within(menu).getByRole('menuitem', { name: 'Export folder…' })).toHaveFocus();
     fireEvent.keyDown(menu, { key: 'Escape' });
   }
   expect(compressionStatus).not.toHaveBeenCalled();
@@ -1188,8 +1201,8 @@ it('moves a menu up only as far as needed to show all of its commands', async ()
     const items: NoteItem[] = [study, { ...aardvark, name: 'Forums', kind: 'folder', forum_id: '' }];
     const noteFolderTransfer = { exportFolder: vi.fn(async () => undefined), importFolder: vi.fn(async () => undefined) };
     renderTree({ items, notes: client({ listNoteItems: async () => items, noteFolderTransfer }) });
-    // Study has 10 commands: 768 - (10 * 39 + 13) - 8 = 357. Forums has 1 command and fits below its row.
-    for (const [name, top] of [['Study', '357px'], ['Forums', '500px']]) {
+    // Study has 11 commands: 768 - (11 * 39 + 13) - 8 = 318. Forums has 2 commands and fits below its row.
+    for (const [name, top] of [['Study', '318px'], ['Forums', '500px']]) {
       fireEvent.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
       expect(await screen.findByRole('menu')).toHaveStyle({ top });
       fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
@@ -1214,6 +1227,7 @@ it('refreshes on visibility and registered actions without an active note, defer
   const register = (next: NoteActions | null) => { actions = next; };
   const props = {
     activeNoteId: null, client: client({ listNoteItems }), vaultName: 'Personal',
+    noteTextMode: 'full_text' as const,
     onBeforeCreateNote: async () => true, onOpenNote: vi.fn(), onNoteItems: vi.fn(),
     onCompressNote: vi.fn(), onSummarize: vi.fn(), onSetNoteReadOnly: vi.fn(), onDeleteItem: vi.fn(),
     getNoteLength: async () => 0, onRegisterNoteActions: register,
@@ -1238,6 +1252,7 @@ it('keeps summary identity after detachment and restores only direct Rename', as
   const listing = vi.fn().mockResolvedValueOnce([linked]).mockResolvedValue([{ ...linked, summary_linked: false }]);
   let actions: NoteActions | null = null;
   render(<NotesTree client={client({ listNoteItems: listing })} vaultName="Personal" browsing
+    noteTextMode="full_text"
     activeNoteId={null} getNoteLength={async () => 0} onBeforeCreateNote={async () => true} onOpenNote={vi.fn()}
     onDeleteItem={vi.fn()} onSetNoteReadOnly={vi.fn()} onCompressNote={vi.fn()} onSummarize={vi.fn()} onNoteItems={vi.fn()}
     onSourceChanged={vi.fn()} onRegisterNoteActions={next => { actions = next; }} />);
@@ -1253,4 +1268,80 @@ it('keeps summary identity after detachment and restores only direct Rename', as
   fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
   expect(screen.getByRole('menuitem', { name: 'Rename' })).toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: 'Compress' })).not.toBeInTheDocument();
+});
+
+describe('EPUB export', () => {
+  const book = [study, philosophy, { ...plan, has_l1: true }];
+  const content = (text: string): NoteContent => ({ id: plan.id, document_id: plan.id, document: noteDocument(paragraph(text)) });
+  beforeEach(() => vi.mocked(downloadEpub).mockClear());
+
+  it('saves the open note first, shows progress during reads and downloads the L1 book', async () => {
+    const order: string[] = [];
+    const read = deferred<NoteContent>();
+    renderTree({
+      noteTextMode: 'l1',
+      onBeforeCreateNote: async () => { order.push('save'); return true; },
+      notes: client({
+        listNoteItems: async () => { order.push('list'); return book; },
+        getNote: async (id, mode) => { order.push(`read ${id} ${mode}`); return read.promise; },
+      }),
+    });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    order.length = 0;
+    await chooseAction('Study', 'Export EPUB…');
+    await waitFor(() => expect(order).toEqual(['save', 'list', 'read 4 l1']));
+    expect(screen.getByRole('treeitem', { name: 'Study' })).toHaveFocus();
+    expect(screen.getByRole('status')).toHaveTextContent('Exporting EPUB…');
+    expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeDisabled();
+    await act(async () => read.resolve(content('Saved edit')));
+    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeEnabled();
+    expect(downloadEpub).toHaveBeenCalledExactlyOnceWith('Study (L1)', expect.any(Uint8Array));
+    const [, bytes] = vi.mocked(downloadEpub).mock.calls[0];
+    expect(strFromU8(unzipSync(bytes)['EPUB/chapter-0001.xhtml'])).toContain('Saved edit');
+  });
+
+  it('ends without a read, message or download when the open note stays unsaved', async () => {
+    const listNoteItems = vi.fn(async () => book);
+    const getNote = vi.fn();
+    renderTree({ onBeforeCreateNote: async () => false, notes: client({ listNoteItems, getNote }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Export EPUB…');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Actions for Study' })).toBeEnabled());
+    expect(listNoteItems).toHaveBeenCalledTimes(1);
+    expect(getNote).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(downloadEpub).not.toHaveBeenCalled();
+  });
+
+  it('stops on a vault change during a read without a download, then exports again', async () => {
+    let epoch = 1;
+    const read = deferred<NoteContent>();
+    const getNote = vi.fn().mockReturnValueOnce(read.promise).mockResolvedValue(content('New vault'));
+    renderTree({ notes: client({ contextEpoch: () => epoch, listNoteItems: async () => book, getNote }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Export EPUB…');
+    await waitFor(() => expect(getNote).toHaveBeenCalledTimes(1));
+    epoch = 2;
+    await act(async () => read.resolve(content('Old vault')));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The vault changed. Start again in the current vault.');
+    expect(downloadEpub).not.toHaveBeenCalled();
+    await chooseAction('Study', 'Export EPUB…');
+    await waitFor(() => expect(downloadEpub).toHaveBeenCalledExactlyOnceWith('Study', expect.any(Uint8Array)));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['a missing note', 'full_text', 'Could not export the note “Plan”.'],
+    ['no L2 text', 'l2', 'This folder has no L2 text to export.'],
+  ] as const)('shows the error for %s without a download', async (_, noteTextMode, message) => {
+    const getNote = vi.fn(async () => { throw new ChaError('not_found', 'The note was not found.'); });
+    renderTree({ noteTextMode, notes: client({ listNoteItems: async () => book, getNote }) });
+    await screen.findByRole('treeitem', { name: 'Study' });
+    await chooseAction('Study', 'Export EPUB…');
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(getNote).toHaveBeenCalledTimes(noteTextMode === 'l2' ? 0 : 1);
+    expect(downloadEpub).not.toHaveBeenCalled();
+  });
 });

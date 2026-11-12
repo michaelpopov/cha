@@ -34,6 +34,23 @@ export function sessionMarkdownFilename(label: string): string {
   return `${safe || 'session'}.md`;
 }
 
+let lastEpubUrl: string | undefined;
+
+export function downloadEpub(title: string, bytes: Uint8Array<ArrayBuffer>): void {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/epub+zip' }));
+  // The host can open the Blob after the click returns.
+  if (lastEpubUrl) URL.revokeObjectURL(lastEpubUrl);
+  lastEpubUrl = url;
+  const link = document.createElement('a');
+  link.download = noteFolderFilename(title, 'epub');
+  link.href = url;
+  link.click();
+}
+
+export function noteFolderFilename(title: string, extension: 'epub' | 'sqlite'): string {
+  return `${title.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')}.${extension}`;
+}
+
 export async function saveMarkdownDownload(
   label: string,
   forumId: string,

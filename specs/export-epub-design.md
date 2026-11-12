@@ -22,6 +22,7 @@ appear as groups in the reader’s table of contents.
 | Blank notes | Include a chapter with the note title. |
 | Empty subfolders | Omit groups with no exportable descendants. |
 | Folder with zero exportable notes | Show an error and produce no file. |
+| L1 or L2 mode, and no exportable note has text at that level | Show an error and produce no file. |
 
 A folder containing only summary notes is a valid source. Export works offline
 using the documents CHA already has. The book contains formatted text, embedded
@@ -78,6 +79,9 @@ the EPUB entirely in the webapp.
    `folder_summary` comes first at each level. Use the flag because an
    ordinary note may be named `Summary` and a generated one may be named
    `Summary (2)`. A saved session summary follows the normal sibling order.
+   In L1 or L2 mode, if no note in this order has `has_l1` or `has_l2` set
+   for the selected level, end the export with an error before any note
+   read.
 3. Read notes in this order with `getNote(id, mode)`. The mode is `l1` or
    `l2` when that mode is selected, and `full_text` in all other cases.
    `notes.get` already returns the full document when a note has no text at
@@ -230,6 +234,7 @@ download lifecycle.
 | Condition | Result |
 | --- | --- |
 | No exportable notes | `This folder has no notes to export.` |
+| No L1 or L2 text in L1 or L2 mode | `This folder has no L1 text to export.` Use `L2` in L2 mode. |
 | Folder gone | `This folder is no longer available.` |
 | Note unavailable or document invalid | `Could not export the note “{name}”.` End the export before opening Save. |
 | Active vault changes | Use the current vault-change error. Start a new export from the new vault. |
@@ -255,8 +260,10 @@ and transfer errors.
   generated `ANNOTATIONS` item is absent and that a summary-only folder
   exports successfully. Test that Full text and Compressed modes export full
   documents, and that L1 and L2 modes export the L1 or L2 text, with the full
-  document for a note that has no text at that level. Check that only L1 and
-  L2 books have ` (L1)` or ` (L2)` in the title and the filename. Test that
+  document for a note that has no text at that level. Test that L1 or L2
+  mode on a folder where no note has text at that level shows the error and
+  starts no download. Check that only L1 and L2 books have ` (L1)` or
+  ` (L2)` in the title and the filename. Test that
   unsaved edits in the open note are saved before the reads and appear in
   the book, and that Stay in the save-failure choice ends the export without
   a download.

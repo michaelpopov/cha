@@ -1,11 +1,35 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { saveMarkdownDownload, sessionMarkdownFilename } from './download';
+import { downloadEpub, saveMarkdownDownload, sessionMarkdownFilename } from './download';
 
 afterEach(() => {
   Reflect.deleteProperty(window, 'showSaveFilePicker');
   Reflect.deleteProperty(window, '__CHA_NATIVE_SAVE_SESSION__');
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('EPUB downloads', () => {
+  it('saves the bytes under the folder filename and releases a URL only at the next export', async () => {
+    const blobs: Blob[] = [];
+    const revoked: string[] = [];
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = (blob: Blob) => `blob:${blobs.push(blob)}`;
+      static revokeObjectURL = (url: string) => { revoked.push(url); };
+    });
+    const clicks: string[][] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicks.push([this.download, this.getAttribute('href')!]);
+    });
+
+    downloadEpub('History: L1?', new Uint8Array([1, 2]));
+    expect(revoked).toEqual([]);
+    downloadEpub('Next', new Uint8Array([3]));
+    expect(clicks).toEqual([['History- L1-.epub', 'blob:1'], ['Next.epub', 'blob:2']]);
+    expect(revoked).toEqual(['blob:1']);
+    expect(blobs[0].type).toBe('application/epub+zip');
+    expect(new Uint8Array(await blobs[0].arrayBuffer())).toEqual(new Uint8Array([1, 2]));
+  });
 });
 
 describe('session Markdown downloads', () => {

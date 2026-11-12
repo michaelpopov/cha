@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useMemo } from 'react';
 
-import { renderNoteDocument } from './noteDocument';
+import { renderNoteDocument } from '../notes/noteDocument';
 import type { useChawebNotes } from './useChawebNotes';
 
 const ArticleBody = memo(function ArticleBody({ html }: { html: string }) {

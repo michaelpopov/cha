@@ -53,22 +53,28 @@ export function pictureFromBytes(bytes: Uint8Array): { src: string } | { error: 
 }
 
 // Synchronous data-URL check. Filename and MIME labels are not enough on their own.
-export function embeddedImageError(src: unknown): string | null {
-  if (typeof src !== 'string' || !src.startsWith('data:')) return pictureTypeMessage;
+export function decodeEmbeddedImage(src: unknown):
+  { bytes: Uint8Array<ArrayBuffer>; mime: PictureMime } | { error: string } {
+  if (typeof src !== 'string' || !src.startsWith('data:')) return { error: pictureTypeMessage };
   const match = /^data:([^;,]*);base64,([\s\S]*)$/i.exec(src);
-  if (!match) return pictureTypeMessage;
+  if (!match) return { error: pictureTypeMessage };
   let binary: string;
   try {
     binary = atob(match[2]);
   } catch {
-    return pictureTypeMessage;
+    return { error: pictureTypeMessage };
   }
-  if (binary.length > pictureByteLimit) return pictureTooLargeMessage;
+  if (binary.length > pictureByteLimit) return { error: pictureTooLargeMessage };
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   const mime = detectImageMime(bytes);
-  if (!mime || mime !== match[1].toLowerCase()) return pictureTypeMessage;
-  return null;
+  if (!mime || mime !== match[1].toLowerCase()) return { error: pictureTypeMessage };
+  return { bytes, mime };
+}
+
+export function embeddedImageError(src: unknown): string | null {
+  const picture = decodeEmbeddedImage(src);
+  return 'error' in picture ? picture.error : null;
 }
 
 export function clipboardImageFile(data: DataTransfer | null): File | null {

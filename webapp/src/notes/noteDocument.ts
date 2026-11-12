@@ -4,9 +4,9 @@ import DOMPurify from 'dompurify';
 
 import type { NoteItem, NoteContent } from '../api/client';
 import { isRecord } from '../api/guards';
-import { sortAnnotationGroups } from '../notes/annotationSource';
-import { noteCommentColor, notesExtensions, storedWebDestination } from '../notes/editor';
-import { embeddedImageError } from '../notes/pictures';
+import { sortAnnotationGroups } from './annotationSource';
+import { noteCommentColor, notesExtensions, storedWebDestination } from './editor';
+import { embeddedImageError } from './pictures';
 
 const extensions = notesExtensions();
 const schema = getSchema(extensions);

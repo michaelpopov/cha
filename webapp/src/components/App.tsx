@@ -1573,6 +1573,7 @@ export function App({
                 browsing={state.sidebarTab === 'notes' && state.sidebarOpen}
                 client={client}
                 getNoteLength={getNoteLength}
+                noteTextMode={state.noteTextMode}
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
                 onCompressNote={compressNote}
