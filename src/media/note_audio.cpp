@@ -164,6 +164,13 @@ std::string prepare_note_audio(NoteAudioService& service, const std::vector<std:
 }
 
 Json list_note_audio_voices(const NoteAudioCredentials& credentials, const std::atomic_bool& cancel) {
+    // Google REST replies normally use camelCase names. Its SDK documentation uses snake_case.
+    const auto text = [](const Json& object, const char* snake, const char* camel) {
+        auto found = object.find(snake);
+        if (found == object.end()) found = object.find(camel);
+        return found != object.end() && found->is_string()
+            ? std::string(trim_view(found->get_ref<const std::string&>())) : std::string{};
+    };
     auto voices = Json::array();
     std::set<std::string> seen_ids, seen_tokens;
     std::string token;
@@ -184,21 +191,19 @@ Json list_note_audio_voices(const NoteAudioCredentials& credentials, const std::
         for (const auto& entry : entries) {
             const auto id = entry.at("id").get<std::string>();
             if (trim_view(id).empty()) throw std::runtime_error("Invalid voice ID.");
-            auto display_name = entry.value("display_name", id);
-            if (trim_view(display_name).empty()) display_name = id;
+            auto display_name = text(entry, "display_name", "displayName");
+            if (display_name.empty()) display_name = id;
             if (!seen_ids.insert(id).second) continue;
             Json voice{{"id", id}, {"display_name", std::move(display_name)}};
-            for (const auto* field : {"gender", "pitch", "language_code", "region_code",
-                    "accent", "persona", "context", "description"}) {
-                const auto value = entry.find(field);
-                if (value != entry.end() && value->is_string()) {
-                    const auto text = trim_view(value->get_ref<const std::string&>());
-                    if (!text.empty()) voice[field] = std::string(text);
-                }
+            for (const auto& [snake, camel] : {std::pair{"gender", "gender"}, {"pitch", "pitch"},
+                    {"language_code", "languageCode"}, {"region_code", "regionCode"}, {"accent", "accent"},
+                    {"persona", "persona"}, {"context", "context"}, {"description", "description"}}) {
+                auto value = text(entry, snake, camel);
+                if (!value.empty()) voice[snake] = std::move(value);
             }
             voices.push_back(std::move(voice));
         }
-        token = page.value("next_page_token", std::string{});
+        token = text(page, "next_page_token", "nextPageToken");
         if (!token.empty() && !seen_tokens.insert(token).second)
             throw std::runtime_error("Repeated voice catalog page token.");
     } while (!token.empty());

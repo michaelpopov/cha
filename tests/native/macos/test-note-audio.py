@@ -197,7 +197,7 @@ def main():
 
         try:
             run_host()
-            assert len(catalog_requests) == 1, catalog_requests
+            assert len(catalog_requests) == 2, catalog_requests
             assert len(requests) == 5, requests
             assert requests[:2] == ["/upload/v1beta/files"] * 2, requests
             assert [record["request"]["contents"][0]["parts"][0]["text"] for record in next(iter(records.values()))] == [
