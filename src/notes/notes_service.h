@@ -90,6 +90,7 @@ public:
     std::shared_ptr<OperationReply> read_note_picture(std::string url, std::uint64_t epoch);
 
     void set_note_audio_changed(NoteAudioChanged callback);
+    std::shared_ptr<OperationReply> list_note_audio_voices(std::uint64_t epoch);
     nlohmann::json start_background_note_audio(std::int64_t id, std::string voice,
         std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing = false);
     nlohmann::json background_note_audio_status(std::int64_t id, std::uint64_t epoch);

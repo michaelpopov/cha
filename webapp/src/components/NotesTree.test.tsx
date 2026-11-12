@@ -27,6 +27,7 @@ const philosophy: NoteItem = noteItem({ id: 3, parent_id: 1, kind: 'folder', nam
 const plan: NoteItem = noteItem({ id: 4, parent_id: 3, name: 'Plan' });
 const noteAudio: NonNullable<NotesClient['noteAudio']> = {
   contextEpoch: () => 1,
+  listVoices: async () => [],
   startBackground: vi.fn(),
   backgroundStatus: async () => ({ pending: false }),
   info: vi.fn(),

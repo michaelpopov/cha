@@ -151,6 +151,21 @@ describe('native CHA client', () => {
     return { bridge, audio: client.noteAudio! };
   }
 
+  it('reads the note audio voice catalog and rejects malformed entries', async () => {
+    const voices = [
+      { id: 'voice_custom123', display_name: 'Custom narrator', gender: 'neutral', pitch: 'low' },
+      { id: 'kore', display_name: 'Kore' },
+    ];
+    const listVoices = vi.fn().mockReturnValueOnce({ voices })
+      .mockReturnValueOnce({ voices: [{ id: 'kore' }] })
+      .mockReturnValueOnce({ voices: [{ id: 'kore', display_name: 'Kore', pitch: 1 }] });
+    const { audio } = await audioClient({ 'noteAudio.listVoices': listVoices });
+    await expect(audio.listVoices()).resolves.toEqual(voices);
+    expect(listVoices).toHaveBeenCalledWith({});
+    await expect(audio.listVoices()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(audio.listVoices()).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('accepts audio info only with the count key', async () => {
     const info = vi.fn().mockReturnValueOnce({ count: 0 }).mockReturnValueOnce({ count: 0, extra: true });
     const { audio } = await audioClient({ 'noteAudio.info': info });

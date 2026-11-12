@@ -121,6 +121,7 @@ TEST(NoteAudioInput, ValidatesLimitsAndSerializesExactVoiceAndUnicodeText) {
     const auto first = Json::parse(data.substr(0, data.find('\n')));
     EXPECT_EQ(first["key"], "0");
     EXPECT_EQ(first["request"]["contents"][0]["parts"][0]["text"], text);
+    EXPECT_FALSE(first["request"]["contents"][0]["parts"][0].contains("speechMetadata"));
     EXPECT_EQ(first["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"], "gerdt");
     EXPECT_EQ(std::count(data.begin(), data.end(), '\n'), 2);
     EXPECT_THROW(prepare_note_audio(service, {}), std::runtime_error);
@@ -141,17 +142,37 @@ TEST(NoteAudioInput, ValidatesLimitsAndSerializesExactVoiceAndUnicodeText) {
     EXPECT_EQ(prepare_note_audio(service, boundary).size(), 8388608u);
     boundary[index / 4999][index % 4999] = '\t';
     EXPECT_THROW(prepare_note_audio(service, boundary), NoteAudioSizeError);
-    service.voice = "obsolete";
+    service.voice = "voice_custom123";
+    const auto custom = prepare_note_audio(service, {"x"});
+    EXPECT_EQ(Json::parse(custom)["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"], "voice_custom123");
+    service.voice = " ";
     EXPECT_THROW(prepare_note_audio(service, {"x"}), std::runtime_error);
     service.voice = "Kore"; service.url = "https://example.com/v1beta";
     EXPECT_THROW(prepare_note_audio(service, {"x"}), std::runtime_error);
+}
+
+TEST(NoteAudioInput, SendsAudiobookStyleAlongsideEachGoogleTranscript) {
+    for (const auto* origin : {"https://generativelanguage.googleapis.com",
+            "https://GenerativeLanguage.googleapis.com:443/"}) {
+        SCOPED_TRACE(origin);
+        NoteAudioService service{origin, "secret", "achernar"};
+        const auto jsonl = prepare_note_audio(service, {"  The lantern glowed. ", "The harbor was quiet."});
+        const auto split = jsonl.find('\n');
+        const auto first = Json::parse(jsonl.substr(0, split))["request"]["contents"][0]["parts"][0];
+        const auto second = Json::parse(jsonl.substr(split + 1))["request"]["contents"][0]["parts"][0];
+        EXPECT_EQ(first["text"], "  The lantern glowed. ");
+        EXPECT_EQ(second["text"], "The harbor was quiet.");
+        EXPECT_EQ(first["speechMetadata"]["style"], "Read like a warm audiobook narrator. Use a steady, unhurried pace, "
+            "clear diction, natural pauses at punctuation, and subtle emphasis.");
+        EXPECT_EQ(second["speechMetadata"], first["speechMetadata"]);
+    }
 }
 
 TEST(NoteAudioInput, SettingsErrorsPrecedeSizeErrors) {
     for (const auto& service : std::vector<NoteAudioService>{
         {"https://example.com/path", "secret", "Kore"},
         {"https://example.com", "", "Kore"},
-        {"https://example.com", "secret", "obsolete"}}) {
+        {"https://example.com", "secret", ""}}) {
         auto settings = service;
         try {
             (void)prepare_note_audio(settings, std::vector<std::string>(1001, "x"));
@@ -190,6 +211,34 @@ TEST(NoteAudioService, CreationConnectionFailureIsSafeToRetry) {
 }
 
 #if defined(__APPLE__) || defined(_WIN32)
+TEST_F(NoteAudioServiceTest, ReplaysGoogleUploadBatchAndResultNames) {
+    // Response excerpts from gem_audio/tests/fixtures/google-workflow.json.
+    const auto upload = http_response("application/json", R"({"file":{"name":"files/qqk33qjm0eiq"}})");
+    const auto created = http_response("application/json", R"({
+        "name":"batches/e4gbbqe63y0uw2h1npuorf67nexm1se9i6yz",
+        "metadata":{"state":"BATCH_STATE_PENDING"}
+    })");
+    const auto completed = http_response("application/json", R"({
+        "name":"batches/e4gbbqe63y0uw2h1npuorf67nexm1se9i6yz",
+        "metadata":{"state":"BATCH_STATE_SUCCEEDED"},
+        "done":true,
+        "response":{"responsesFile":"files/batch-e4gbbqe63y0uw2h1npuorf67nexm1se9i6yz"}
+    })");
+    const auto clips = run({created, completed, http_response("application/jsonl", item("0").dump() + '\n')},
+        1, upload);
+
+    ASSERT_EQ(clips.size(), 1u);
+    EXPECT_EQ(clips[0].filename(), "0.m4a");
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_TRUE(requests[1].starts_with("POST /v1beta/models/gemini-3.8-flash-tts:batchGenerateContent "));
+    const auto batch = Json::parse(request_body(requests[1])).at("batch");
+    EXPECT_EQ(batch.at("inputConfig").at("fileName"), "files/qqk33qjm0eiq");
+    EXPECT_EQ(batch.at("displayName"), "CHA note audio");
+    EXPECT_TRUE(requests[2].starts_with("GET /v1beta/batches/e4gbbqe63y0uw2h1npuorf67nexm1se9i6yz "));
+    EXPECT_TRUE(requests[3].starts_with(
+        "GET /download/v1beta/files/batch-e4gbbqe63y0uw2h1npuorf67nexm1se9i6yz:download?alt=media "));
+}
+
 TEST_F(NoteAudioServiceTest, CancellationInterruptsRemoteWaitBeforeAnotherRead) {
     cancel_on_wait = true;
     EXPECT_THROW(run({json_response(operation())}), std::runtime_error);
@@ -209,7 +258,7 @@ TEST_F(NoteAudioServiceTest, ServiceStepsDoNotRetryThemselves) {
 }
 TEST_F(NoteAudioServiceTest, UnusableCreationRepliesKeepTheirCauseAndWarnWithoutAnEventsReference) {
     for (const auto& response : std::vector<std::string>{
-        json_response({{"name", "batches/invalid"}}), http_response("application/json", "not JSON"),
+        json_response({{"name", "batches/../invalid"}}), http_response("application/json", "not JSON"),
         http_response("application/json", std::string(65537, 'x')), failure_response(408), failure_response(500),
         "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{\"name\":\"batches/"}) {
         try {

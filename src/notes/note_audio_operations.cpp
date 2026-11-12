@@ -16,6 +16,12 @@ struct TemporaryAudio {
     }
     ~TemporaryAudio() { std::error_code error; std::filesystem::remove_all(path, error); }
 };
+
+NoteAudioService configured_note_audio(const WorkspaceNotes& settings, const ApiKeyStore& keys, std::string voice = {}) {
+    if (!keys.find(settings.audio_api_key_id))
+        throw ApplicationError(ErrorCode::invalid_argument, "Configure the audio service URL and API key in Notes settings.");
+    return {settings.audio_url, keys.value(settings.audio_api_key_id), std::move(voice)};
+}
 }
 
 void NotesService::set_note_audio_changed(NoteAudioChanged callback) {
@@ -23,6 +29,57 @@ void NotesService::set_note_audio_changed(NoteAudioChanged callback) {
     impl_->note_audio_changed = std::move(callback);
     if (impl_->note_audio_changed) impl_->recover_note_audio();
     else impl_->interrupt_note_audio();
+}
+
+std::shared_ptr<OperationReply> NotesService::list_note_audio_voices(std::uint64_t epoch) {
+    auto [service, cache] = [&] {
+        const std::lock_guard lock(impl_->lifecycle_mutex);
+        impl_->require_admitted(epoch);
+        if (!impl_->native_host)
+            throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to load audio voices.");
+        auto configured = configured_note_audio(impl_->store->snapshot()->notes(), *impl_->api_keys);
+        const auto credential = sha256_digest(configured.key);
+        auto& entry = impl_->note_audio_voice_cache;
+        if (!entry || entry->epoch != epoch || entry->origin != configured.url || entry->credential != credential) {
+            entry = std::make_shared<Impl::NoteAudioVoiceCache>();
+            entry->epoch = epoch;
+            entry->origin = configured.url;
+            entry->credential = credential;
+        }
+        return std::pair{std::move(configured), entry};
+    }();
+    auto reply = std::make_shared<OperationReply>();
+    if (!impl_->background_jobs.launch([owner = impl_.get(), reply, service = std::move(service),
+            cache = std::move(cache)](std::atomic_bool& cancel) {
+            try {
+                const auto check = [&] {
+                    const std::lock_guard lock(owner->lifecycle_mutex);
+                    owner->require_admitted(cache->epoch);
+                    if (cancel.load() || reply->abandoned())
+                        throw ApplicationError(ErrorCode::operation_cancelled, "The operation was cancelled.");
+                    const auto current = configured_note_audio(owner->store->snapshot()->notes(), *owner->api_keys);
+                    if (current.url != service.url || current.key != service.key)
+                        throw ApplicationError(ErrorCode::operation_cancelled, "The audio service settings changed. Reopen the dialog.");
+                };
+                std::unique_lock lock(cache->mutex);
+                check();
+                if (!cache->catalog) {
+                    auto catalog = cha::list_note_audio_voices([&] { check(); return service; }, cancel);
+                    check();
+                    cache->catalog = std::move(catalog);
+                }
+                auto catalog = *cache->catalog;
+                lock.unlock();
+                reply->complete(std::move(catalog));
+            } catch (const ApplicationError& error) {
+                reply->fail(error.code, error.what());
+            } catch (const std::exception&) {
+                reply->fail(ErrorCode::internal_error, "Could not load voices. Check the audio service in Notes settings.");
+            }
+        })) {
+        reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
+    }
+    return reply;
 }
 
 nlohmann::json NotesService::start_background_note_audio(std::int64_t id, std::string voice,
@@ -59,9 +116,7 @@ nlohmann::json NotesService::start_background_note_audio(std::int64_t id, std::s
     if (only_if_missing && blocks.empty()) return skip("No text to narrate.");
     const auto workspace = impl_->store->snapshot();
     const auto key_id = workspace->notes().audio_api_key_id;
-    if (!impl_->api_keys->find(key_id))
-        throw ApplicationError(ErrorCode::invalid_argument, "Configure the audio service URL and API key in Notes settings.");
-    NoteAudioService service{workspace->notes().audio_url, impl_->api_keys->value(key_id), voice};
+    auto service = configured_note_audio(workspace->notes(), *impl_->api_keys, voice);
     std::string jsonl;
     try { jsonl = prepare_note_audio(service, blocks); }
     catch (const NoteAudioSizeError& error) {

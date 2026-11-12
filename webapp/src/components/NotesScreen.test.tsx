@@ -191,7 +191,7 @@ it.each([
     id, document_id: showing === 'full text' ? id : 40, document: documentWith('Read-only note'),
   }));
   render(<Harness noteTextMode={mode} items={[{ ...plan, read_only: true }]} getNote={getNote}
-    noteAudio={{ info, contextEpoch: () => 1, startBackground: vi.fn(),
+    noteAudio={{ info, contextEpoch: () => 1, listVoices: async () => [], startBackground: vi.fn(),
       backgroundStatus: vi.fn(), source: vi.fn(), release: vi.fn() }} />);
   const button = await screen.findByRole('button', { name: 'Note text mode' });
   expect(button).toHaveAttribute('title', `${label} mode; showing ${showing}`);

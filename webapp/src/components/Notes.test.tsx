@@ -8,6 +8,7 @@ import {
   type NoteItem,
   type NotePage,
   type NotesClient,
+  type NoteAudioVoice,
   type NoteTextMode,
 } from '../api/client';
 import { bootstrapFixture, fixtureClient, forumDetailFixture, snapshotFixture } from '../test/fixtures';
@@ -16,6 +17,24 @@ import { App } from './App';
 
 const plan: NoteItem = noteItem({ id: 4, name: 'Plan' });
 const study: NoteItem = noteItem({ id: 1, kind: 'folder', name: 'Study' });
+const listAudioVoices = async (): Promise<NoteAudioVoice[]> => [
+  {
+    id: 'voice_narrator', display_name: 'Narrator', gender: 'female', pitch: 'high',
+    language_code: 'en-CA', region_code: 'CA', accent: 'Vancouver English', persona: 'Storyteller & Narrator',
+    context: 'Content & Media', description: 'Soft, calm voice suited to quiet storytelling.',
+  },
+  { id: 'Kore', display_name: 'Kore', language_code: 'en' },
+  { id: 'ru-ru-podcaster-1', display_name: 'Podcaster 1', language_code: 'ru-RU', accent: 'Russian' },
+  { id: 'fr-storyteller', display_name: 'French Narrator', language_code: 'fr-FR' },
+  { id: 'untagged', display_name: 'Untagged Narrator' },
+  ...['Tutor', 'Training Voiceover', 'Tech Advisor', 'Digital Assistant', 'Concierge', 'Consierge',
+    'Commercial Voiceover', 'Call Center Agent', 'Authoritative Advisor'].map((category, index) => ({
+    id: `excluded_${index}`,
+    display_name: index % 2 ? `${category} 1` : `Voice ${index}`,
+    persona: index % 2 ? 'Storyteller & Narrator' : `Other Role / ${category.toUpperCase()} (Specialist)`,
+    language_code: 'en-US',
+  })),
+];
 
 function noteDocument(text: string) {
   return {
@@ -651,7 +670,8 @@ describe('Notes in the application', () => {
           { ...child, id: 8, name: 'ANNOTATIONS', kind: 'annotation' },
           { ...study, id: 2, parent_id: study.id, name: 'Subfolder' },
           { ...child, id: 3, parent_id: 2, name: 'Nested' }],
-        getNote, noteAudio: { contextEpoch: () => 1, startBackground: start, backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
+        getNote, noteAudio: { contextEpoch: () => 1, listVoices: listAudioVoices, startBackground: start,
+          backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Study' }));
@@ -662,10 +682,13 @@ describe('Notes in the application', () => {
       await waitFor(() => expect(screen.getByLabelText('Voice')).toBeEnabled());
       expect(info.mock.calls.map(([id]) => id)).toEqual([5, 7, 4]);
       expect(getNote).not.toHaveBeenCalled();
-      fireEvent.change(screen.getByLabelText('Voice'), { target: { value: 'Kore' } });
+      expect(screen.getByRole('option', { name: 'Narrator · Female · en-CA · Vancouver English' })).toHaveValue('voice_narrator');
+      expect(screen.queryByRole('option', { name: /untagged narrator/i })).toBeNull();
+      fireEvent.change(screen.getByLabelText('Voice'), { target: { value: 'voice_narrator' } });
+      expect(screen.getByText('Storyteller & Narrator · Content & Media')).toBeVisible();
       fireEvent.click(screen.getByRole('button', { name: 'Generate' }));
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      expect(start.mock.calls).toEqual([[5, 'Kore', ['Text 5'], true], [4, 'Kore', ['Text 4'], true]]);
+      expect(start.mock.calls).toEqual([[5, 'voice_narrator', ['Text 5'], true], [4, 'voice_narrator', ['Text 4'], true]]);
       expect(getNote.mock.calls.map(([id]) => id)).toEqual([5, 4]);
       expect(changed.mock.calls.map(([event]) => event.detail)).toEqual([study.id]);
       // DOM removal can precede the passive effect cleanup that restores focus.
@@ -687,7 +710,7 @@ describe('Notes in the application', () => {
     render(<App contextEvents={bus} client={fixtureClient({
       listNoteItems: async () => [study, { ...plan, parent_id: study.id, read_only: true }],
       getNote,
-      noteAudio: { contextEpoch: () => epoch, startBackground: start,
+      noteAudio: { contextEpoch: () => epoch, listVoices: listAudioVoices, startBackground: start,
         backgroundStatus: async () => ({ pending: false }), info: async () => ({ count: 0 }), source: vi.fn(), release: vi.fn() },
     })} />);
     await openNotes();
@@ -717,7 +740,7 @@ describe('Notes in the application', () => {
     render(<App client={fixtureClient({
       listNoteItems: async () => [{ ...plan, read_only: true, has_l1: true }],
       getNote,
-      noteAudio: { contextEpoch: () => 1, startBackground, backgroundStatus, info, source: vi.fn(), release: vi.fn() },
+      noteAudio: { contextEpoch: () => 1, listVoices: listAudioVoices, startBackground, backgroundStatus, info, source: vi.fn(), release: vi.fn() },
     })} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
@@ -764,7 +787,7 @@ describe('Notes in the application', () => {
     const info = vi.fn(async (id: number) => ({ count: id === 105 || id === chapter.id ? 1 : 0 }));
     render(<App client={fixtureClient({
       listNoteItems, getNote,
-      noteAudio: { contextEpoch: () => 1, startBackground, info, source: vi.fn(), release: vi.fn(),
+      noteAudio: { contextEpoch: () => 1, listVoices: listAudioVoices, startBackground, info, source: vi.fn(), release: vi.fn(),
         backgroundStatus: async id => id === 106 ? { pending: true, attempt_id: 2 } : { pending: false } },
     })} />);
     await openNotes();
@@ -824,7 +847,8 @@ describe('Notes in the application', () => {
       listNoteItems: async () => items,
       deleteNoteItem: async id => { items = items.filter(item => item.id !== id); },
       getNote: async id => ({ id, document_id: id, document: noteDocument(`Chapter ${id}`) }),
-      noteAudio: { contextEpoch: () => 1, startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }), backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
+      noteAudio: { contextEpoch: () => 1, listVoices: listAudioVoices, startBackground: vi.fn().mockResolvedValue({ attempt_id: 1 }),
+        backgroundStatus: vi.fn().mockResolvedValue({ pending: false }), info, source: vi.fn(), release: vi.fn() },
     })} />);
     await openNotes();
     if (deleteEarlier) {
@@ -849,6 +873,8 @@ describe('Notes in the application', () => {
       { type: 'paragraph', content: [{ type: 'text', text: 'First' }, { type: 'hardBreak' }, { type: 'text', text: 'Second' }] },
     ] };
     const start = vi.fn(async () => ({ attempt_id: 1 }));
+    let resolveVoices!: (voices: Awaited<ReturnType<typeof listAudioVoices>>) => void;
+    const listVoices = vi.fn(() => new Promise<Awaited<ReturnType<typeof listAudioVoices>>>(resolve => { resolveVoices = resolve; }));
     const backgroundStatus = vi.fn()
       .mockResolvedValueOnce({ pending: false })
       .mockResolvedValueOnce({ pending: true, attempt_id: 1 })
@@ -857,7 +883,8 @@ describe('Notes in the application', () => {
       render(<App client={fixtureClient({
         listNoteItems: async () => [{ ...plan, read_only: true }],
         getNote: async id => ({ id, document_id: id, document }),
-        noteAudio: { contextEpoch: () => 1, startBackground: start, backgroundStatus, info: async () => ({ count: 0 }), source: vi.fn(), release: vi.fn() },
+        noteAudio: { contextEpoch: () => 1, listVoices, startBackground: start,
+          backgroundStatus, info: async () => ({ count: 0 }), source: vi.fn(), release: vi.fn() },
       })} />);
       await openNotes();
       fireEvent.click(await screen.findByRole('button', { name: 'Actions for Plan' }));
@@ -867,11 +894,24 @@ describe('Notes in the application', () => {
       const dialog = await screen.findByRole('dialog', { name: 'Generate note audio' });
       expect(changed).toHaveBeenCalledOnce();
       expect(start).not.toHaveBeenCalled();
+      expect(within(dialog).getByRole('option', { name: 'Loading voices…' })).toBeInTheDocument();
+      expect(within(dialog).getByRole('button', { name: 'Generate' })).toBeDisabled();
+      await waitFor(() => expect(listVoices).toHaveBeenCalledOnce());
+      await act(async () => resolveVoices(await listAudioVoices()));
       await waitFor(() => expect(within(dialog).getByLabelText('Voice')).toBeEnabled());
-      fireEvent.change(within(dialog).getByLabelText('Voice'), { target: { value: 'grant' } });
+      expect(within(dialog).getAllByRole('option').map(option => option.textContent)).toEqual([
+        'Select voice', 'Kore · en', 'Narrator · Female · en-CA · Vancouver English', 'Podcaster 1 · ru-RU · Russian',
+      ]);
+      expect(within(dialog).queryByText('High pitch')).toBeNull();
+      fireEvent.change(within(dialog).getByLabelText('Voice'), { target: { value: 'voice_narrator' } });
+      expect(within(dialog).getByText('High pitch')).toBeVisible();
+      expect(within(dialog).getByText('Soft, calm voice suited to quiet storytelling.')).toBeVisible();
+      fireEvent.change(within(dialog).getByLabelText('Voice'), { target: { value: 'Kore' } });
+      expect(within(dialog).queryByText('High pitch')).toBeNull();
+      fireEvent.change(within(dialog).getByLabelText('Voice'), { target: { value: 'voice_narrator' } });
       fireEvent.click(within(dialog).getByRole('button', { name: 'Generate' }));
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      expect(start).toHaveBeenCalledExactlyOnceWith(plan.id, 'grant', ['Title', 'First\nSecond']);
+      expect(start).toHaveBeenCalledExactlyOnceWith(plan.id, 'voice_narrator', ['Title', 'First\nSecond']);
       expect(changed).toHaveBeenCalledTimes(1);
 
       await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' })));

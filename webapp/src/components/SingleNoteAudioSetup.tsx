@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { backgroundAudioStartRejected, publicErrorMessage, type NoteAudioClient } from '../api/client';
+import { NoteAudioVoicePicker } from './NoteAudioVoicePicker';
 
 export const audioStartUnknown = 'Could not confirm whether audio generation started. Check Settings → Events before starting again.';
 
@@ -9,7 +10,6 @@ export function SingleNoteAudioSetup({ client, id, resolveDocumentId, prepare, o
   prepare(id: number, documentId: number): Promise<string[]>; onClose(): void;
 }) {
   const element = useRef<HTMLDialogElement>(null);
-  const selector = useRef<HTMLSelectElement>(null);
   const submitting = useRef(false);
   const alive = useRef(true);
   const [voice, setVoice] = useState('');
@@ -43,7 +43,6 @@ export function SingleNoteAudioSetup({ client, id, resolveDocumentId, prepare, o
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   }, [client, id, resolveDocumentId]);
-  useEffect(() => { if (!loading) selector.current?.focus(); }, [loading]);
 
   async function generate() {
     if (submitting.current || loading || documentId === null || unknown || !voice) return;
@@ -67,11 +66,8 @@ export function SingleNoteAudioSetup({ client, id, resolveDocumentId, prepare, o
   }
   return createPortal(<dialog ref={element} className="cha-dialog cha-note-audio-dialog" aria-label="Generate note audio"
     onCancel={event => { event.preventDefault(); onClose(); }}>
-    <label>Voice<select ref={selector} className="cha-form-control" value={voice} disabled={loading || documentId === null || pending || unknown}
-      onChange={event => setVoice(event.target.value)}>
-      <option value="">Select voice</option>
-      {['boroda', 'grant', 'dzig', 'gerdt', 'Kore'].map(value => <option key={value} value={value}>{value}</option>)}
-    </select></label>
+    <NoteAudioVoicePicker client={client} value={voice} onChange={setVoice}
+      disabled={loading || documentId === null || pending || unknown} />
     {existing && <p>Existing audio will be replaced after successful generation.</p>}
     {error && <p className="cha-error-message" role="alert">{error}</p>}
     <div className="cha-dialog-actions">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { getSchema } from '@tiptap/core';
 import { SingleNoteAudioSetup } from './SingleNoteAudioSetup';
+import { NoteAudioVoicePicker } from './NoteAudioVoicePicker';
 import { backgroundAudioStartRejected, ChaError, publicErrorMessage, type NoteAudioClient, type NotesClient } from '../api/client';
 import { notesExtensions } from '../notes/editor';
 import { noteAudioBlocks } from '../notes/useNoteAudio';
@@ -54,7 +55,6 @@ export function NoteAudioDialog({ client, targets, epoch, folderMode, mode, getN
 
 function FolderNoteAudioDialog({ client, targets, epoch, resolveDocumentId, prepare, onClose }: FolderAudioSetup) {
   const element = useRef<HTMLDialogElement>(null);
-  const selector = useRef<HTMLSelectElement>(null);
   const alive = useRef(true);
   const submitting = useRef(false);
   const accepted = useRef(0);
@@ -129,7 +129,6 @@ function FolderNoteAudioDialog({ client, targets, epoch, resolveDocumentId, prep
       if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
     };
   }, [client, targets, epoch, resolveDocumentId]);
-  useEffect(() => { if (!loading) selector.current?.focus(); }, [loading]);
 
   async function generate() {
     if (submitting.current || loading || documents === null || blocked || empty || !voice) return;
@@ -182,11 +181,8 @@ function FolderNoteAudioDialog({ client, targets, epoch, resolveDocumentId, prep
 
   return createPortal(<dialog ref={element} className="cha-dialog cha-note-audio-dialog" aria-label="Generate note audio"
     onCancel={event => { event.preventDefault(); if (!submitting.current) onClose(); }}>
-    {!empty && <label>Voice<select ref={selector} className="cha-form-control" value={voice} disabled={loading || documents === null || pending || blocked}
-      onChange={event => setVoice(event.target.value)}>
-      <option value="">Select voice</option>
-      {['boroda', 'grant', 'dzig', 'gerdt', 'Kore'].map(value => <option key={value} value={value}>{value}</option>)}
-    </select></label>}
+    {!empty && <NoteAudioVoicePicker client={client} value={voice} onChange={setVoice}
+      disabled={loading || documents === null || pending || blocked} />}
     {loading && <p role="status">Checking notes…</p>}
     {empty && !error && <p role="status">No notes need audio</p>}
     {error && <p className="cha-error-message" role="alert">{error}</p>}

@@ -19,6 +19,7 @@ import {
   type NoteCompressionStartResult,
   type NoteCompressionStatus,
   type NoteAudioInfo,
+  type NoteAudioVoice,
   type NoteAudioAccepted,
   type NoteAudioBackgroundStatus,
   type NoteAudioStartResult,
@@ -231,6 +232,16 @@ export async function connectNativeBridge(bridge: NativeBridge) {
   return info;
 }
 
+const audioVoiceFields = ['id', 'display_name', 'gender', 'pitch', 'language_code', 'region_code',
+  'accent', 'persona', 'context', 'description'];
+
+function isAudioVoiceList(value: unknown): value is { voices: NoteAudioVoice[] } {
+  return isRecord(value) && hasExactKeys(value, ['voices']) && Array.isArray(value.voices)
+    && value.voices.every(voice => isRecord(voice) && Object.hasOwn(voice, 'id') && Object.hasOwn(voice, 'display_name')
+      && Object.entries(voice).every(([key, field]) =>
+        audioVoiceFields.includes(key) && typeof field === 'string' && field.trim().length > 0));
+}
+
 function isAudioAccepted(value: unknown): value is NoteAudioAccepted {
   return isRecord(value) && Object.keys(value).length === 1 && isNoteId(value.attempt_id);
 }
@@ -299,7 +310,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     return result;
   };
 
-  const storeCall = async <T>(method: string, params: unknown, epoch: number,
+  const callInContext = async <T>(method: string, params: unknown, epoch: number,
     validate: (value: unknown) => value is T): Promise<T> => {
     requireContext(epoch);
     const result = await call(method, params, validate);
@@ -349,6 +360,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       if (connectionEnded) throw new ChaError('application_unavailable', 'The connection to CHA ended. Close this dialog and start again.');
       return bridge.contextEpoch();
     },
+    listVoices: async () => (await callInContext('noteAudio.listVoices', {}, contextEpoch(), isAudioVoiceList)).voices,
     backgroundStatus,
     startBackground,
     info: (id: number) => call('noteAudio.info', { id }, (value): value is NoteAudioInfo =>
@@ -981,17 +993,17 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     importVault: () => transferVault('vault.import', 'file_count'),
     exportVault: () => transferVault('vault.export', 'file_count'),
     listNoteItems: async () => (await call('notes.list', {}, isNoteItemList)).items,
-    storeChoices: epoch => storeCall('notes.storeChoices', {}, epoch, isFolderStoreChoices),
-    storeUpload: (folderId, service, apiKeyId, description, epoch) => storeCall('notes.storeUpload',
+    storeChoices: epoch => callInContext('notes.storeChoices', {}, epoch, isFolderStoreChoices),
+    storeUpload: (folderId, service, apiKeyId, description, epoch) => callInContext('notes.storeUpload',
       { folder_id: folderId, service, api_key_id: apiKeyId, description }, epoch, isFolderStoreStart),
-    storeCleanup: (operationId, epoch) => storeCall('notes.storeCleanup',
+    storeCleanup: (operationId, epoch) => callInContext('notes.storeCleanup',
       { operation_id: operationId }, epoch, isFolderStoreStart),
-    storeOperation: (folderId, epoch) => storeCall('notes.storeOperation', { folder_id: folderId }, epoch, isFolderStoreOperation),
+    storeOperation: (folderId, epoch) => callInContext('notes.storeOperation', { folder_id: folderId }, epoch, isFolderStoreOperation),
     storeCancel: async (operationId, epoch) => {
-      await storeCall('notes.storeCancel', { operation_id: operationId }, epoch, isEmptyResult);
+      await callInContext('notes.storeCancel', { operation_id: operationId }, epoch, isEmptyResult);
     },
     storeClose: async (operationId, epoch) => {
-      await storeCall('notes.storeClose', { operation_id: operationId }, epoch, isEmptyResult);
+      await callInContext('notes.storeClose', { operation_id: operationId }, epoch, isEmptyResult);
     },
     importEpub: async (file, items, parentId) => {
       const epoch = bridge.contextEpoch();

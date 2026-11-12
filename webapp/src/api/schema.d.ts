@@ -944,6 +944,21 @@ export interface components {
             document: components["schemas"]["NoteDocument"];
             scroll_top?: number;
         };
+        NoteAudioVoice: {
+            id: string;
+            display_name: string;
+            gender?: string;
+            pitch?: string;
+            language_code?: string;
+            region_code?: string;
+            accent?: string;
+            persona?: string;
+            context?: string;
+            description?: string;
+        };
+        NoteAudioVoiceList: {
+            voices: components["schemas"]["NoteAudioVoice"][];
+        };
         NoteAudioInfo: {
             count: components["schemas"]["NativeSafeInteger"];
         };

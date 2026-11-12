@@ -6,12 +6,15 @@
 #include <algorithm>
 #include <charconv>
 #include <fstream>
+#include <set>
 #include <thread>
 
 namespace cha {
 namespace {
 using Json = nlohmann::json;
 constexpr auto submission_unknown = "Submission status unknown. Starting again may generate audio twice.";
+constexpr auto audiobook_style = "Read like a warm audiobook narrator. Use a steady, unhurried pace, clear diction, "
+    "natural pauses at punctuation, and subtle emphasis.";
 constexpr std::size_t max_wav = 32 * 1024 * 1024;
 constexpr std::size_t max_line = 4 * ((max_wav + 2) / 3) + 65536;
 
@@ -115,10 +118,20 @@ std::string origin(std::string value) {
         throw std::runtime_error("Use an audio service origin without a path, credentials, query, or fragment.");
     return value;
 }
+
+void validate_service(NoteAudioService& service) {
+    service.url = origin(service.url);
+    if (service.key.empty() || service.key.find_first_of("\r\n") != std::string::npos)
+        throw std::runtime_error("Select an audio API key in Notes settings.");
+}
+
 std::string resource(const Json& value, const char* field, std::string_view prefix) {
     const auto name = value.at(field).get<std::string>();
-    if (!name.starts_with(prefix) || name.size() != prefix.size() + 32
-        || name.substr(prefix.size()).find_first_not_of("0123456789abcdef") != std::string::npos)
+    // Google uses variable-length IDs, including "batch-" prefixed result IDs.
+    // Each ID must stay within one URL path segment.
+    if (!name.starts_with(prefix) || name.size() == prefix.size()
+        || name[prefix.size()] == '-' || name.back() == '-'
+        || name.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-", prefix.size()) != std::string::npos)
         throw NoteAudioError(NoteAudioFailure::invalid, "The audio service returned an invalid resource name. Check the service.");
     return name;
 }
@@ -126,26 +139,70 @@ std::string resource(const Json& value, const char* field, std::string_view pref
 }
 
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks) {
-    service.url = origin(service.url);
-    if (service.key.empty() || service.key.find_first_of("\r\n") != std::string::npos)
-        throw std::runtime_error("Select an audio API key in Notes settings.");
-    if (service.voice != "boroda" && service.voice != "grant" && service.voice != "dzig"
-        && service.voice != "gerdt" && service.voice != "Kore") throw std::runtime_error("Select an audio voice.");
+    validate_service(service);
+    if (trim_view(service.voice).empty()) throw std::runtime_error("Select an audio voice.");
     if (blocks.empty()) throw std::runtime_error("No text to narrate");
     if (blocks.size() > 1000) throw NoteAudioSizeError("The note exceeds the 1,000-request batch limit.");
+    const auto service_origin = fold_ascii(service.url);
+    const bool google = service_origin == "https://generativelanguage.googleapis.com"
+        || service_origin == "https://generativelanguage.googleapis.com:443";
     std::string jsonl;
     for (std::size_t i = 0; i < blocks.size(); ++i) {
         const auto chars = std::count_if(blocks[i].begin(), blocks[i].end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
         if (chars < 1) throw std::runtime_error("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
         if (chars > 5000) throw NoteAudioSizeError("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
+        Json part{{"text", blocks[i]}};
+        if (google) part["speechMetadata"] = {{"style", audiobook_style}};
         Json item = {{"key", std::to_string(i)}, {"request", {
-            {"contents", Json::array({{{"role", "user"}, {"parts", Json::array({{{"text", blocks[i]}}})}}})},
+            {"contents", Json::array({{{"role", "user"}, {"parts", Json::array({std::move(part)})}}})},
             {"generationConfig", {{"responseModalities", Json::array({"AUDIO"})},
                 {"speechConfig", {{"voiceConfig", {{"voice", service.voice}}}}}}}}}};
         jsonl += item.dump() + '\n';
         if (jsonl.size() > 8 * 1024 * 1024) throw NoteAudioSizeError("The note exceeds the 8 MiB JSONL batch limit.");
     }
     return jsonl;
+}
+
+Json list_note_audio_voices(const NoteAudioCredentials& credentials, const std::atomic_bool& cancel) {
+    auto voices = Json::array();
+    std::set<std::string> seen_ids, seen_tokens;
+    std::string token;
+    do {
+        auto service = credentials();
+        validate_service(service);
+        auto url = service.url + "/v1beta/voices?page_size=1000";
+        if (!token.empty()) {
+            const std::unique_ptr<char, decltype(&curl_free)> encoded(
+                curl_easy_escape(nullptr, token.data(), static_cast<int>(token.size())), curl_free);
+            if (!encoded) throw std::runtime_error("Could not encode the voice catalog page token.");
+            url += "&page_token=";
+            url += encoded.get();
+        }
+        const auto page = Json::parse(request(service, url, cancel, {}, nullptr, nullptr, 1024 * 1024).body);
+        const auto entries = page.value("voices", Json::array());
+        if (!entries.is_array()) throw std::runtime_error("Invalid voice catalog.");
+        for (const auto& entry : entries) {
+            const auto id = entry.at("id").get<std::string>();
+            if (trim_view(id).empty()) throw std::runtime_error("Invalid voice ID.");
+            auto display_name = entry.value("display_name", id);
+            if (trim_view(display_name).empty()) display_name = id;
+            if (!seen_ids.insert(id).second) continue;
+            Json voice{{"id", id}, {"display_name", std::move(display_name)}};
+            for (const auto* field : {"gender", "pitch", "language_code", "region_code",
+                    "accent", "persona", "context", "description"}) {
+                const auto value = entry.find(field);
+                if (value != entry.end() && value->is_string()) {
+                    const auto text = trim_view(value->get_ref<const std::string&>());
+                    if (!text.empty()) voice[field] = std::string(text);
+                }
+            }
+            voices.push_back(std::move(voice));
+        }
+        token = page.value("next_page_token", std::string{});
+        if (!token.empty() && !seen_tokens.insert(token).second)
+            throw std::runtime_error("Repeated voice catalog page token.");
+    } while (!token.empty());
+    return {{"voices", std::move(voices)}};
 }
 
 void wait_note_audio(int seconds, const std::atomic_bool& cancel, const std::function<void(int)>& wait) {
@@ -181,7 +238,8 @@ std::string upload_note_audio(const NoteAudioCredentials& credentials, const std
 Json create_note_audio_batch(const NoteAudioCredentials& credentials, const std::string& input,
     const std::atomic_bool& cancel) {
     (void)resource(Json{{"name", input}}, "name", "files/");
-    const std::string body = Json({{"batch", {{"inputConfig", {{"fileName", input}}}}}}).dump();
+    const std::string body = Json({{"batch", {{"displayName", "CHA note audio"},
+        {"inputConfig", {{"fileName", input}}}}}}).dump();
     const auto service = credentials();
     try {
         auto operation = Json::parse(request(service, service.url + "/v1beta/models/gemini-3.8-flash-tts:batchGenerateContent",

@@ -8,6 +8,7 @@
 #include "runtime/live_session_manager.h"
 #include "runtime/runtime_settings.h"
 #include "storage/session_repository.h"
+#include "util/crypto.h"
 #include "workspace/workspace_config_store.h"
 
 #include <condition_variable>
@@ -41,6 +42,16 @@ struct NotesService::Impl {
     std::function<bool()> can_recover;
     const bool native_host;
     std::function<std::string()> current_vault_name;
+
+    struct NoteAudioVoiceCache {
+        std::uint64_t epoch{};
+        std::string origin;
+        Sha256Digest credential{};
+        std::mutex mutex;
+        std::optional<nlohmann::json> catalog;
+    };
+    // Replaced under lifecycle_mutex. Each worker holds its configuration's entry.
+    std::shared_ptr<NoteAudioVoiceCache> note_audio_voice_cache;
 
     // Network work waits outside lifecycle_mutex and observes its cancellation flag.
     std::timed_mutex audio_submission_mutex;

@@ -169,6 +169,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_compression_status, "notes.compressionStatus"},
     {Method::notes_rename, "notes.rename"},
     {Method::notes_delete, "notes.delete"},
+    {Method::note_audio_list_voices, "noteAudio.listVoices"},
     {Method::note_audio_start_background, "noteAudio.startBackground"},
     {Method::note_audio_background_status, "noteAudio.backgroundStatus"},
     {Method::note_audio_info, "noteAudio.info"},

@@ -142,6 +142,7 @@
   "notes.create": {"requires_context_epoch": true, "changes_context": false},
   "notes.importBook": {"requires_context_epoch": true, "changes_context": false},
   "notes.get": {"requires_context_epoch": true, "changes_context": false},
+  "noteAudio.listVoices": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.info": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.startBackground": {"requires_context_epoch": true, "changes_context": false},
   "noteAudio.backgroundStatus": {"requires_context_epoch": true, "changes_context": false},

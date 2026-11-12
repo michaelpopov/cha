@@ -46,6 +46,7 @@ def main():
     first_release = threading.Event()
     first_waiting = threading.Event()
     requests = []
+    catalog_requests = []
     submitted = []
     batches = {}
     outputs = {}
@@ -87,7 +88,7 @@ def main():
             elif self.path.startswith("/secret/"):
                 assert self.headers.get("x-goog-api-key") is None
                 current = [json.loads(line) for line in data.splitlines()]
-                assert all(record["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"] == "Kore" for record in current)
+                assert all(record["request"]["generationConfig"]["speechConfig"]["voiceConfig"]["voice"] == "kore" for record in current)
                 name = "files/" + self.path.rsplit("/", 1)[1]
                 with lock:
                     records[name] = current
@@ -111,6 +112,13 @@ def main():
                 self.send_error(404)
 
         def do_GET(self):
+            if self.path == "/v1beta/voices?page_size=1000":
+                assert self.headers.get("x-goog-api-key") == "fake-audio-key"
+                catalog_requests.append(self.path)
+                self.respond({"voices": [{"id": "kore", "display_name": "Kore", "language_code": "en-US"},
+                                         {"id": "achernar", "display_name": "Achernar", "language_code": "en-US",
+                                          "gender": "female", "accent": "General American"}]})
+                return
             requests.append(self.path)
             if self.path.startswith("/v1beta/batches/"):
                 self.respond(batches[self.path.removeprefix("/v1beta/")])
@@ -189,6 +197,7 @@ def main():
 
         try:
             run_host()
+            assert len(catalog_requests) == 1, catalog_requests
             assert len(requests) == 5, requests
             assert requests[:2] == ["/upload/v1beta/files"] * 2, requests
             assert [record["request"]["contents"][0]["parts"][0]["text"] for record in next(iter(records.values()))] == [
@@ -267,7 +276,7 @@ def main():
             thread.join()
             # Restart the host with the same vault and no running service.
             offline_source = root / "offline.js"
-            offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true, summary: 'playback' });\n")
+            offline_source.write_text(source.read_text() + "\nconst runAudioProbe = nativeParity;\nnativeParity = () => runAudioProbe({ offline: true, catalogOffline: true, summary: 'playback' });\n")
             environment["CHA_NATIVE_PARITY_SCRIPT"] = str(offline_source)
             run_host()
             print("PASS full-text and L1 generation, background retry and recovery, folder eligibility, and offline playback", flush=True)

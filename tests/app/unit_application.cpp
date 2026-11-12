@@ -1003,7 +1003,8 @@ TEST_F(NoteAudioBackground, UnusableCreationRepliesWarnAboutDuplicateWork) {
     application->store().save_note_audio(note.id, {previous});
     std::size_t outcomes = 0;
     for (const auto& response : std::vector<std::string>{"", audio_http_error(408), audio_http_error(500),
-        audio_http_error(503), "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{\"name\":\"batches/", audio_json({{"name", "batches/invalid"}}),
+        audio_http_error(503), "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{\"name\":\"batches/",
+        audio_json({{"name", "batches/invalid%2fpath"}}),
         http_response("application/json", "private service body old-key")}) {
         SCOPED_TRACE(response);
         MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});

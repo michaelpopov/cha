@@ -1442,6 +1442,10 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::note_audio_list_voices:
+                require_only_keys(params, {});
+                start_background(connection_id, id, application.list_note_audio_voices(epoch));
+                return;
             case Method::note_audio_source: {
                 require_only_keys(params, {"id", "ordinal"});
                 const auto ordinal = params.contains("ordinal") ? as_safe_uint(params.at("ordinal")) : std::nullopt;

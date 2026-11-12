@@ -16,6 +16,10 @@ void Application::set_note_audio_changed(NoteAudioChanged callback) {
     impl_->notes->set_note_audio_changed(std::move(callback));
 }
 
+std::shared_ptr<OperationReply> Application::list_note_audio_voices(std::uint64_t epoch) {
+    return impl_->notes->list_note_audio_voices(epoch);
+}
+
 nlohmann::json Application::start_background_note_audio(std::int64_t id, std::string voice, std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing) {
     return impl_->notes->start_background_note_audio(id, std::move(voice), std::move(blocks), epoch, only_if_missing);
 }

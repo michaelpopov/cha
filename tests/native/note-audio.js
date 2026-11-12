@@ -1,6 +1,6 @@
 // Run with CHA_NATIVE_PARITY_SCRIPT against a disposable vault containing the
 // read-only "Audio check" note and a configured local fake audio service.
-async function nativeParity({ offline = false, summary } = {}) {
+async function nativeParity({ offline = false, catalogOffline = false, summary } = {}) {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const check = (condition, message) => { if (!condition) throw new Error(message); };
   const until = async (label, condition) => {
@@ -38,9 +38,10 @@ async function nativeParity({ offline = false, summary } = {}) {
       const voice = dialog.querySelector('select');
       await until('loaded voice selector', () => !voice.disabled);
       check(voice.value === '', 'voice was preselected');
-      check([...voice.options].slice(1).map(option => option.text).join(',') === 'boroda,grant,dzig,gerdt,Kore', 'unexpected voice labels');
+      check([...voice.options].slice(1).map(option => option.text).join(',')
+        === 'Achernar · Female · en-US · General American,Kore · en-US', 'unexpected voice labels');
       check(!dialog.querySelector('h1,h2,h3'), 'redundant dialog heading');
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'Kore'); voice.dispatchEvent(new Event('change', { bubbles: true }));
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'kore'); voice.dispatchEvent(new Event('change', { bubbles: true }));
       await click('Generate', dialog);
       await until('accepted setup closed', () => !dialog.isConnected);
       check(!document.querySelector('dialog[aria-label="Generate note audio"]'), 'setup remained open');
@@ -103,7 +104,10 @@ async function nativeParity({ offline = false, summary } = {}) {
     const reopen = await until('note actions', () => document.querySelector('[role="menu"]'));
     await click('Generate audio', reopen);
     const again = await until('reopened dialog', () => document.querySelector('dialog[aria-label="Generate note audio"]'));
-    await until('fresh voice', () => !again.querySelector('select').disabled);
+    if (catalogOffline) {
+      await until('offline catalog error', () => again.querySelector('[role="alert"]')?.textContent.includes('Could not load voices'));
+      check(again.querySelector('select').disabled && button('Generate', again).disabled, 'offline catalog allowed generation');
+    } else await until('fresh voice', () => !again.querySelector('select').disabled);
     check(again.querySelector('select').value === '', 'previous voice was recalled');
     check(again.textContent.includes('Existing audio will be replaced after successful generation.'), 'replacement consequence missing');
     await click('Close', again);
@@ -124,7 +128,7 @@ async function nativeParity({ offline = false, summary } = {}) {
         const voice = setup.querySelector('select');
         await until('L1 voice selector', () => !voice.disabled);
         check(!setup.textContent.includes('Existing audio'), 'full-text clips counted as L1 clips');
-        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'Kore');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'kore');
         voice.dispatchEvent(new Event('change', { bubbles: true }));
         await click('Generate', setup);
         await until('L1 setup closed', () => !setup.isConnected);
@@ -188,7 +192,7 @@ async function nativeFolderAudio({ recover = false } = {}) {
     await until('eligibility', () => !voice.disabled);
     check(voice.value === '', 'folder voice was recalled');
     check(!dialog.querySelector('progress,[role="timer"]') && !button('Stop', dialog), 'obsolete modal controls');
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'Kore');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'kore');
     voice.dispatchEvent(new Event('change', { bubbles: true }));
     await click('Generate', dialog);
     await until('local acceptance closes setup', () => !dialog.isConnected);
