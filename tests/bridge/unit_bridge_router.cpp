@@ -4031,6 +4031,7 @@ TEST_F(BridgeRouterTest, NoteSummaryGenerateUsesPartPromptsAndSavedSource) {
         EXPECT_EQ(body["messages"][0]["content"], expected_prompts[i]);
         EXPECT_EQ(body["messages"][1]["content"], std::string("from User:\n") + expected_text[i]);
         EXPECT_FALSE(body.contains("tools"));
+        EXPECT_FALSE(body.contains("service_tier"));
     }
     ASSERT_TRUE(call("notes.summaryCancel")["ok"]);
     EXPECT_TRUE(call("events.list")["result"]["items"].empty());

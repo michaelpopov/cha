@@ -32,6 +32,7 @@ std::string build_google_request_body(
         throw std::logic_error("Native and application Library retrieval cannot be combined");
     if (text_sizes) *text_sizes = {};
     Json body{{"contents", Json::array()}};
+    if (config.flex_processing) body["serviceTier"] = "flex";
     for (const auto& message : project_model_context(input, system_prompt)) {
         const bool system = message.role == ModelRole::system;
         if (text_sizes) {

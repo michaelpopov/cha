@@ -158,7 +158,9 @@ std::string build_chat_completions_request_body(
         {"stream", config.stream},
         {"messages", std::move(messages)},
     };
-    if (is_direct_openai_host(config.host) || is_openrouter_host(config.host)) {
+    if (config.flex_processing) {
+        body["service_tier"] = "flex";
+    } else if (is_direct_openai_host(config.host) || is_openrouter_host(config.host)) {
         // Both services accept priority as the Fast mode tier name.
         body["service_tier"] = "priority";
     }

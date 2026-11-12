@@ -63,8 +63,11 @@ struct ModelBackendConfig {
     // OpenRouter provider slugs tried in order. An empty list leaves routing to
     // OpenRouter; a non-empty list restricts fallback to these targets.
     std::vector<std::string> openrouter_targets;
+    // Request policy, set when preparing a note summary.
+    bool flex_processing{false};
 };
 
+bool eligible_for_flex_processing(const ModelBackendConfig& config);
 bool valid_openrouter_targets(const ModelBackendConfig& config);
 bool provider_supports_reasoning_effort(const ModelBackendConfig& config, ProviderApi api);
 bool provider_supports_web_search(const ModelBackendConfig& config);

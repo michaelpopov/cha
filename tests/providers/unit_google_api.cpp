@@ -37,6 +37,12 @@ TEST(GoogleApi, NativeConfigurationAndEndpoints) {
             "https://generativelanguage.googleapis.com:443/v1beta/models/gemini-test:streamGenerateContent?alt=sse");
     }
     config.stream = false;
+    config.api_key_id = "api_key_1";
+    EXPECT_TRUE(eligible_for_flex_processing(config));
+    config.host = "GENERATIVELANGUAGE.GOOGLEAPIS.COM.";
+    EXPECT_TRUE(eligible_for_flex_processing(config));
+    config.host = "generativelanguage.googleapis.com.example.test";
+    EXPECT_FALSE(eligible_for_flex_processing(config));
     config.host = "::1";
     config.port = 8080;
     config.https = false;
@@ -51,6 +57,23 @@ TEST(GoogleApi, NativeConfigurationAndEndpoints) {
         config.model = model;
         EXPECT_TRUE(provider_config_error(config)) << model;
         EXPECT_THROW(provider_endpoint(config), std::invalid_argument);
+    }
+}
+
+TEST(GoogleApi, EncodesFlexAtTheTopLevel) {
+    GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"human", "You"}, .prompt_text = "Summarize this note."},
+    };
+    ModelBackendConfig config{.model = "gemini", .api = ProviderApi::google};
+    for (const bool stream : {false, true}) {
+        config.stream = stream;
+        config.flex_processing = false;
+        auto expected = Json::parse(build_google_request_body(request, config, "Summarize"));
+        EXPECT_FALSE(expected.contains("serviceTier"));
+        expected["serviceTier"] = "flex";
+        config.flex_processing = true;
+        EXPECT_EQ(Json::parse(build_google_request_body(request, config, "Summarize")), expected);
     }
 }
 

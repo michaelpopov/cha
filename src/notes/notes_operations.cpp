@@ -40,7 +40,7 @@ ProviderSelection note_editing_provider(const Workspace& workspace) {
 }
 
 SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, OpenAiOAuth* oauth, ApiKeyStore* api_keys,
-    const WorkspacePrompt& prompt) {
+    const WorkspacePrompt& prompt, bool for_summary = false) {
     auto provider = note_editing_provider(workspace);
     provider.config.timeout_s = 0;
     // Bind legacy names to a stable reference, so deleting a key cannot make a
@@ -62,6 +62,7 @@ SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, Open
     if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
         && oauth->status().state != OpenAiOAuthState::connected)
         throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
+    provider.config.flex_processing = for_summary && eligible_for_flex_processing(provider.config);
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
         .character = {prompt.id, prompt.display_name}, .provider = std::move(provider),
         .system_prompt = prompt.text,
@@ -637,7 +638,8 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
             }
         }
         const auto workspace = impl_->store->snapshot();
-        definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys, *workspace->find_prompt(prompt));
+        definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+            *workspace->find_prompt(prompt), /*for_summary=*/true);
     } catch (const NoteError& error) {
         record_note_summary_failure(*impl_->store, part, target, error.what());
         rethrow_note(error);

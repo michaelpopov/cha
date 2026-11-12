@@ -580,13 +580,18 @@ TEST(ProviderClient, DebugLogsFullHttpErrorsButRedactsTheActiveApiKey) {
 TEST(ProviderClient, RequestsFastModeForOpenAiAndOpenRouterEndpoints) {
     Transcript transcript;
     const GenerationRequest request = client_request(transcript, 91, "Question");
-    struct Case { const char* host; bool priority; };
+    struct Case { const char* host; bool priority; bool flex; };
     const Case cases[]{
-        {"api.openai.com", true}, {"API.OPENAI.COM.", true},
-        {"openrouter.ai", true}, {"OPENROUTER.AI.", true},
-        {"api.x.ai", false}, {"api.openai.com.example.test", false},
-        {"openrouter.ai.example.test", false},
+        {"api.openai.com", true, true}, {"API.OPENAI.COM.", true, true},
+        {"openrouter.ai", true, false}, {"OPENROUTER.AI.", true, false},
+        {"api.x.ai", false, false}, {"api.openai.com.example.test", false, false},
+        {"openrouter.ai.example.test", false, false},
+        {"generativelanguage.googleapis.com", false, false},
     };
+    test::TestWorkspace workspace;
+    auto store = WorkspaceConfigStore::open(test::import_test_database(workspace.root()));
+    ApiKeyStore keys(*store);
+    const auto key = keys.create("Test", "test-model-key");
     for (const ProviderApi api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         for (const bool stream : {false, true}) {
             for (const auto& item : cases) {
@@ -598,16 +603,42 @@ TEST(ProviderClient, RequestsFastModeForOpenAiAndOpenRouterEndpoints) {
                 definition.provider.config.https = true;
                 definition.provider.config.api = api;
                 definition.provider.config.cache_retention = CacheRetention::off;
-                ProviderClient client(shared_definition(std::move(definition)));
+                definition.provider.config.api_key_id = key.id;
+                ProviderClient client(shared_definition(definition), nullptr, &keys);
                 const Json body = Json::parse(client.prepare(request).bytes);
                 if (item.priority) {
                     EXPECT_EQ(body.at("service_tier"), "priority");
                 } else {
                     EXPECT_FALSE(body.contains("service_tier"));
                 }
+                auto& config = definition.provider.config;
+                config.flex_processing = eligible_for_flex_processing(config);
+                EXPECT_EQ(config.flex_processing, item.flex);
+                ProviderClient summary_client(shared_definition(std::move(definition)), nullptr, &keys);
+                auto summary = Json::parse(summary_client.prepare(request).bytes);
+                auto expected = body;
+                if (item.flex) expected["service_tier"] = "flex";
+                EXPECT_EQ(summary, expected);
             }
         }
     }
+}
+
+TEST(ProviderClient, FlexRequiresNetworkModeAndApiKeyAuthentication) {
+    ModelBackendConfig config{.host = "api.openai.com", .mode = Mode::net};
+    EXPECT_FALSE(eligible_for_flex_processing(config));
+    config.api_key_id = "api_key_1";
+    EXPECT_TRUE(eligible_for_flex_processing(config));
+    config.auth = ProviderAuth::openai_subscription;
+    EXPECT_FALSE(eligible_for_flex_processing(config));
+    config.auth = ProviderAuth::none;
+    config.mode = Mode::test;
+    EXPECT_FALSE(eligible_for_flex_processing(config));
+    config.mode = Mode::net;
+    config.api = ProviderApi::anthropic;
+    EXPECT_FALSE(eligible_for_flex_processing(config));
+    config.api = ProviderApi::google;
+    EXPECT_FALSE(eligible_for_flex_processing(config));
 }
 
 TEST(ProviderClient, AddsCacheMetadataForSupportedHosts) {

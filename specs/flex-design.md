@@ -4,8 +4,8 @@ Date: November 12, 2026
 
 Status: Proposed technical design. No application changes are implemented by
 this document. The user selected Flex rather than Batch; the policies below
-are proposals for review, not additional user requirements. Section 7 includes
-the proposed visible failure message and its visual representation.
+are proposals for review, not additional user requirements. This design has
+no visible UI change.
 
 ## 1. Purpose and ideal outcome
 
@@ -17,11 +17,13 @@ lower inference cost and potentially longer waiting time.
 The ideal outcome is:
 
 - Eligible calls use Flex, including retries and the final folder overview.
-- Temporary capacity failures can recover through a small, bounded retry loop.
-- A request cannot wait forever. Cancel works during requests and retry waits.
+- Temporary capacity failures can recover through the existing bounded retry
+  loop.
+- Cancel works during requests and retry waits, as today.
 - Successful summaries remain saved when another request fails.
-- An incomplete run is visible to the user, with details in Settings → Events.
-- The implementation adds no job database, scheduler, queue, or resume system.
+- Failures are recorded in Settings → Events, as today.
+- The implementation adds no job database, scheduler, queue, resume system,
+  timeout, or UI change.
 
 Flex changes scheduling and price, not the selected model or prompts. It does
 not guarantee equal wording, latency, availability, or successful completion.
@@ -38,10 +40,11 @@ resolved provider meets the conditions below.
 | Direct Gemini Developer API, API-key authentication, Google API format | Send top-level `serviceTier: "flex"`. |
 | ChatGPT subscription, OpenRouter, another compatible endpoint, Anthropic, or test mode | Keep the existing behavior. Do not send a Flex field. |
 
-Use the existing direct-OpenAI host helper. Recognize Google's direct host as
-`generativelanguage.googleapis.com`, with the same case and trailing-dot
-normalization. Production eligibility also requires HTTPS and port 443.
-Protocol compatibility alone does not establish support for a vendor's tier.
+Use the existing direct-OpenAI host helper, as the Priority rule does today.
+Recognize Google's direct host as `generativelanguage.googleapis.com`, with
+the same case and trailing-dot normalization. Eligibility depends on the host
+only, like the existing Priority rule. Protocol compatibility alone does not
+establish support for a vendor's tier.
 
 There is no new persisted setting or UI toggle in this proposal. This is the
 smallest interpretation of the decision to use Flex for summaries. Adding a
@@ -54,9 +57,11 @@ implementation must apply the override only at the note-summary call site.
 Model availability remains the provider's responsibility. Do not maintain a
 model-name allowlist or make a separate capability-probe request. An eligible
 endpoint with a model that rejects Flex fails that request and records the
-failure. It does not silently switch models or tiers. Existing configurations
-for other providers continue to work; obsolete settings are ignored with a
-warning, not treated as a reason to block an otherwise valid operation.
+failure. It does not silently switch models or tiers. Because there is no
+toggle and no fallback, a Notes model without Flex support cannot make
+summaries on an eligible endpoint. The only remedy is to select another Notes
+provider or model. That selection is shared with note compression and the
+other note operations (section 9).
 
 ### Why there is no automatic Standard fallback
 
@@ -77,7 +82,6 @@ when spare capacity is scarce.
 | `src/notes/notes_operations.cpp` | Prepares the provider, collects a complete answer, retries eligible failures, checks cancellation, and records final outcomes. |
 | `src/providers/provider_client.cpp` | Uses libcurl, enforces transport timeouts, reports `GenerationResult.retryable`, and stops on cancellation. |
 | OpenAI and Google request builders | Construct provider-specific JSON from a resolved `ModelBackendConfig`. |
-| `App.tsx` and `NotesTree.tsx` | Own the blocking dialog, refresh/reload, action cleanup, and an existing error area. |
 
 The summary PRD already requires continuation after a failed note, independent
 L1/L2 saves, and preservation of the folder Summary when L3 fails. Retain those
@@ -97,39 +101,33 @@ At `generate_summary_part`, prepare a summary-specific provider definition:
 1. Reuse the current Notes provider, model, credentials, prompt, reasoning
    effort, streaming mode, and output limits.
 2. Determine whether the direct endpoint is eligible for Flex.
-3. For eligible calls, set the internal flag and the timeout values in section
-   5 before creating the immutable definition used by all attempts.
+3. For eligible calls, set the internal flag before creating the immutable
+   definition used by all attempts.
 4. Leave other callers of `prepare_note_provider` on their existing path.
 
 In each OpenAI builder, give the Flex flag precedence over the existing
 Priority branch. Google adds the field to its existing request body. Keep
-streaming and non-streaming decoding unchanged. Add the requested tier to
-ordinary request diagnostics so a live check can verify routing without
-recording note contents or credentials. A requested tier alone is not proof
-of billing; inspect provider usage when available during validation.
+streaming and non-streaming decoding unchanged. Add no new diagnostics: the
+existing debug log already records each request body, which contains the
+tier, and each raw response. A requested tier alone is not proof of billing;
+inspect provider usage when available during validation.
 
 ## 5. Timeouts and retries
 
 ### 5.1 Timeouts
 
-Use fixed constants for eligible Flex summary calls:
+Make no timeout change. Today, `prepare_note_provider` sets `timeout_s = 0`,
+so a summary call has no total time limit. The transport's idle timer starts
+at the first response **body** byte; response headers do not start it. Thus a
+long Flex wait before the first body byte already works. Both providers ask
+clients to allow long waits (OpenAI suggests 15 minutes, Google 10 minutes or
+more); CHA already allows more. Cancel interrupts a silent request through the
+existing libcurl progress callback.
 
-| Limit | Proposed value | Reason |
-| --- | --- | --- |
-| Connection establishment | Existing 10 seconds | A slow network connection is different from waiting for model capacity. |
-| Total time per attempt | 900 seconds (15 minutes) | Allows a long capacity/reasoning wait while bounding each HTTP attempt. |
-| Idle time after response body bytes begin | 900 seconds | An early body frame or heartbeat must not reintroduce the normal short idle limit. The total limit still bounds the request. |
-
-These are local policy choices, not provider guarantees. They override the
-configured timeouts only on the copied Flex summary definition. Other
-operations retain their behavior. No folder-wide deadline is introduced.
-
-Today, `prepare_note_provider` sets `timeout_s = 0`. Also, the transport's idle
-timer starts at the first response **body** byte; response headers do not start
-it. Thus an existing summary can wait indefinitely before the first body byte.
-Setting the total limit is necessary; raising only the idle limit is not enough.
-Reuse libcurl's existing timeout and cancellation callback. Do not add a timer
-thread. The same total limit applies to streaming and non-streaming calls.
+The configured idle limit still applies after the first body byte. If a
+provider sends early stream events and then waits for capacity, the idle
+limit ends that call. The live check in section 8 confirms that streaming
+Flex calls are not cut this way.
 
 ### 5.2 Retry policy
 
@@ -141,26 +139,22 @@ client for each attempt.
 
 | Outcome | Automatic retry? |
 | --- | --- |
-| HTTP 429 capacity/rate-limit rejection | Yes, within the attempt limit. |
+| HTTP 429 (capacity, rate limit, or quota) | Yes, within the attempt limit, as today. |
 | HTTP 5xx rejection, including Google's 503 capacity response | Yes, within the attempt limit. |
 | DNS/proxy resolution failure or failure to connect before sending | Yes; retain the existing transport classification. |
-| Recognized authentication, permission, exhausted billing/quota, or invalid input/model/tier | No. Repeating the same request cannot repair these conditions. |
-| Local total timeout, idle timeout, HTTP 408, interrupted transfer, or partial response | No. Completion and charge status can be uncertain; avoid automatically duplicating work. |
+| Other HTTP errors, for example authentication, permission, or invalid input/model/tier | No. Repeating the same request cannot repair these conditions. |
+| Idle timeout, HTTP 408, interrupted transfer, or partial response | No. Completion and charge status can be uncertain; avoid automatically duplicating work. |
 | Refusal, incomplete output, empty output, oversize result, conversion failure, or save failure | No. These are not temporary capacity failures. |
 | Cancel, vault change, or connection cleanup | No. |
 
-Use `GenerationResult.retryable` as the retry signal, rather than parsing an
-arbitrary model answer or creating a second HTTP-status taxonomy in the Notes
-service. For Flex, known permanent provider diagnoses must take precedence
-over the broad 429/5xx rule. The current transport marks all 429 responses
-retryable, even when its existing error classifier recognizes exhausted quota;
-correct that precedence for this path without changing other workflows' retry
-policies. Keep provider-error classification separate from generated text.
+Use `GenerationResult.retryable` unchanged as the retry signal. Make no change
+to the error classifier: a 429 that reports exhausted quota is retried like
+any other 429, as today. A 429 rejection is not charged, so those retries cost
+about 70 seconds of waiting and no tokens.
 
 No additional SDK retry layer exists: CHA uses libcurl. The Notes loop remains
 the sole owner of these retries. Keep the current short cancellation checks
-during backoff; never replace them with one uninterruptible sleep. Do not hold
-the lifecycle mutex while waiting or making a network request.
+during backoff and the current lock rules.
 
 Each new attempt discards the previous attempt's answer. Only a complete,
 validated result can proceed to conversion and saving. Do not retry commits.
@@ -170,12 +164,10 @@ brief capacity failures without adding a long-lived queue. They are not a
 promise to outwait an outage. This first version does not add jitter or
 `Retry-After` header handling; that limitation is explicit in section 9.
 
-The request-time envelope for four attempts is approximately **61 minutes
-10 seconds**, plus local overhead, if each attempt runs nearly to its limit
-and returns a retryable rejection. A local timeout itself ends retries, so
-four consecutive local timeouts cannot occur under this policy. A whole
-folder can take substantially longer. Cancel remains available during both
-requests and waits.
+A retryable rejection can come after a long Flex wait, so one summary call can
+take much longer than its retry waits suggest. A whole folder can take
+substantially longer. Cancel remains available during both requests and
+waits.
 
 ## 6. Failure, saving, and cancellation behavior
 
@@ -188,11 +180,10 @@ Keep the existing per-part rules after retries are exhausted:
 | L3 overview | Do not replace the folder Summary. Keep successful L1/L2 results. |
 | Markdown conversion or commit | Record the failure and retain the existing independent-save rules. Do not regenerate automatically. |
 
-Use the existing Events recorder for one final error per failed part, including
-the part, target, and safe reason. Retry attempts belong in ordinary diagnostic
-logs, not separate Events errors: a recovered attempt is not a failed summary.
-Log the attempt number and chosen delay without note contents or credentials.
-Do not expose raw provider response bodies in UI copy.
+The existing Events recorder keeps one final error per failed part, including
+the part, target, and safe reason. As today, retry attempts record no Events
+errors: a recovered attempt is not a failed summary. The debug log shows each
+attempt's request. Do not expose raw provider response bodies in UI copy.
 
 Retain the existing cancellation flags, connection ownership, and vault-epoch
 checks. Cancel interrupts requests and backoff, prevents new attempts and new
@@ -205,65 +196,13 @@ provider refunds or immediately stops a request it already accepted.
 
 A rerun of a folder skips existing L1/L2 versions and regenerates all L3
 sections. It is not a persistent resume operation. A rerun on an individual
-note regenerates both levels, as today. A lost commit reply can leave an
-uncertain outcome; refresh the store rather than resend the commit blindly.
+note regenerates both levels, as today.
 
-## 7. User-visible completion result
+## 7. User-visible behavior
 
-Retain the blocking progress dialog, its existing note count, and Cancel.
-Do not add a background-mode switch, retry countdown, top title, or helper
-text. The backend's retry loop needs no new progress notification protocol.
-
-Propose one visible addition: after a run with failures, close the dialog,
-finish refresh/reload and release the action guard, then show this message in
-the existing Notes tree error area:
-
-> Some summaries could not be generated or saved. Check Settings → Events.
-
-This also covers a run in which every attempted summary failed. Do not show
-this message merely because the user cancelled. If the run was cancelled,
-individual failures already recorded in Events remain available there.
-
-Visual representation of the proposed behavior (existing styles and controls):
-
-```text
-During generation — existing modal
-┌───────────────────────────────────────────────┐
-│  ◌  Summarizing “Chapter 4”…                   │
-│     Note 4 of 12                              │
-│                                     [Cancel]  │
-└───────────────────────────────────────────────┘
-
-After completion with failures — modal closed
-┌───────────────────────────────────────────────┐
-│  [existing Notes tree controls]               │
-│  Some summaries could not be generated or     │
-│  saved. Check Settings → Events.              │
-│                                               │
-│  ▾ Book                                       │
-│      Chapter 1                                │
-│      Chapter 2                                │
-│      …                                        │
-└───────────────────────────────────────────────┘
-```
-
-The new copy is a proposed UI change. It is included here for review before
-implementation; creating this design file does not implement or approve it.
-
-Implementation uses only one extra transient boolean, `hadFailures`, in the
-result of `summarizeAndWait`. Set it for generation, conversion, abandon, and
-commit failures. Skipped existing levels and cancellation are not failures.
-Catch conversion failures explicitly: `summaryAbandon` can succeed even
-though conversion failed, so rejected promises alone are insufficient.
-
-Return the flag with `targetIds` and `folderSummaryCommitted`; do not throw
-inside the summary helper merely to report partial failure. `App.tsx` needs
-those existing result fields to reload successfully changed documents. After
-normal cleanup, report a safe `ChaError` through the existing `onSummarize`
-rejection path to `NotesTree.setError`. Check cancellation and the context
-before presenting it. A real lifecycle or refresh exception retains its own
-error; the summary notice must not replace that error. No new wire DTO, list
-of results, or persistent failure counter is needed.
+No UI change. The blocking progress dialog, its note count, and Cancel stay as
+they are. Failures are recorded in Settings → Events, as the summary PRD
+requires. There is no retry countdown and no new progress notification.
 
 ## 8. Validation before enabling
 
@@ -272,26 +211,21 @@ Extend the existing tests rather than build a separate harness:
 1. **Request builders:** OpenAI Responses and Chat Completions send Flex, not
    Priority, for eligible summary definitions. Google sends the correct field.
    Unrelated operations and excluded endpoints retain their existing bodies.
-2. **Summary worker:** All four parts use the override. Verify four-attempt
-   bounds, the 10/20/40 waits, permanent-error precedence, no tier fallback,
-   and no retry after timeout or partial output. Use the existing wait hook.
-3. **Transport:** Verify a silent first response is bounded, body activity
-   cannot defeat the total deadline, and Cancel interrupts a silent request.
-   Use short test limits and existing local HTTP fixtures, not real 15-minute
-   sleeps. Cover streaming and non-streaming behavior.
-4. **Saving and UI:** Keep tests for independent commits and L3 failure.
-   Add coverage for conversion failure, mixed success, all failures, Cancel,
-   and vault changes. Confirm successful documents reload before the error
-   appears and the modal/action guard always clear.
-5. **Live smoke checks during implementation:** With configured supported
-   OpenAI and Gemini models, run a small note and a small folder. Record the
-   model, requested/returned tier where available, duration, attempt count,
-   and outcome. Confirm actual usage pricing separately. Do not induce an
-   outage or claim that live success tests retry behavior. Mock errors do that.
+   Cover the host cases of the existing Priority test, plus the Google host.
+2. **Summary preparation:** An eligible Notes provider gets the Flex flag for
+   summary parts. Note compression and the other note operations do not. All
+   four parts go through `generate_summary_part`, so one call site covers
+   them. The retry loop and classifier do not change, so the existing retry
+   tests stay valid.
+3. **Live smoke checks during implementation:** With configured supported
+   OpenAI and Gemini models, run a small note and a small folder, with
+   streaming on and off. Confirm that the idle limit does not end a Flex call.
+   Record the model, requested/returned tier where available, duration,
+   attempt count, and outcome. Confirm actual usage pricing separately. Do not
+   induce an outage or claim that live success tests retry behavior.
 
-Tests should cover the behavior above in the existing provider, Notes, and
-webapp suites. Live checks use the user's existing credentials without logging
-them. No live calls are needed to create this proposal.
+Live checks use the user's existing credentials without logging them. No live
+calls are needed to create this proposal.
 
 ## 9. Known hurdles and accepted limits
 
@@ -304,19 +238,24 @@ them. No live calls are needed to create this proposal.
   backoff or provider retry hints could improve recovery, but this proposal
   keeps the existing bounded mechanism. It does not honor `Retry-After`, and
   parallel calls can retry together. Revisit only with observed evidence.
-- **The 15-minute bound can reject legitimate slow work.** It is a deliberate
-  tradeoff against an unlimited wait. A timed-out request may still incur cost;
-  neither local timeout nor Cancel establishes that no work happened remotely.
+- **There is no total time limit.** As today, a summary call can wait as long
+  as the provider holds it; Cancel is the local stop. A cancelled or
+  idle-timed-out request may still incur cost; neither establishes that no
+  work happened remotely.
 - **One exhausted L3 section still prevents a new folder Summary.** This is
   the established completeness rule. Keeping successful sections for later
   runs would require additional state and stale-source rules, so it is excluded.
 - **Model and endpoint support can change.** There is no capability registry.
   An unsupported model can fail repeatedly across a folder because the PRD
   says to continue after failures. Cancel is the escape; no circuit breaker
-  or new fail-fast rule is introduced here.
+  or new fail-fast rule is introduced here. With no toggle and no fallback,
+  summaries on an eligible endpoint work only with a Flex-capable Notes model.
+  To change the model, the user changes the provider for note compression and
+  the other note operations too.
 - **Some diagnostics remain broad.** The current classifier can label a Flex
   capacity 429 as a rate-limit failure and can reduce unknown model/tier errors
-  to a generic public error. Retain safe messages and provider request IDs in
+  to a generic public error. A 429 for exhausted quota is retried three times
+  before it fails. Retain safe messages and provider request IDs in
   diagnostics rather than build a large new error taxonomy for this change.
 - **Savings depend on the baseline and actual usage.** OpenAI currently uses
   Priority in CHA, so its savings are not simply 50% of today's bill. Retries,

@@ -34,6 +34,25 @@ bool is_openrouter_host(std::string_view host) {
     return ascii_iequals(host, "openrouter.ai");
 }
 
+bool eligible_for_flex_processing(const ModelBackendConfig& config) {
+    if (config.mode != Mode::net || config.auth != ProviderAuth::none
+        || config.api_key_id.empty()) return false;
+
+    switch (config.api) {
+    case ProviderApi::responses:
+    case ProviderApi::chat_completions:
+        return is_direct_openai_host(config.host);
+    case ProviderApi::google: {
+        std::string_view host = config.host;
+        if (host.ends_with('.')) host.remove_suffix(1);
+        return ascii_iequals(host, "generativelanguage.googleapis.com");
+    }
+    case ProviderApi::anthropic:
+        return false;
+    }
+    return false;
+}
+
 bool valid_openrouter_targets(const ModelBackendConfig& config) {
     if (config.openrouter_targets.empty()) return true;
     if (!is_openrouter_host(config.host)) return false;
