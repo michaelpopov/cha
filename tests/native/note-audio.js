@@ -45,6 +45,7 @@ async function nativeParity({ offline = false, summary } = {}) {
       await until('accepted setup closed', () => !dialog.isConnected);
       check(!document.querySelector('dialog[aria-label="Generate note audio"]'), 'setup remained open');
       await click('Chat');
+      await until('Chat after saving note position', () => document.querySelector('main[data-view="chat"]'));
       await click('Settings', document.querySelector('aside'));
       await until('Settings during generation', () => document.querySelector('section[aria-label="Settings"]'));
       await click('Notes');
@@ -131,9 +132,19 @@ async function nativeParity({ offline = false, summary } = {}) {
       await until('L1 tint', () => noteRow().classList.contains('has-audio'));
       const paragraph = editor().view.dom.querySelector('p');
       playbackMenu = await openMenu(paragraph);
-      await click('Play from here', playbackMenu);
-      await until('L1 playback', () => paragraph.classList.contains('cha-note-audio-current'));
-      editor().view.dom.dispatchEvent(key(false));
+      // Pause as soon as playback starts so a short clip cannot finish between polls.
+      const pauseOnPlayback = new MutationObserver(() => {
+        if (!paragraph.classList.contains('cha-note-audio-current')) return;
+        pauseOnPlayback.disconnect();
+        editor().view.dom.dispatchEvent(key(false));
+      });
+      pauseOnPlayback.observe(paragraph, { attributeFilter: ['class'] });
+      try {
+        await click('Play from here', playbackMenu);
+        await until('L1 playback', () => paragraph.classList.contains('cha-note-audio-current'));
+      } finally {
+        pauseOnPlayback.disconnect();
+      }
       await chooseMode('Full text');
       await until('full text restored', () => editor()?.getText().includes('Second paragraph'));
       check(!paragraph.classList.contains('cha-note-audio-current'), 'mode switch kept L1 playback active');

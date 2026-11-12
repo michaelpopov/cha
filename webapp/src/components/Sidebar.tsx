@@ -13,15 +13,15 @@ import {
 import { createPortal } from 'react-dom';
 
 import { ChaError, publicErrorMessage } from '../api/client';
-import type { AppState, DataAction, MainView, NavigationAction } from '../state/view';
+import type { AppState, MainView, NavigationAction } from '../state/view';
 import { ForumsIcon, MoreIcon, SettingsIcon } from './Icons';
 import { TransliteratingInput } from './TransliterationMode';
 import { PasswordDialog } from './PasswordDialog';
 
 interface SidebarProps {
   state: AppState;
-  dispatch: Dispatch<DataAction>;
   navigate: Dispatch<NavigationAction>;
+  onSelectTab(tab: AppState['sidebarTab']): void;
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
   onSaveSummary?(forumId: string, sessionId: string): Promise<void>;
@@ -202,8 +202,8 @@ function SessionDialog({
 
 export function Sidebar({
   state,
-  dispatch,
   navigate,
+  onSelectTab,
   onCreateSession,
   onDownloadSession,
   onSaveSummary,
@@ -309,7 +309,7 @@ export function Sidebar({
         <button
           aria-selected={state.sidebarTab === 'chat'}
           className={`cha-button cha-button-ghost${state.sidebarTab === 'chat' ? ' is-current' : ''}`}
-          onClick={() => dispatch({ type: 'show-chat-tab' })}
+          onClick={() => onSelectTab('chat')}
           role="tab"
           type="button"
         >
@@ -318,7 +318,7 @@ export function Sidebar({
         <button
           aria-selected={state.sidebarTab === 'notes'}
           className={`cha-button cha-button-ghost${state.sidebarTab === 'notes' ? ' is-current' : ''}`}
-          onClick={() => dispatch({ type: 'show-notes-tab' })}
+          onClick={() => onSelectTab('notes')}
           role="tab"
           type="button"
         >

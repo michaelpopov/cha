@@ -17,10 +17,11 @@ function readyState() {
 function renderSidebar(state: AppState = readyState()) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const onOpenSession = vi.fn(async () => true);
+  const onSelectTab = vi.fn();
   render(
     <Sidebar
       onCreateSession={vi.fn(async () => true)}
-      dispatch={dispatch} navigate={dispatch}
+      navigate={dispatch} onSelectTab={onSelectTab}
       onClearSessionAudioCache={vi.fn(async () => undefined)}
       onDeleteSession={vi.fn(async () => undefined)}
       onDownloadSession={vi.fn(async () => undefined)}
@@ -30,10 +31,18 @@ function renderSidebar(state: AppState = readyState()) {
       state={state}
     />,
   );
-  return { dispatch, onOpenSession };
+  return { dispatch, onOpenSession, onSelectTab };
 }
 
 describe('Sidebar navigation', () => {
+  it('passes both tab selections to the handler', () => {
+    const { dispatch, onSelectTab } = renderSidebar();
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(onSelectTab.mock.calls).toEqual([['notes'], ['chat']]);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it.each(['loading', 'failed', 'incompatible'] as const)(
     'does not report empty lists when bootstrap is %s', (bootstrapStatus) => {
       renderSidebar({ ...initialAppState, bootstrapStatus });
@@ -234,7 +243,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
+        navigate={vi.fn()} onSelectTab={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -263,7 +272,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
+        navigate={vi.fn()} onSelectTab={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -286,7 +295,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
+        navigate={vi.fn()} onSelectTab={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -322,7 +331,7 @@ describe('Sidebar session actions', () => {
       render(
         <Sidebar
           onCreateSession={vi.fn(async () => true)}
-          dispatch={vi.fn()} navigate={vi.fn()}
+          navigate={vi.fn()} onSelectTab={vi.fn()}
           onClearSessionAudioCache={item.action === 'Clear audio cache' ? failingAction : vi.fn(async () => undefined)}
           onDeleteSession={vi.fn(async () => undefined)}
           onDownloadSession={item.action === 'Download' ? failingAction : vi.fn(async () => undefined)}
@@ -348,7 +357,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
+        navigate={vi.fn()} onSelectTab={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={onDelete}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -375,7 +384,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
+        navigate={vi.fn()} onSelectTab={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={vi.fn(async () => undefined)}
         onDownloadSession={vi.fn(async () => undefined)}
@@ -406,7 +415,7 @@ describe('Sidebar session actions', () => {
     render(
       <Sidebar
         onCreateSession={vi.fn(async () => true)}
-        dispatch={vi.fn()} navigate={vi.fn()}
+        navigate={vi.fn()} onSelectTab={vi.fn()}
         onClearSessionAudioCache={vi.fn(async () => undefined)}
         onDeleteSession={() => pending}
         onDownloadSession={vi.fn(async () => undefined)}

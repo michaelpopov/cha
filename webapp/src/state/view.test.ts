@@ -1,4 +1,5 @@
 import type { NoteImportSource } from '../notes/importSource';
+import type { AnnotationDestination } from '../notes/annotationSource';
 import { describe, expect, it } from 'vitest';
 
 import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
@@ -15,6 +16,8 @@ import {
 function readyState(): AppState {
   return appReducer(initialAppState, { type: 'bootstrap-loaded', bootstrap: bootstrapFixture });
 }
+
+const destination: AnnotationDestination = { entryType: 'highlight', ordinal: 1, prefix: 'A highlight' };
 
 describe('application navigation reducer', () => {
   it.each<NoteImportSource>([
@@ -45,13 +48,15 @@ describe('application navigation reducer', () => {
 
   it('retains a hidden note across unrelated actions but clears it on leaving the workspace', () => {
     let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
-    state = appReducer(state, { type: 'open-note', noteId: 42, importSource: { kind: 'page', url: 'https://example.org' } });
+    state = appReducer(state, { type: 'open-note', noteId: 42, destination, importSource: { kind: 'page', url: 'https://example.org' } });
     state = appReducer(state, { type: 'show-chat' });
     expect(state.noteImportSource).toEqual({ kind: 'page', url: 'https://example.org' });
+    expect(state.noteDestination).toBe(destination);
     expect(workspaceVisibility(state)).toEqual({ notesVisible: true, chatVisible: true });
     expect(state.activeNoteId).toBe(42);
     state = appReducer(state, { type: 'set-layout', mode: 'single' });
     expect(state.noteImportSource).toBeUndefined();
+    expect(state.noteDestination).toBeUndefined();
     state = appReducer(state, { type: 'show-chat-tab' });
     state = appReducer(state, { type: 'stream-state', status: 'connected' });
     expect(state.activeNoteId).toBe(42);
@@ -609,17 +614,21 @@ describe('character picture selection', () => {
     expect(appReducer(state, { type: 'session-discarded', forumId: snapshot.forum.id, sessionId: snapshot.session_id }).pictureCharacterId).toBeNull();
   });
 
-  it('changes only the sidebar tab and keeps the main panel and conversation', () => {
-    let state = readyState();
-    const conversation = state.activeConversation;
-    state = appReducer(state, { type: 'show-notes-tab' });
-    expect(state.sidebarTab).toBe('notes');
-    expect(state.mainView).toBe('chat');
-    expect(state.activeConversation).toEqual(conversation);
-    state = appReducer(state, { type: 'show-chat-tab' });
-    expect(state.sidebarTab).toBe('chat');
-    expect(state.mainView).toBe('chat');
-    expect(state.activeNoteId).toBeNull();
+  it('switches the sidebar and main view together while keeping the note and conversation', () => {
+    const showNotes = { type: 'show-notes-tab' } as const;
+    const showChat = { type: 'show-chat-tab' } as const;
+    let notes = appReducer(readyState(), showNotes);
+    expect(notes).toMatchObject({ sidebarTab: 'notes', mainView: 'notes', activeNoteId: null });
+    expect(appReducer(notes, showNotes)).toBe(notes);
+    notes = appReducer(notes, {
+      type: 'open-note', noteId: 4, mode: 'l2', destination,
+    });
+    const chat = appReducer(notes, showChat);
+    expect(chat).toEqual({
+      ...notes, sidebarTab: 'chat', mainView: 'chat', noteDestination: undefined,
+    });
+    expect(appReducer(chat, showChat)).toBe(chat);
+    expect(appReducer(chat, showNotes)).toEqual({ ...notes, noteDestination: undefined });
   });
 
   it('opens a note beside the current conversation and releases it when the main panel leaves', () => {
@@ -697,8 +706,6 @@ describe('session activity', () => {
     state = appReducer(state, { type: 'session-generation', ...welcome, generation: snapshotFixture.generation });
     expect(state.sessionActivity).toEqual([{ ...welcome, status: 'finished' }]);
     state = appReducer(state, { type: 'show-chat-tab' });
-    expect(state.sessionActivity[0].status).toBe('finished');
-    state = appReducer(state, { type: 'show-chat' });
     expect(state.sessionActivity).toEqual([]);
   });
 

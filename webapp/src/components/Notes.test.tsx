@@ -90,6 +90,14 @@ async function openNotes() {
   await screen.findByRole('treeitem', { name: bootstrapFixture.vault_name });
 }
 
+function readyChatComposer() {
+  return waitFor(() => {
+    const composer = screen.getByRole('textbox', { name: 'Message' });
+    expect(composer).toBeEnabled();
+    return composer;
+  });
+}
+
 function chooseNoteMode(label: 'Full text' | 'L1' | 'L2' | 'Compressed') {
   fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
@@ -103,6 +111,13 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
+}
+
+function visitPlanningSession() {
+  act(() => {
+    window.history.replaceState(null, '', '/#/s/lobby/planning/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
 }
 
 function noteEditor(): Editor {
@@ -595,9 +610,8 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(readSource).toHaveBeenCalledOnce());
     const original = noteEditor();
     act(() => bus.layout('split'));
+    await readyChatComposer();
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
-    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeInTheDocument());
     expect(noteEditor()).toBe(original);
     expect(screen.getByText('Loading content…')).toBeInTheDocument();
     act(() => bus.layout('single'));
@@ -927,7 +941,7 @@ describe('Notes in the application', () => {
       fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
       await waitFor(() => expect(noteEditor().isEditable).toBe(true));
       act(() => bus.layout('toggle'));
-      await screen.findByRole('textbox', { name: 'Message' });
+      await readyChatComposer();
       expect(reportedStates()).toEqual([false, true]);
       fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
       fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
@@ -957,15 +971,18 @@ describe('Notes in the application', () => {
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await waitFor(() => expect(noteEditor().isEditable).toBe(true));
     act(() => bus.layout('split'));
-    const chat = await screen.findByRole('textbox', { name: 'Message' });
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    fireEvent.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Welcome/ }));
+    const chat = await readyChatComposer();
     act(() => typeInNote(' pending'));
+    const editor = noteEditor();
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'chat');
+    expect(screen.getByRole('separator', { name: 'Resize notes and chat' })).toBeInTheDocument();
+    expect(noteEditor()).toBe(editor);
+    expect(saveNote).not.toHaveBeenCalled();
     act(() => bus.layout('single'));
     await waitFor(() => expect(document.querySelector('.ProseMirror')).toBeNull());
     expect(saveNote).toHaveBeenCalledOnce();
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
-    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
     act(() => bus.layout('split'));
     await waitFor(() => expect(getNote).toHaveBeenCalledTimes(2));
     expect(getNote.mock.calls[1]).toEqual([plan.id, 'full_text']);
@@ -982,9 +999,10 @@ describe('Notes in the application', () => {
     const editor = noteEditor();
     act(() => bus.layout('split'));
     expect(noteEditor()).toBe(editor);
-    const chat = await screen.findByRole('textbox', { name: 'Message' });
+    const chat = await readyChatComposer();
     fireEvent.change(chat, { target: { value: 'Unsent chat' } });
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(chat);
     act(() => bus.layout('single'));
     expect(noteEditor()).toBe(editor);
@@ -1012,6 +1030,8 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
     expect(setNoteReadOnly).not.toHaveBeenCalled();
     expect(noteEditor().isEditable).toBe(false);
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
     await act(async () => finishSave());
     await waitFor(() => expect(setNoteReadOnly).toHaveBeenCalledWith(plan.id, true));
     expect(saveNote.mock.calls[0]).toEqual([plan.id, noteEditor().getJSON()]);
@@ -1556,6 +1576,8 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compress' }));
     const dialog = await screen.findByRole('dialog', { name: 'Note compression' });
     await within(dialog).findByText('Compressing “Plan”…');
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
     body = 'Incoming full text';
     act(() => bus.notesChanged());
     expect(noteEditor()).toBe(old);
@@ -1640,19 +1662,16 @@ describe('Notes in the application', () => {
     expect(getNote).toHaveBeenCalledOnce();
   });
 
-  it('switches sidebar tabs without changing the main panel, chat draft, or address', async () => {
+  it.each(['Chat', 'Notes'])('shows %s when its selected tab is clicked from Settings', async (tab) => {
     render(<App client={notesClient()} />);
-    const message = await screen.findByRole('textbox', { name: 'Message' });
-    fireEvent.change(message, { target: { value: 'Chat draft' } });
+    await readyChatComposer();
     const address = window.location.href;
-    await openNotes();
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
-    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'chat');
-    expect(document.title).toBe('CHA: Personal — Welcome');
-    expect(window.location.href).toBe(address);
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
-    expect(screen.getByLabelText('Forums')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: tab }));
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await screen.findByRole('heading', { name: 'Settings' });
+    expect(screen.getByRole('tab', { name: tab })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab', { name: tab }));
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', tab.toLowerCase());
     expect(window.location.href).toBe(address);
   });
 
@@ -1681,8 +1700,6 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(noteEditor().view.dom).toHaveFocus());
     expect(screen.getByText('Saved plan')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    expect(document.title).toBe('CHA: Personal — Plan');
-    fireEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('Chat draft');
     await waitFor(() => expect(document.title).toBe('CHA: Personal — Welcome'));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
@@ -1728,18 +1745,138 @@ describe('Notes in the application', () => {
     expect(noteEditor().view.dom).toHaveFocus();
   });
 
-  it('keeps the Notes draft and Send available across sidebar tabs', async () => {
-    render(<App client={notesClient()} />);
+  it('saves the note and scroll position before switching tabs and restores both drafts', async () => {
+    let stored: NoteContent['document'] = noteDocument('Saved plan');
+    let scrollTop = 0;
+    const saving = deferred<void>();
+    const savingScroll = deferred<void>();
+    const saveNote = vi.fn(async (_id: number, saved: typeof stored) => {
+      await saving.promise;
+      stored = saved;
+      return {};
+    });
+    const saveNoteScrollPosition = vi.fn(async (_id: number, position: number) => {
+      await savingScroll.promise;
+      scrollTop = position;
+    });
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: stored, scroll_top: scrollTop }));
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [plan], getNote, saveNote, saveNoteScrollPosition,
+    })} />);
+    fireEvent.change(await readyChatComposer(), { target: { value: 'Chat draft' } });
+    const address = window.location.href;
     await openNotes();
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(screen.queryByRole('textbox', { name: 'Message' })).toBeNull();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    expect(await screen.findByText('Saved plan')).toBeInTheDocument();
-    const prompt = screen.getByRole('textbox', { name: 'Prompt' });
-    fireEvent.change(prompt, { target: { value: 'Remember this' } });
-    expect(screen.getByRole('button', { name: 'Send to Plan' })).toBeEnabled();
+    const note = await screen.findByText('Saved plan');
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Remember this' } });
+    act(() => typeInNote(' edited'));
+    note.closest('.cha-notes-document')!.scrollTop = 640;
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledExactlyOnceWith(plan.id, noteDocument('Saved plan edited')));
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+    expect(saveNoteScrollPosition).not.toHaveBeenCalled();
+    await act(async () => saving.resolve());
+    expect(saveNoteScrollPosition).toHaveBeenCalledExactlyOnceWith(plan.id, 640);
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    await act(async () => savingScroll.resolve());
+    expect(await readyChatComposer()).toHaveValue('Chat draft');
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
+    expect(document.title).toBe('CHA: Personal — Welcome');
+    expect(window.location.href).toBe(address);
     fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    const reopened = await screen.findByText('Saved plan edited');
+    expect(reopened.closest('.cha-notes-document')!.scrollTop).toBe(640);
+    expect(getNote.mock.calls).toEqual([[plan.id, 'full_text'], [plan.id, 'full_text']]);
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Remember this');
     expect(screen.getByRole('button', { name: 'Send to Plan' })).toBeEnabled();
+    expect(window.location.href).toBe(address);
+  });
+
+  it.each(['Retry', 'Stay', 'Discard'] as const)('uses %s when a tab switch cannot save the note', async (choice) => {
+    let stored: NoteContent['document'] = noteDocument('Saved plan');
+    const saveNote = vi.fn(async (_id: number, saved: typeof stored) => {
+      if (saveNote.mock.calls.length === 1) throw new ChaError('internal_error', 'Save failed.');
+      stored = saved;
+      return {};
+    });
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: stored }));
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote, saveNote })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    const editor = noteEditor();
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Could not save “Plan”.' });
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    fireEvent.click(within(dialog).getByRole('button', { name: choice }));
+    if (choice === 'Stay') {
+      await waitFor(() => expect(editor.isEditable).toBe(true));
+      expect(noteEditor()).toBe(editor);
+      expect(editor.getText()).toBe('Saved plan edited');
+      expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+      expect(saveNote).toHaveBeenCalledOnce();
+      return;
+    }
+    await readyChatComposer();
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    if (choice === 'Retry') {
+      expect(await screen.findByText('Saved plan edited')).toBeInTheDocument();
+      expect(saveNote).toHaveBeenCalledTimes(2);
+    } else {
+      expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+      expect(document.querySelector('.ProseMirror')).toBeNull();
+      expect(getNote).toHaveBeenCalledOnce();
+      expect(saveNote).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('does not apply a tab switch after the vault changes during the save', async () => {
+    const bus = contextBus();
+    const saving = deferred<void>();
+    const saveNote = vi.fn(() => saving.promise);
+    const getBootstrap = vi.fn().mockResolvedValueOnce(bootstrapFixture)
+      .mockResolvedValue({ ...bootstrapFixture, vault_name: 'Projects' });
+    render(<App client={fixtureClient({
+      getBootstrap, listNoteItems: async () => [plan], saveNote,
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
+    })} contextEvents={bus} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Saved plan');
+    act(() => typeInNote(' edited'));
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
+    act(() => bus.emit());
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Vault' })).toHaveValue('Projects'));
+    await act(async () => saving.resolve());
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(document.querySelector('.ProseMirror')).toBeNull();
+  });
+
+  it('switches immediately from a loading note and reloads it on return', async () => {
+    const loading = deferred<NoteContent>();
+    const getNote = vi.fn()
+      .mockReturnValueOnce(loading.promise)
+      .mockResolvedValue({ id: plan.id, document_id: plan.id, document: noteDocument('Reloaded plan') });
+    render(<App client={fixtureClient({ listNoteItems: async () => [plan], getNote })} />);
+    await openNotes();
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
+    await screen.findByText('Opening…');
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'chat');
+    await readyChatComposer();
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    expect(await screen.findByText('Reloaded plan')).toBeInTheDocument();
+    await act(async () => loading.resolve({ id: plan.id, document_id: plan.id, document: noteDocument('Stale plan') }));
+    expect(screen.getByText('Reloaded plan')).toBeInTheDocument();
+    expect(getNote).toHaveBeenCalledTimes(2);
   });
 
   it('saves before another note and before a Chat session', async () => {
@@ -1768,8 +1905,7 @@ describe('Notes in the application', () => {
     expect(saveNote.mock.calls[0][0]).toBe(4);
     expect(JSON.stringify(saveNote.mock.calls[0][1])).toContain('Saved plan more');
     typeInNote(' too');
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+    visitPlanningSession();
     expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('');
     expect(saveNote).toHaveBeenCalledTimes(2);
     expect(saveNote.mock.calls[1][0]).toBe(5);
@@ -1924,7 +2060,6 @@ describe('Notes in the application', () => {
       expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('');
       expect(saveNote).toHaveBeenCalledOnce();
       fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-      fireEvent.click(screen.getByRole('button', { name: /^Welcome/ }));
       expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue('');
       return;
     }
@@ -1934,7 +2069,7 @@ describe('Notes in the application', () => {
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Notes draft');
   });
 
-  it('keeps the open note when the active conversation is deleted from the sidebar', async () => {
+  it('keeps the open note when the active conversation is deleted from the sidebar in split view', async () => {
     let deleted = false;
     const deleteSession = vi.fn(async () => { deleted = true; });
     const saveNote = vi.fn(async () => undefined);
@@ -1949,7 +2084,7 @@ describe('Notes in the application', () => {
       getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
       saveNote,
       deleteSession,
-    })} />);
+    })} initialViewPreferences={{ layoutMode: 'split' }} />);
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
@@ -1962,7 +2097,7 @@ describe('Notes in the application', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^Welcome/ }))
       .toHaveAttribute('aria-current', 'page'));
     expect(deleteSession).toHaveBeenCalledWith('lobby', 'planning');
-    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+    expect(screen.getByRole('separator', { name: 'Resize notes and chat' })).toBeInTheDocument();
     expect(window.location.hash).toBe('#/');
     expect(noteEditor()).toBe(editor);
     expect(editor.isEditable).toBe(true);
@@ -1999,9 +2134,10 @@ describe('Notes in the application', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Keep draft' },
     });
-    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Planning/ }));
+    visitPlanningSession();
     await screen.findByText('Opening session…');
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
     expect(noteEditor()).toBe(editor);
     expect(editor.isEditable).toBe(false);
     expect(saveNote).toHaveBeenCalledOnce();
@@ -2030,23 +2166,23 @@ describe('Notes in the application', () => {
     expect(screen.queryByText('Session opening timed out.')).not.toBeInTheDocument();
   });
 
-  it.each([false, true])('keeps Notes after session creation fails (discard: %s)', async (discard) => {
+  it('keeps the note and ignores tab clicks while creating a session in split view', async () => {
+    const creating = deferred<void>();
     const createSession = vi.fn(async () => {
+      await creating.promise;
       throw new ChaError('invalid_argument', 'The session could not be created.');
     });
-    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: noteDocument('Saved plan') }));
+    const saveNote = vi.fn();
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan],
-      getNote,
-      saveNote: async () => {
-        if (discard) throw new ChaError('invalid_argument', 'The note could not be saved.');
-      },
-      createSession,
-    })} />);
+      getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),
+      saveNote, createSession,
+    })} initialViewPreferences={{ layoutMode: 'split' }} />);
+    await readyChatComposer();
     await openNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
     await screen.findByText('Saved plan');
-    const editor = await waitFor(() => noteEditor());
+    const editor = noteEditor();
     act(() => typeInNote(' more'));
     fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), {
       target: { value: 'Keep draft' },
@@ -2054,28 +2190,20 @@ describe('Notes in the application', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
     fireEvent.click(screen.getByRole('button', { name: 'Actions for forum The Lobby' }));
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Create new session' }));
-    if (discard) {
-      const dialog = await screen.findByRole('dialog', { name: 'Could not save “Plan”.' });
-      expect(createSession).not.toHaveBeenCalled();
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
-    }
+    await screen.findByText('Creating session…');
+    fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'chat');
+    await act(async () => creating.resolve());
     await screen.findByText('The session could not be created.');
-    const error = screen.getByRole('alert');
-    expect(within(error).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('alert')).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(createSession).toHaveBeenCalledWith('lobby', '');
-    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
     expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveValue('Keep draft');
-    expect(getNote).toHaveBeenCalledOnce();
-    if (discard) {
-      expect(editor.isDestroyed).toBe(true);
-      expect(document.querySelector('.ProseMirror')).toBeNull();
-      expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-    } else {
-      expect(noteEditor()).toBe(editor);
-      expect(editor.isEditable).toBe(true);
-      fireEvent.click(historyAction('Undo'));
-      expect(editor.getText()).toBe('Saved plan');
-    }
+    expect(noteEditor()).toBe(editor);
+    expect(editor.isEditable).toBe(true);
+    expect(saveNote).not.toHaveBeenCalled();
+    fireEvent.click(historyAction('Undo'));
+    expect(editor.getText()).toBe('Saved plan');
   });
 
   it('replaces an open note when the vault context changes, even for the same id', async () => {

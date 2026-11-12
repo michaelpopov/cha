@@ -104,6 +104,31 @@ async function openSettingsNavigation() {
   fireEvent.click(settings);
 }
 
+it('keeps receiving a chat response while Notes is selected', async () => {
+  const events = drivableSessionEvents();
+  render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
+  await waitFor(() => expect(events.connections).toHaveLength(1));
+  const stream = events.handlers[0];
+  act(() => stream.onSnapshot({
+    ...snapshotFixture,
+    generation: { ...snapshotFixture.generation, active: true },
+    transcript: [{
+      id: 1, kind: 'character', participant_id: 'assistant', display_name: 'Assistant',
+      addressed_to: 'guest', addressed_to_name: 'Guest', text: 'Started',
+      status: 'streaming', created_at: null,
+    }],
+  }));
+  expect(screen.getByRole('button', { name: 'Stop generation' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
+  expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+  act(() => stream.onAppend({ target: { kind: 'entry', entry_id: 1 }, text: ' in Chat, continued in Notes.', seq: 1 }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+  expect(screen.getByText('Started in Chat, continued in Notes.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Stop generation' })).toBeEnabled();
+  expect(events.connections).toHaveLength(1);
+  expect(events.connections[0].close).not.toHaveBeenCalled();
+});
+
 it('refreshes the notes tree once on notes.changed and ignores old-epoch events', async () => {
   const listNoteItems = vi.fn<NotesClient['listNoteItems']>().mockResolvedValue([]);
   const handlers = new Map<string, (event: never) => void>();
@@ -3200,7 +3225,7 @@ describe('picture sizing', () => {
     });
   }
 
-  it.each(['keyboard', 'pointer', 'toggle'])('keeps an unused session and its picture when changing the panel with %s', async (control) => {
+  it.each(['keyboard', 'pointer', 'toggle', 'tabs'])('keeps an unused session and its picture when changing the panel with %s', async (control) => {
     geometry();
     vi.stubGlobal('PointerEvent', class extends MouseEvent {
       pointerId: number;
@@ -3239,13 +3264,19 @@ describe('picture sizing', () => {
       fireEvent.pointerMove(divider, { pointerId: 1, clientX: 450 });
       fireEvent.pointerUp(divider, { pointerId: 1 });
       expect(divider).toHaveAttribute('aria-valuenow', '330');
+    } else if (control === 'toggle') {
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     } else {
-      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
+      await user.click(screen.getByRole('tab', { name: 'Notes' }));
+      expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+      expect(input).not.toBeInTheDocument();
+      await user.click(screen.getByRole('tab', { name: 'Chat' }));
     }
     expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
-    expect(input).toHaveValue('Unsent draft');
-    expect(input).toBeEnabled();
+    const currentInput = screen.getByRole('textbox', { name: 'Message' });
+    expect(currentInput).toHaveValue('Unsent draft');
+    expect(currentInput).toBeEnabled();
     expect(window.location.hash).toBe('#/s/lobby/unused/');
     expect(discardUnusedSession).not.toHaveBeenCalled();
     expect(events.connections[index].close).not.toHaveBeenCalled();

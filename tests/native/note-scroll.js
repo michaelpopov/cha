@@ -97,16 +97,16 @@ async function nativeParity() {
     check(!editor().isEditable, 'read-only note became editable');
     completed.push('unchanged read-only note and settings navigation');
 
-    step = 'chat';
+    step = 'switch tabs';
+    const previous = editor();
     host().scrollTop = 900;
     await click('Chat');
-    const forum = await until('forum', () => document.querySelector('nav[aria-label="Forums"] .cha-side-action'));
-    forum.click();
-    await until('left note for chat', () => !host());
+    await until('left note for Chat', () => !host() && button('Chat')?.getAttribute('aria-selected') === 'true');
     await click('Notes');
-    await open('Scroll first', 'First paragraph');
+    await until('same note restored', () => editor() && editor() !== previous
+      && editor().getText().includes('First paragraph') && row('Scroll first')?.getAttribute('aria-current') === 'true');
     at(900);
-    completed.push('chat navigation');
+    completed.push('Chat and Notes tabs restore the same note position');
 
     step = 'close handshake';
     host().scrollTop = 1234;

@@ -492,13 +492,16 @@ function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, open
 
 function releaseClosedNote(previous: AppState, state: AppState, action: AppAction): AppState {
   const { notesVisible, chatVisible } = workspaceVisibility(state);
-  // A hidden editor unmounts, even when the layout retains its selected note.
-  if (!notesVisible && state.noteImportSource !== undefined) state = { ...state, noteImportSource: undefined };
-  if (state.activeNoteId === null || notesVisible) return state;
+  if (notesVisible) return state;
+  // A hidden editor reloads at its saved scroll position when it returns.
+  if (state.noteDestination !== undefined || state.noteImportSource !== undefined) {
+    state = { ...state, noteDestination: undefined, noteImportSource: undefined };
+  }
+  if (state.activeNoteId === null) return state;
   const leftVisibleNote = workspaceVisibility(previous).notesVisible
-    && action.type !== 'set-layout';
+    && action.type !== 'set-layout' && action.type !== 'show-chat-tab';
   if (chatVisible && !leftVisibleNote) return state;
-  return { ...state, activeNoteId: null, noteDestination: undefined, noteImportSource: undefined };
+  return { ...state, activeNoteId: null };
 }
 
 function reduceApp(state: AppState, action: AppAction): AppState {
@@ -576,9 +579,11 @@ function reduceApp(state: AppState, action: AppAction): AppState {
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-chat-tab':
-      return { ...state, sidebarTab: 'chat' };
-    case 'show-notes-tab':
-      return { ...state, sidebarTab: 'notes' };
+    case 'show-notes-tab': {
+      const tab = action.type === 'show-chat-tab' ? 'chat' : 'notes';
+      if (state.sidebarTab === tab && state.mainView === tab) return state;
+      return { ...state, sidebarTab: tab, mainView: tab };
+    }
     case 'open-note': {
       // The visible chat panel keeps its pending operation.
       const { notesVisible, chatVisible } = workspaceVisibility(state);

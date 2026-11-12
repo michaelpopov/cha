@@ -1,5 +1,5 @@
 import type { AnnotationDestination } from '../notes/annotationSource';
-import type { Editor } from '@tiptap/core';
+import { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
@@ -471,6 +471,30 @@ describe('Notes screen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open essay' }));
     await waitFor(() => expect(liveEditor?.current?.getText()).toBe('Reading'));
     await waitFor(() => expect(host.scrollTop).toBe(0));
+  });
+
+  it('restores and saves the same position when changing editability shifts the viewport', async () => {
+    const saveNoteScrollPosition = vi.fn(async () => undefined);
+    const setEditable = Editor.prototype.setEditable;
+    vi.spyOn(Editor.prototype, 'setEditable').mockImplementation(function (
+      this: Editor, editable, emitUpdate,
+    ) {
+      const changing = editable !== this.isEditable;
+      setEditable.call(this, editable, emitUpdate);
+      const host = this.view.dom.closest('.cha-notes-document');
+      // Model ProseMirror's scroll adjustment when a picture changes height.
+      if (changing && host) host.scrollTop -= 24;
+    });
+    render(<Harness
+      getNote={async (id) => ({ id, document_id: id, document: documentWith('Reading'), scroll_top: 875 })}
+      saveNoteScrollPosition={saveNoteScrollPosition}
+    />);
+    const editor = await openedEditor();
+    expect(editor.isEditable).toBe(true);
+    expect(editor.view.dom.closest('.cha-notes-document')?.scrollTop).toBe(875);
+    fireEvent.click(screen.getByRole('button', { name: 'Leave' }));
+    await screen.findByText('Left the note');
+    expect(saveNoteScrollPosition).toHaveBeenCalledExactlyOnceWith(plan.id, 875);
   });
 
   it('saves the latest reading position of an unchanged read-only note only when leaving', async () => {

@@ -343,6 +343,7 @@ it('refreshes an annotations document opened after generation started', async ()
   render(<App client={fixtureClient({ generateSessionSummary: () => ready.promise,
     commitSessionSummary: async () => { body = 'Fresh annotations'; return { ...summary, read_only: true }; },
     listNoteItems: async () => [folder, annotation], getNote })} />);
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled());
   await startSummary();
   fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
   fireEvent.click(await screen.findByRole('treeitem', { name: 'Forum folder' }));

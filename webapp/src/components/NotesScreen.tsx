@@ -34,8 +34,10 @@ import {
   insertPromptParagraph,
   noteHeadings,
   noteCommentRange,
+  preserveNoteScroll,
   selectNoteEnd,
   selectNoteHeading,
+  setNoteEditable,
   withIsolatedHistory,
   toggleNoteHighlight,
 } from '../notes/editor';
@@ -78,20 +80,6 @@ const missingSourceMessage = 'This note is no longer available.';
 
 function saveDetail(message: string): string {
   return message === noteSaveFailedMessage ? 'Check the vault and try again.' : message;
-}
-
-function preserveNoteScroll<T>(editor: Editor, run: () => T): T {
-  const host = editor.view.dom.closest('.cha-notes-document');
-  const top = host?.scrollTop ?? 0;
-  const left = host?.scrollLeft ?? 0;
-  try {
-    return run();
-  } finally {
-    if (host) {
-      host.scrollTop = top;
-      host.scrollLeft = left;
-    }
-  }
 }
 
 function focusNotesEditor(editor: Editor | null) {
@@ -1167,7 +1155,7 @@ export function NotesScreen({
 
   useEffect(() => {
     if (phase !== 'ready' || !editor || editor.isDestroyed) return;
-    editor.setEditable(!readOnly && !frozen, false);
+    setNoteEditable(editor, !readOnly && !frozen);
     setEditing(true);
     editorLiveRef.current = editor;
     const dom = editor.view.dom as HTMLElement & { chaEditor?: Editor };
@@ -1184,7 +1172,7 @@ export function NotesScreen({
   // This effect must follow the one above, which does not know about imports.
   useEffect(() => {
     if (phase !== 'ready' || !editor || editor.isDestroyed || save.frozen) return;
-    editor.setEditable(!readOnly && !frozen, false);
+    setNoteEditable(editor, !readOnly && !frozen);
   }, [editor, phase, readOnly, frozen, save.frozen]);
 
   useEffect(() => {

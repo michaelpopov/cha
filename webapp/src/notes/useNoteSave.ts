@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/core';
 
 import { publicErrorMessage } from '../api/client';
+import { setNoteEditable } from './editor';
 
 export const noteSaveDelayMs = 5_000;
 
@@ -185,7 +186,7 @@ export function useNoteSave({
     }
     frozenRef.current = true;
     setFrozen(true);
-    if (current && !current.isDestroyed) current.setEditable(false, false);
+    if (current && !current.isDestroyed) setNoteEditable(current, false);
     let canceled = false;
     if (deadline.current !== null) {
       clearDeadline();
@@ -202,7 +203,7 @@ export function useNoteSave({
     frozenRef.current = false;
     setFrozen(false);
     const current = editorRef.current;
-    if (current && !current.isDestroyed) current.setEditable(editable, false);
+    if (current && !current.isDestroyed) setNoteEditable(current, editable);
   }, []);
 
   const submitNow = useCallback(() => {

@@ -70,6 +70,26 @@ type Gate = {
   blocked: boolean;
 };
 
+export function preserveNoteScroll<T>(editor: Editor, run: () => T): T {
+  const host = editor.view.dom.closest('.cha-notes-document');
+  const top = host?.scrollTop ?? 0;
+  const left = host?.scrollLeft ?? 0;
+  try {
+    return run();
+  } finally {
+    if (host) {
+      host.scrollTop = top;
+      host.scrollLeft = left;
+    }
+  }
+}
+
+export function setNoteEditable(editor: Editor, editable: boolean): void {
+  if (editor.isEditable === editable) return;
+  // ProseMirror can adjust the scroll position if a picture changes height during this update.
+  preserveNoteScroll(editor, () => editor.setEditable(editable, false));
+}
+
 export type NotesEditorOptions = {
   content?: Content;
   immutable?: () => boolean;

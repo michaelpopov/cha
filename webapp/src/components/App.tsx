@@ -798,6 +798,24 @@ export function App({
     reportNativeLayout(state);
   }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible,
     state.notesFontSize, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible]);
+  const changeWorkspace = useCallback((action: Extract<DataAction, {
+    type: 'set-layout' | 'show-chat-tab' | 'show-notes-tab';
+  }>) => {
+    // A session open started in split view can replace Notes if it completes in single view.
+    if (compressionRun.current || state.bootstrapStatus !== 'ready'
+      || state.sessionOperation === 'pending' || closeHost.current.isPending()) return;
+    const current = { layoutMode: state.layoutMode, mainView: state.mainView };
+    const next: typeof current = action.type === 'set-layout'
+      ? { ...current, layoutMode: action.mode }
+      : { ...current, mainView: action.type === 'show-chat-tab' ? 'chat' : 'notes' };
+    if (workspaceVisibility(current).notesVisible && !workspaceVisibility(next).notesVisible) {
+      const context = vaultContext.current;
+      void noteLeave.leaveNoteThen(() => {
+        if (vaultContext.current !== context) return false;
+        dispatch(action);
+      });
+    } else dispatch(action);
+  }, [state.bootstrapStatus, state.layoutMode, state.mainView, state.sessionOperation, noteLeave.leaveNoteThen]);
   useEffect(() => installNativeLayoutHandler((requested) => {
     if (compressionRun.current) return;
     if (requested === 'toggle-russian') {
@@ -825,20 +843,10 @@ export function App({
       return;
     }
     const mode = requested === 'toggle' ? (state.layoutMode === 'split' ? 'single' : 'split') : requested;
-    if (mode !== 'single' && mode !== 'split') return;
-    // A chat open started in Split View did not leave the note. If it
-    // completed in Single View, it would replace the note without saving it.
-    if (state.bootstrapStatus !== 'ready' || state.sessionOperation === 'pending'
-      || closeHost.current.isPending() || mode === state.layoutMode) return;
-    const commit = () => { dispatch({ type: 'set-layout', mode }); };
-    if (workspaceVisibility(state).notesVisible && !workspaceVisibility({ ...state, layoutMode: mode }).notesVisible) {
-      const context = vaultContext.current;
-      void noteLeave.leaveNoteThen(() => {
-        if (vaultContext.current !== context) return false;
-        commit();
-      });
-    } else commit();
-  }), [state.bootstrapStatus, state.layoutMode, state.mainView, state.sessionOperation, noteLeave.leaveNoteThen]);
+    if ((mode === 'single' || mode === 'split') && mode !== state.layoutMode) {
+      changeWorkspace({ type: 'set-layout', mode });
+    }
+  }), [state.layoutMode, changeWorkspace]);
   const registerSave = useCallback((save: NoteSaveHandle | null, documentId: number | null) => {
     noteSaveRef.current = save;
     documentIdRef.current = documentId;
@@ -1561,8 +1569,8 @@ export function App({
           <Sidebar
             onCreateSession={createConversation}
             onClearSessionAudioCache={clearSessionAudioCache}
-            dispatch={dispatch}
             navigate={navigate}
+            onSelectTab={(tab) => changeWorkspace({ type: tab === 'chat' ? 'show-chat-tab' : 'show-notes-tab' })}
             onDeleteSession={deleteSession}
             onDownloadSession={downloadSession}
             onSaveSummary={saveSummary}
