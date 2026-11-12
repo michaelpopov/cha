@@ -4095,7 +4095,8 @@ TEST(ProviderClientSummary, SeparateWebAllowanceAndOverallLimitPreserveMixedCall
         auto definition = network_definition(80, false);
         definition.provider.config.api = api;
         std::vector<Json> sent;
-        int searches = 0, summaries = 0, libraries = 0;
+        std::atomic_int searches{0};
+        int summaries = 0, libraries = 0;
         ProviderClient client(shared_definition(definition), nullptr, [&](const ProviderHttpRequest& request, const auto&) {
             sent.push_back(Json::parse(request.body));
             if (sent.size() == 1) {
