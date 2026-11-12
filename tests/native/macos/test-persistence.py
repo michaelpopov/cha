@@ -17,7 +17,11 @@ import tempfile
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 DEFAULTS = dict(split=False, sidebar=True, pictures=False, toolbar=True,
-                chat_toolbar=True, notes_prompt=True, russian=False)
+                chat_toolbar=True, notes_prompt=True, russian=False, notes_font_size=14)
+
+
+def menu_state(state):
+    return {key: value for key, value in state.items() if key != 'notes_font_size'}
 
 
 def main():
@@ -50,7 +54,7 @@ def main():
                             'packaging/macos/native_bridge.swift', 'tests/native/macos/persistence_probe.swift']],
                         '-o', str(executable)], check=True)
         config = root / 'config'
-        subprocess.run([str(REPOSITORY / 'build/ninja/cha_prepare_test_vault'), str(config)], check=True)
+        subprocess.run([str(REPOSITORY / 'build/ninja/cha_prepare_test_vault'), '--folder-stores', str(config)], check=True)
         preferences = config / 'view.json'
 
         def launch(mode, expected, final=None):
@@ -68,8 +72,8 @@ def main():
             assert len(reports) == 1, result.stdout + result.stderr
             report = reports[0]
             assert report['state'] == (final or expected), report
-            assert report['menu'] == report['state'], report
-            assert report['startup'] == expected, report
+            assert report['menu'] == menu_state(report['state']), report
+            assert report['startup'] == menu_state(expected), report
             assert report['first'] == (final if mode in ('reload', 'failure-reload') else expected), report
             return result.stderr
 
@@ -83,7 +87,7 @@ def main():
 
         assert 'cannot read View preferences' not in observe(DEFAULTS)
         assert not preferences.exists(), 'Default startup created preferences'
-        inverted = {key: not value for key, value in DEFAULTS.items()}
+        inverted = dict(DEFAULTS, **{key: not value for key, value in menu_state(DEFAULTS).items()})
         launch('change', DEFAULTS, inverted)
         assert json.loads(preferences.read_bytes()) == inverted
         observe(inverted)
@@ -102,9 +106,10 @@ def main():
         assert preferences.read_bytes() == before
         print('PASS stale, incomplete, and nonboolean native reports are ignored', flush=True)
 
-        preferences.write_text(json.dumps(dict(russian=True, sidebar=0, obsolete=True)))
+        preferences.write_text(json.dumps(dict(russian=True, sidebar=0, obsolete=True, notes_font_size=18.5)))
         stderr = observe(dict(DEFAULTS, russian=True))
         assert 'invalid View preference sidebar' in stderr and 'unknown View preference obsolete' in stderr
+        assert 'invalid View preference notes_font_size' in stderr
         for contents_text in ['not JSON', '[]', 'null']:
             preferences.write_text(contents_text)
             assert 'cannot read View preferences' in observe(DEFAULTS)
@@ -151,7 +156,7 @@ def main():
                 assert held.returncode == 0, output + errors
                 report = json.loads(next(line.removeprefix('PERSISTENCE_EXIT ')
                     for line in output.decode().splitlines() if line.startswith('PERSISTENCE_EXIT ')))
-                assert report['state'] == DEFAULTS and report['menu'] == DEFAULTS, report
+                assert report['state'] == DEFAULTS and report['menu'] == menu_state(DEFAULTS), report
                 assert json.loads(preferences.read_bytes()) == inverted
                 assert preferences.stat().st_mtime_ns == stamp, 'Unchanged instance overwrote a newer save'
             finally:
@@ -160,6 +165,16 @@ def main():
                     held.wait()
         observe(inverted)
         print('PASS concurrent instances keep live choices; unchanged reports and close preserve the newer save', flush=True)
+
+        preferences.write_text(json.dumps(menu_state(DEFAULTS)))
+        larger = dict(DEFAULTS, notes_font_size=16)
+        smaller = dict(DEFAULTS, notes_font_size=12)
+        launch('increase-font', DEFAULTS, larger)
+        assert json.loads(preferences.read_bytes()) == larger
+        launch('decrease-font', larger, smaller)
+        assert json.loads(preferences.read_bytes()) == smaller
+        launch('observe-font', smaller)
+        print('PASS Notes font changes are saved and applied after process restarts', flush=True)
 
 
 if __name__ == '__main__':

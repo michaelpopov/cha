@@ -20,7 +20,7 @@ import { noteHighlights } from '../notes/highlights';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { useNoteImports } from '../notes/useNoteImports';
 import { noteSaveDelayMs, type NoteSaveHandle } from '../notes/useNoteSave';
-import type { AppAction } from '../state/view';
+import { initialAppState, type AppAction } from '../state/view';
 import { fixtureClient } from '../test/fixtures';
 import { noteItem } from '../test/notes';
 import { NotesScreen } from './NotesScreen';
@@ -93,6 +93,7 @@ function Harness({
   const [noteId, setNoteId] = useState(initialId);
   const [request, setRequest] = useState(1);
   const [text, setText] = useState(draft);
+  const [fontSize, setFontSize] = useState(initialAppState.notesFontSize);
   const [left, setLeft] = useState(false);
   const editorLiveRef = useRef<Editor | null>(null);
   liveEditor = editorLiveRef;
@@ -143,6 +144,8 @@ function Harness({
       {left && <p>Left the note</p>}
       <NotesScreen
         activeNoteId={noteId}
+        fontSize={fontSize}
+        onFontSizeChange={setFontSize}
         destination={destination}
         importSource={noteId === initialId ? importPath ? { kind: 'file', path: importPath } : importUrl ? { kind: 'page', url: importUrl } : undefined : undefined}
         promptVisible={promptVisible}

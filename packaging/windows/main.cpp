@@ -335,7 +335,14 @@ std::wstring without_fragment(std::wstring_view uri) {
 
 nlohmann::json default_view_state() {
     return {{"split", false}, {"sidebar", true}, {"pictures", false}, {"toolbar", true},
-        {"chat_toolbar", true}, {"notes_prompt", true}, {"russian", false}};
+        {"chat_toolbar", true}, {"notes_prompt", true}, {"russian", false}, {"notes_font_size", 14}};
+}
+
+bool valid_view_preference(std::string_view key, const nlohmann::json& value) {
+    if (key != "notes_font_size") return value.is_boolean();
+    if (!value.is_number()) return false;
+    const auto size = value.get<double>();
+    return size >= 10 && size <= 30 && size == static_cast<int>(size);
 }
 
 void view_warning(const std::string& message) {
@@ -358,7 +365,7 @@ nlohmann::json load_view_state(const std::filesystem::path& path) {
         if (!data.is_object()) throw std::runtime_error("expected an object");
         for (auto it = data.begin(); it != data.end(); ++it) {
             if (!result.contains(it.key())) view_warning("ignoring unknown field " + it.key() + " in " + cha::utf8_path(path));
-            else if (!it.value().is_boolean()) view_warning("ignoring invalid field " + it.key() + " in " + cha::utf8_path(path));
+            else if (!valid_view_preference(it.key(), it.value())) view_warning("ignoring invalid field " + it.key() + " in " + cha::utf8_path(path));
             else result[it.key()] = it.value();
         }
     } catch (const std::exception& e) {
@@ -1358,16 +1365,13 @@ private:
         if (action == json.end()) return false;
         if (action->is_string() && *action == "view_state") {
             if (json.contains("connection_id") && json["connection_id"].is_string()
-                && json["connection_id"].get<std::string>() == connection_id_
-                && json.contains("split") && json["split"].is_boolean()
-                && json.contains("sidebar") && json["sidebar"].is_boolean()
-                && json.contains("pictures") && json["pictures"].is_boolean()
-                && json.contains("toolbar") && json["toolbar"].is_boolean()
-                && json.contains("chat_toolbar") && json["chat_toolbar"].is_boolean()
-                && json.contains("notes_prompt") && json["notes_prompt"].is_boolean()
-                && json.contains("russian") && json["russian"].is_boolean()) {
+                && json["connection_id"].get<std::string>() == connection_id_) {
                 auto next = default_view_state();
-                for (auto it = next.begin(); it != next.end(); ++it) it.value() = json[it.key()];
+                for (auto it = next.begin(); it != next.end(); ++it) {
+                    const auto field = json.find(it.key());
+                    if (field == json.end() || !valid_view_preference(it.key(), *field)) return true;
+                    it.value() = *field;
+                }
                 const bool changed = next != view_state_;
                 view_state_ = std::move(next);
                 update_view_menu(view_state_);

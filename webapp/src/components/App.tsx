@@ -519,6 +519,8 @@ function ScreenContent({
     case 'notes': return (
       <NotesScreen
         toolbarVisible={state.notesToolbarVisible}
+        fontSize={state.notesFontSize}
+        onFontSizeChange={(size) => dispatch({ type: 'set-notes-font-size', size })}
         promptVisible={state.notesPromptVisible}
         activeNoteId={state.activeNoteId}
         client={client}
@@ -793,9 +795,9 @@ export function App({
     installAppCloseHost(() => closeHost.current);
   }
   useLayoutEffect(() => {
-    reportNativeLayout(state.layoutMode === 'split', state.sidebarOpen, state.pictureOpen,
-      state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible);
-  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible]);
+    reportNativeLayout(state);
+  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible,
+    state.notesFontSize, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible]);
   useEffect(() => installNativeLayoutHandler((requested) => {
     if (compressionRun.current) return;
     if (requested === 'toggle-russian') {

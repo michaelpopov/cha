@@ -46,7 +46,7 @@ import { promptFilePath } from '../notes/fileImport';
 import { noteItemPath } from '../notes/tree';
 import type { useNoteLeave } from '../notes/useNoteLeave';
 import { noteSaveFailedMessage, useNoteSave, type NoteSaveHandle } from '../notes/useNoteSave';
-import type { NavigationAction } from '../state/view';
+import { maxNotesFontSize, minNotesFontSize, type NavigationAction } from '../state/view';
 import {
   BlocksIcon,
   CheckIcon,
@@ -490,10 +490,10 @@ function FormatBar({
           open={formatMenu === 'font'}
         >
           <button
-            disabled={fontSize >= 30}
+            disabled={fontSize >= maxNotesFontSize}
             onClick={() => {
               setFormatMenu(null);
-              changeFontSize(Math.min(30, fontSize + 2));
+              changeFontSize(Math.min(maxNotesFontSize, fontSize + 2));
             }}
             role="menuitem"
             type="button"
@@ -501,10 +501,10 @@ function FormatBar({
             Increase font size
           </button>
           <button
-            disabled={fontSize <= 10}
+            disabled={fontSize <= minNotesFontSize}
             onClick={() => {
               setFormatMenu(null);
-              changeFontSize(Math.max(10, fontSize - 2));
+              changeFontSize(Math.max(minNotesFontSize, fontSize - 2));
             }}
             role="menuitem"
             type="button"
@@ -898,6 +898,8 @@ export function NotesScreen({
   onRegisterLoad,
   onRegisterDispose,
   sessionStatus,
+  fontSize,
+  onFontSizeChange,
   toolbarVisible = true,
   promptVisible = true,
 }: {
@@ -924,12 +926,13 @@ export function NotesScreen({
   onRegisterLoad?(load: Promise<void>): void;
   onRegisterDispose(dispose: () => void): void;
   sessionStatus?: ReactNode;
+  fontSize: number;
+  onFontSizeChange(size: number): void;
   toolbarVisible?: boolean;
   promptVisible?: boolean;
 }) {
   const [phase, setPhase] = useState<Phase>(activeNoteId === null ? 'empty' : 'loading');
   const [editing, setEditing] = useState(false);
-  const [fontSize, setFontSize] = useState(14);
   const [playbackSpeed, setPlaybackSpeed] = useState(10);
   const [openError, setOpenError] = useState<string | null>(null);
   const [promptError, setPromptError] = useState<string | null>(null);
@@ -1482,7 +1485,7 @@ export function NotesScreen({
             frozen={frozen}
             immutable={immutable}
             fontSize={fontSize}
-            onFontSizeChange={setFontSize}
+            onFontSizeChange={onFontSizeChange}
             playbackSpeed={playbackSpeed}
             onPlaybackSpeedChange={setPlaybackSpeed}
             onFind={openFind}

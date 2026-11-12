@@ -122,6 +122,29 @@ function historyAction(name: 'Undo' | 'Redo') {
   return screen.getByRole('menuitem', { name });
 }
 
+it('keeps the selected font size when opening another note or returning to Notes', async () => {
+  const essay = noteItem({ id: 5, name: 'Essay' });
+  render(<App client={fixtureClient({
+    listNoteItems: async () => [plan, essay],
+    getNote: async (id) => ({ id, document_id: id, document: noteDocument(`Note ${id}`) }),
+  })} />);
+  const open = async (name: string, id: number, size: number) => {
+    fireEvent.click(await screen.findByRole('treeitem', { name }));
+    const text = await screen.findByText(`Note ${id}`);
+    expect(text.closest('.cha-notes-document')).toHaveStyle({ fontSize: `${size}px` });
+  };
+
+  await openNotes();
+  await open('Plan', plan.id, 14);
+  fireEvent.click(screen.getByRole('button', { name: 'Font size' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Increase font size' }));
+  await open('Essay', essay.id, 16);
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  await waitFor(() => expect(screen.queryByLabelText('Note', { selector: 'section' })).toBeNull());
+  await openNotes();
+  await open('Plan', plan.id, 16);
+});
+
 describe('Note text mode', () => {
   it('shows a distinct toolbar icon for each selected mode, also on full text fallback', async () => {
     const originalOnly = noteItem({ id: 5, name: 'Original only' });

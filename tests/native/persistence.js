@@ -11,13 +11,16 @@ const until = async (label, predicate) => {
   }
   throw new Error('Timed out: ' + label);
 };
-const inverse = value => Object.fromEntries(Object.entries(value).map(([key, on]) => [key, !on]));
+const items = { split: 'Split view', sidebar: 'Sidebar', pictures: 'Pictures', toolbar: 'Toolbar',
+  chat_toolbar: 'Chat toolbar', notes_prompt: 'Notes prompt', russian: 'Russian' };
+const sameMenu = (menu, value) => Object.keys(items).every(key => menu[key] === value[key]);
+const inverse = value => ({ ...value, ...Object.fromEntries(Object.keys(items).map(key => [key, !value[key]])) });
 if (mode === 'reload' && phase > 0) expected = inverse(expected);
 if (mode === 'failure-reload' && phase > 0) expected = { ...expected, sidebar: !expected.sidebar };
 check(same(window.__CHA_NATIVE_INITIAL_VIEW_STATE__, expected), 'Incorrect bootstrap preferences');
 await until('ready Chat', () => document.querySelector('textarea[aria-label="Message"]:not(:disabled)'));
 await until('initial native report', async () => same((await snapshot()).first, expected));
-check(same((await snapshot()).menu, expected), 'Incorrect initial native checkmarks');
+check(sameMenu((await snapshot()).menu, expected), 'Incorrect initial native checkmarks');
 const checkDOM = value => {
   check(document.querySelector('.cha-app').dataset.sidebar === (value.sidebar ? 'open' : 'closed'), 'Incorrect sidebar');
   check(Boolean(document.querySelector('.cha-main.is-chat.is-notes')) === value.split, 'Incorrect split layout');
@@ -27,24 +30,50 @@ const checkDOM = value => {
   if (russian) check(russian.getAttribute('aria-pressed') === 'false', 'Typing mode was persisted');
 };
 checkDOM(expected);
-const items = { split: 'Split view', sidebar: 'Sidebar', pictures: 'Pictures', toolbar: 'Toolbar',
-  chat_toolbar: 'Chat toolbar', notes_prompt: 'Notes prompt', russian: 'Russian' };
 const toggle = async key => {
   await native({ action: 'menu', title: items[key] });
 };
 if (mode === 'hold') {
   await native({ action: 'hold' });
   window.__CHA_NATIVE_POST__(JSON.stringify({ ...expected, native_action: 'view_state', connection_id: window.__CHA_NATIVE_CONNECTION_ID__ }));
-  check(same((await snapshot()).menu, expected), 'Another instance changed live preferences');
+  check(sameMenu((await snapshot()).menu, expected), 'Another instance changed live preferences');
 } else if (mode === 'invalid') {
   const post = value => window.__CHA_NATIVE_POST__(JSON.stringify(value));
   const base = { ...expected, native_action: 'view_state', connection_id: window.__CHA_NATIVE_CONNECTION_ID__ };
   post({ ...base, sidebar: 0 });
+  post({ ...base, notes_font_size: 31 });
   post({ ...base, connection_id: 'stale', sidebar: !expected.sidebar });
   const incomplete = { ...base, sidebar: !expected.sidebar };
   delete incomplete.russian;
   post(incomplete);
-  check(same((await snapshot()).menu, expected), 'Invalid report changed checkmarks');
+  check(sameMenu((await snapshot()).menu, expected), 'Invalid report changed checkmarks');
+} else if (mode === 'increase-font' || mode === 'decrease-font' || mode === 'observe-font') {
+  Array.from(document.querySelectorAll('[role="tab"]'))
+    .find(tab => tab.textContent.trim() === 'Notes').click();
+  const click = async (selector) => {
+    await until(selector, () => document.querySelector(selector));
+    document.querySelector(selector).click();
+  };
+  await click('[role="treeitem"][aria-label="UI store failure"]');
+  await click('[role="treeitem"][aria-label="UI store note"]');
+  const fontSize = () => {
+    const editor = document.querySelector('.cha-notes-document .ProseMirror');
+    return editor && getComputedStyle(editor).fontSize;
+  };
+  await until('restored Notes font size', () => fontSize() === `${expected.notes_font_size}px`);
+  if (mode !== 'observe-font') {
+    const increase = mode === 'increase-font';
+    const label = increase ? 'Increase font size' : 'Decrease font size';
+    const command = () => Array.from(document.querySelectorAll('[role="menu"][aria-label="Font size"] [role="menuitem"]'))
+      .find(button => button.textContent.trim() === label);
+    const sizes = increase ? [16] : [14, 12];
+    for (const size of sizes) {
+      await click('button[aria-label="Font size"]');
+      await until(label, command);
+      command().click();
+      await until('updated Notes font size', () => fontSize() === `${size}px`);
+    }
+  }
 } else if (mode === 'change' || (mode === 'reload' && phase === 0)) {
   const changed = { ...expected };
   // The last change is observed through the DOM, then the probe returns
@@ -53,7 +82,7 @@ if (mode === 'hold') {
     await toggle(key);
     changed[key] = !changed[key];
     if (key !== 'russian') {
-      await until('native ' + key, async () => same((await snapshot()).menu, changed));
+      await until('native ' + key, async () => sameMenu((await snapshot()).menu, changed));
     } else {
       await new Promise(resolve => {
         const done = () => Boolean(document.querySelector('.cha-chat-column .cha-transliteration-toggle')) === changed.russian;
@@ -69,14 +98,14 @@ if (mode === 'hold') {
   await native({ action: 'writable', value: false });
   await toggle('sidebar');
   const changed = { ...expected, sidebar: !expected.sidebar };
-  await until('live change despite save failure', async () => same((await snapshot()).menu, changed));
+  await until('live change despite save failure', async () => sameMenu((await snapshot()).menu, changed));
   checkDOM(changed);
   if (mode === 'failure-reload') return 'reload';
   if (mode === 'recovery') {
     await native({ action: 'writable', value: true });
     await toggle('pictures');
     changed.pictures = !changed.pictures;
-    await until('full snapshot after recovery', async () => same((await snapshot()).menu, changed));
+    await until('full snapshot after recovery', async () => sameMenu((await snapshot()).menu, changed));
   }
 }
 return 'quit';

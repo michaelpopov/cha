@@ -444,21 +444,20 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 self?.pageRequestedClose()
             }
             receiver.currentView = { [weak self] in self?.viewState ?? NativeViewState() }
-            receiver.onLayoutChanged = { [weak self] split, sidebar, pictures, toolbar, notesPrompt, chatToolbar, russian in
+            receiver.onLayoutChanged = { [weak self] next in
                 guard let self else { return }
-                let next = NativeViewState(split: split, sidebar: sidebar, pictures: pictures, toolbar: toolbar, chatToolbar: chatToolbar, notesPrompt: notesPrompt, russian: russian)
 #if CHA_NATIVE_INSTRUMENTATION
                 self.persistenceProbe?.record(next)
 #endif
                 let changed = next != self.viewState
                 self.viewState = next
-                self.splitViewMenuItem?.state = split ? .on : .off
-                self.sidebarMenuItem?.state = sidebar ? .on : .off
-                self.picturesMenuItem?.state = pictures ? .on : .off
-                self.toolbarMenuItem?.state = toolbar ? .on : .off
-                self.chatToolbarMenuItem?.state = chatToolbar ? .on : .off
-                self.notesPromptMenuItem?.state = notesPrompt ? .on : .off
-                self.russianMenuItem?.state = russian ? .on : .off
+                self.splitViewMenuItem?.state = next.split ? .on : .off
+                self.sidebarMenuItem?.state = next.sidebar ? .on : .off
+                self.picturesMenuItem?.state = next.pictures ? .on : .off
+                self.toolbarMenuItem?.state = next.toolbar ? .on : .off
+                self.chatToolbarMenuItem?.state = next.chatToolbar ? .on : .off
+                self.notesPromptMenuItem?.state = next.notesPrompt ? .on : .off
+                self.russianMenuItem?.state = next.russian ? .on : .off
                 if changed {
                     next.save(self.supportDirectory.appendingPathComponent("view.json"))
                 }

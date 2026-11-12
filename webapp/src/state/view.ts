@@ -75,6 +75,8 @@ export type MainView =
 
 export type BootstrapStatus = 'loading' | 'ready' | 'failed' | 'incompatible';
 export type LayoutMode = 'single' | 'split';
+export const minNotesFontSize = 10;
+export const maxNotesFontSize = 30;
 
 export function workspaceVisibility(state: Pick<AppState, 'mainView' | 'layoutMode'>) {
   const workspace = state.mainView === 'notes' || state.mainView === 'chat';
@@ -112,6 +114,7 @@ export interface AppState {
   sidebarOpen: boolean;
   pictureOpen: boolean;
   notesToolbarVisible: boolean;
+  notesFontSize: number;
   chatToolbarVisible: boolean;
   notesPromptVisible: boolean;
   russianVisible: boolean;
@@ -161,13 +164,14 @@ export interface AppState {
   streamMessage: string | null;
 }
 
-export type ViewPreferences = Pick<AppState, 'layoutMode' | 'sidebarOpen' | 'pictureOpen' | 'notesToolbarVisible' | 'chatToolbarVisible' | 'notesPromptVisible' | 'russianVisible'>;
+export type ViewPreferences = Pick<AppState, 'layoutMode' | 'sidebarOpen' | 'pictureOpen' | 'notesToolbarVisible' | 'notesFontSize' | 'chatToolbarVisible' | 'notesPromptVisible' | 'russianVisible'>;
 
 export const initialAppState: AppState = {
   sessionActivity: [],
   sidebarOpen: true,
   pictureOpen: false,
   notesToolbarVisible: true,
+  notesFontSize: 14,
   chatToolbarVisible: true,
   notesPromptVisible: true,
   russianVisible: false,
@@ -213,6 +217,7 @@ export function createInitialAppState(prefs: Partial<ViewPreferences> = {}): App
     sidebarOpen: prefs.sidebarOpen ?? initialAppState.sidebarOpen,
     pictureOpen: prefs.pictureOpen ?? initialAppState.pictureOpen,
     notesToolbarVisible: prefs.notesToolbarVisible ?? initialAppState.notesToolbarVisible,
+    notesFontSize: prefs.notesFontSize ?? initialAppState.notesFontSize,
     chatToolbarVisible: prefs.chatToolbarVisible ?? initialAppState.chatToolbarVisible,
     notesPromptVisible: prefs.notesPromptVisible ?? initialAppState.notesPromptVisible,
     russianVisible: prefs.russianVisible ?? initialAppState.russianVisible,
@@ -236,6 +241,7 @@ export type AppAction =
   | { type: 'close-note' }
   | { type: 'toggle-picture' }
   | { type: 'toggle-notes-toolbar' }
+  | { type: 'set-notes-font-size'; size: number }
   | { type: 'toggle-chat-toolbar' }
   | { type: 'toggle-notes-prompt' }
   | { type: 'toggle-russian' }
@@ -553,6 +559,8 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, chatToolbarVisible: !state.chatToolbarVisible };
     case 'toggle-notes-toolbar':
       return { ...state, notesToolbarVisible: !state.notesToolbarVisible };
+    case 'set-notes-font-size':
+      return { ...state, notesFontSize: action.size };
     case 'toggle-russian':
       return { ...state, russianVisible: !state.russianVisible };
     case 'toggle-notes-prompt':

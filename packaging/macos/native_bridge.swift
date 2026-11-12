@@ -9,10 +9,21 @@ struct NativeViewState: Equatable {
     var chatToolbar = true
     var notesPrompt = true
     var russian = false
+    var notesFontSize = 14
 
-    var object: [String: Bool] {
+    private var flags: [String: Bool] {
         ["split": split, "sidebar": sidebar, "pictures": pictures, "toolbar": toolbar,
          "chat_toolbar": chatToolbar, "notes_prompt": notesPrompt, "russian": russian]
+    }
+    var object: [String: Any] {
+        var values: [String: Any] = flags
+        values["notes_font_size"] = notesFontSize
+        return values
+    }
+    static func parseNotesFontSize(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              let size = Int(exactly: number.doubleValue), (10...30).contains(size) else { return nil }
+        return size
     }
     static func load(_ url: URL) -> NativeViewState {
         var result = NativeViewState()
@@ -21,15 +32,23 @@ struct NativeViewState: Equatable {
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw NSError(domain: "View preferences must be an object", code: 1)
             }
-            var values = result.object
+            var values = result.flags
+            var notesFontSize = result.notesFontSize
             for (key, value) in object {
+                if key == "notes_font_size" {
+                    if let size = parseNotesFontSize(value) { notesFontSize = size }
+                    else { NSLog("warning: invalid View preference %@ in %@", key, url.path) }
+                    continue
+                }
                 guard values[key] != nil else { NSLog("warning: ignoring unknown View preference %@ in %@", key, url.path); continue }
                 guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
                     NSLog("warning: invalid View preference %@ in %@", key, url.path); continue
                 }
                 values[key] = number.boolValue
             }
-            result = NativeViewState(split: values["split"]!, sidebar: values["sidebar"]!, pictures: values["pictures"]!, toolbar: values["toolbar"]!, chatToolbar: values["chat_toolbar"]!, notesPrompt: values["notes_prompt"]!, russian: values["russian"]!)
+            result = NativeViewState(split: values["split"]!, sidebar: values["sidebar"]!, pictures: values["pictures"]!,
+                toolbar: values["toolbar"]!, chatToolbar: values["chat_toolbar"]!, notesPrompt: values["notes_prompt"]!,
+                russian: values["russian"]!, notesFontSize: notesFontSize)
         } catch {
             let failure = error as NSError
             if failure.domain != NSCocoaErrorDomain || failure.code != CocoaError.fileReadNoSuchFile.rawValue {
@@ -217,7 +236,7 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
     var onCloseReply: ((String, Int, String) -> Void)?
     var onPageClose: (() -> Void)?
     var currentView: (() -> NativeViewState)?
-    var onLayoutChanged: ((Bool, Bool, Bool, Bool, Bool, Bool, Bool) -> Void)?
+    var onLayoutChanged: ((NativeViewState) -> Void)?
 
     init(runtime: OpaquePointer) {
         self.runtime = runtime
@@ -371,8 +390,11 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
                       let notesPrompt = object["notes_prompt"] as? NSNumber,
                       CFGetTypeID(notesPrompt) == CFBooleanGetTypeID(),
                       let russian = object["russian"] as? NSNumber,
-                      CFGetTypeID(russian) == CFBooleanGetTypeID() else { return }
-                onLayoutChanged?(split.boolValue, sidebar.boolValue, pictures.boolValue, toolbar.boolValue, notesPrompt.boolValue, chatToolbar.boolValue, russian.boolValue)
+                      CFGetTypeID(russian) == CFBooleanGetTypeID(),
+                      let notesFontSize = NativeViewState.parseNotesFontSize(object["notes_font_size"]) else { return }
+                onLayoutChanged?(NativeViewState(split: split.boolValue, sidebar: sidebar.boolValue,
+                    pictures: pictures.boolValue, toolbar: toolbar.boolValue, chatToolbar: chatToolbar.boolValue,
+                    notesPrompt: notesPrompt.boolValue, russian: russian.boolValue, notesFontSize: notesFontSize))
                 return
             }
             if action == "close_reply" {

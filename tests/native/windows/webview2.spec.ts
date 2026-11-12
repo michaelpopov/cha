@@ -339,21 +339,23 @@ test.describe('WebView2 native host', () => {
       });
       await expect.poll(() => host!.exitCode).toBe(0);
       await browser!.close().catch(() => undefined);
-      expect(JSON.parse(readFileSync(preferences, 'utf8'))).toEqual(expected);
+      expect(JSON.parse(readFileSync(preferences, 'utf8'))).toEqual({ ...expected, notes_font_size: 14 });
 
       const launched = await launchHost(userData);
       host = launched.child;
       browser = launched.browser;
       page = browser.contexts()[0].pages()[0];
       await waitForApplication(page);
-      expect(await page.evaluate(() => (window as any).__CHA_NATIVE_INITIAL_VIEW_STATE__)).toEqual(expected);
+      expect(await page.evaluate(() => (window as any).__CHA_NATIVE_INITIAL_VIEW_STATE__))
+        .toEqual({ ...expected, notes_font_size: 14 });
       expect(nativeWindow(host, 'view').view).toEqual(expected);
       await expect(page.locator('.cha-app')).toHaveAttribute('data-sidebar', expected.sidebar ? 'open' : 'closed');
       await expect(page.locator('.cha-chat-toolbar')).toHaveCount(expected.chat_toolbar ? 1 : 0);
       const stamp = statSync(preferences).mtimeMs;
       await page.reload();
       await waitForApplication(page);
-      expect(await page.evaluate(() => (window as any).__CHA_NATIVE_INITIAL_VIEW_STATE__)).toEqual(expected);
+      expect(await page.evaluate(() => (window as any).__CHA_NATIVE_INITIAL_VIEW_STATE__))
+        .toEqual({ ...expected, notes_font_size: 14 });
       expect(nativeWindow(host, 'view').view).toEqual(expected);
       expect(statSync(preferences).mtimeMs).toBe(stamp);
     }
