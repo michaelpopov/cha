@@ -6,8 +6,8 @@ Status: Short technical design. A detailed technical design follows from it.
 ## Goal
 
 The user downloads vaults from R2 and opens vaults with commands in the
-Entrance / Welcome prompt. This works in the desktop application and in
-ChaWeb, without Settings and without a restart.
+Entrance / Welcome prompt. This works in ChaWeb, without Settings and
+without a restart. The desktop application does not offer these commands.
 
 ## Operations
 
@@ -52,9 +52,13 @@ To refresh a vault that is not active, the user does Open and then Download.
 3. **Native prompt commands, not model tools.** `/download` and
    `/open <name>` join the existing slash commands in `text_input.cpp`
    (`/mcast`, `/clear`, `/detach`). Native code handles them before any
-   model sees the text. ChaWeb and the desktop send them through the
-   existing input request, so one native change serves both clients. The
-   commands work only in Entrance / Welcome.
+   model sees the text. ChaWeb sends them through the existing input
+   request. The commands work only in Entrance / Welcome.
+   - The commands work only in the ChaWeb daemon. The desktop uses the same
+     native input code, so the new application call checks the existing
+     `command.chaweb_host` flag, which only the daemon sets. If the flag is
+     false, the call refuses the command, and the handler shows a temporary
+     error. The desktop context-change handler does not change.
    - The handler only parses the command. A syntax error gets the usage
      notice at once, as for `/clear`. A valid command goes to the
      application through one new call with the operation, the name, the
@@ -147,6 +151,11 @@ To refresh a vault that is not active, the user does Open and then Download.
    works, and Open with a download can use its R2 key. The existing
    download code refuses a protected downloaded file.
 
+   The desktop application is also out of scope. Its Download in Settings
+   does not change: the split of the download function must keep its
+   behavior, and it keeps today's D1 inbox behavior, in which old inbox
+   items are applied after a download.
+
 ## Main execution lines
 
 ### 1. Command, in the Welcome session
@@ -199,19 +208,15 @@ To refresh a vault that is not active, the user does Open and then Download.
    - After Open saved a downloaded vault but could not open it: the old
      vault, and the notice states both facts.
 
-### 3. Clients after the change
+### 3. ChaWeb clients after the change
 
-- **Desktop.** The change comes from a job, not from a bridge request.
-  Today the desktop context-change handler requires a request ID. It must
-  also accept a change without one. It then resets the window and shows
-  Welcome.
-- **ChaWeb.** Today the adapter gives each application call the daemon's
-  current epoch, so the epoch check always passes. Instead, the page gets
-  the epoch from bootstrap and sends it with every vault request, including
-  the input request and direct audio URLs. The adapter gives that epoch to
-  the call. nginx does not forward request headers to the daemon, so the
-  epoch goes in the query string. An old page gets `vault_changed` and
-  reloads bootstrap.
+- **Epoch in each request.** Today the adapter gives each application call
+  the daemon's current epoch, so the epoch check always passes. Instead,
+  the page gets the epoch from bootstrap and sends it with every vault
+  request, including the input request and direct audio URLs. The adapter
+  gives that epoch to the call. nginx does not forward request headers to
+  the daemon, so the epoch goes in the query string. An old page gets
+  `vault_changed` and reloads bootstrap.
 - **Epoch start value.** Today the epoch starts at 1 in each process, so
   after a daemon restart an old page's epoch can be valid for a different
   vault. Instead, the epoch starts at the clock time in milliseconds when
