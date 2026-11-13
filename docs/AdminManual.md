@@ -221,6 +221,8 @@ The vault **Default** contains:
 - One provider with the ID `chatgpt`. It uses a ChatGPT subscription. It works
   only after you connect a ChatGPT account. See
   [Connect a ChatGPT account](#connect-a-chatgpt-account).
+- The default texts of the prompts for the note tasks. See
+  [Prompts](#prompts).
 
 It contains no forums, no other characters and no API keys.
 
@@ -352,6 +354,7 @@ the sidebar. The button shows a gear.
 | **Voices** | Voices, voice input and voice output. | [16](#16-voices) |
 | **API Keys** | Saved keys, **R2 storage** and **D1 sync**. | [7](#7-api-keys), [19](#19-r2-storage), [20](#20-d1-synchronization) |
 | **Cloud stores** | The stores of the Library. | [17](#17-cloud-stores-and-the-library) |
+| **Prompts** | The texts that CHA sends to the model for the note tasks and session summaries. | [15](#prompts) |
 
 Below the rows there is the card **OpenAI**. It shows the ChatGPT connection.
 See [Connect a ChatGPT account](#connect-a-chatgpt-account).
@@ -958,8 +961,10 @@ is not configured. Enable web_reader or Firecrawl in Settings → Search API.**
 For a YouTube address, and for a page with very long paragraphs, CHA also
 sends the text to the compression provider to format it. Thus the import of a
 video transcript also needs a compression provider. See
-[Notes settings](#15-notes-settings). CHA gets the transcript text from the
-page reading service. It has no connection of its own to YouTube.
+[Notes settings](#15-notes-settings). The prompts **Page formatting** and
+**YouTube transcript formatting** tell the model how to format the text. See
+[Prompts](#prompts). CHA gets the transcript text from the page reading
+service. It has no connection of its own to YouTube.
 
 ## 14. Session settings
 
@@ -1024,15 +1029,18 @@ Click **Settings → Notes settings**.
 
 Click **Save**.
 
-CHA uses this provider for three tasks:
+CHA uses this provider for four tasks:
 
 - **Compress** on a note or a folder.
+- **Summarize** on a note or a folder. It makes L1, L2 and the **Summary**
+  note of a folder.
 - **Save summary** on a session.
 - The formatting of imported video transcripts and of pages with very long
   paragraphs.
 
 Without it, these functions show **Select a compression provider in Notes
-settings.**
+settings.** Each task sends the text of its prompt to the model. See
+[Prompts](#prompts).
 
 These tasks send long texts. Select a provider whose model accepts long input.
 If the provider uses the ChatGPT subscription and no account is connected, the
@@ -1042,6 +1050,27 @@ notes.**
 Some models do not accept a reasoning effort. With such a model, each task
 fails with the message **This compression provider's model does not support
 high reasoning effort.** Set **Effort** to **None**.
+
+### Flex processing for Summarize
+
+For **Summarize**, CHA requests Flex processing when the compression provider
+meets all these conditions:
+
+- It uses an API key, not the ChatGPT subscription.
+- Its host is `api.openai.com` (API format Responses or Chat Completions), or
+  `generativelanguage.googleapis.com` (API format Google).
+
+Flex costs less, but the answers can come much later. The other tasks, and
+providers at other hosts, do not use Flex.
+
+There is no setting for Flex and no fallback to the standard processing. The
+model must accept Flex. If it does not, each **Summarize** request fails, and
+Events records the failure. Then select a provider with a different model.
+This also changes the provider of the other tasks above.
+
+If the service has no capacity, CHA tries a request three more times, after
+10, 20 and 40 seconds. A request has no time limit. The user can stop it with
+**Cancel**.
 
 ### Note audio service
 
@@ -1056,17 +1085,82 @@ Click **Save**. CHA examines the address only when a user starts **Generate
 audio**.
 
 The service must have the batch interface of the Gemini API below this
-address, and it must accept the key in the header `x-goog-api-key`. CHA uses
-these fixed values, which you cannot change:
+address, and it must accept the key in the header `x-goog-api-key`. The
+Google service `https://generativelanguage.googleapis.com` is permitted.
 
-- The model `gemini-3.8-flash-tts`.
-- The voices `boroda`, `grant`, `dzig`, `gerdt` and `Kore`. The dialog
-  **Generate audio** offers these names.
+CHA uses the model `gemini-3.8-flash-tts`. You cannot change it.
 
-The service must return WAV audio. CHA is not supplied with such a service.
+The dialog **Generate audio** gets the list of voices from the service, at
+`<Audio service URL>/v1beta/voices`. It shows only English and Russian voices.
+If the service does not give the list, the dialog shows **Voices
+unavailable** and the reason.
+
+With the Google service, CHA also asks for the style of an audiobook narrator.
+
+The service must return WAV audio.
 
 Note audio generation works only in the desktop application on macOS and
 Windows. ChaWeb cannot start it.
+
+### Prompts
+
+A prompt is the text that CHA sends to the model as the instructions for one
+task. The model gets the note, the page or the session as a separate message.
+Each vault has its own prompts.
+
+| Prompt | Task |
+| --- | --- |
+| **Note compression** | **Compress**: the compressed version of a note. |
+| **Summary L1** | **Summarize**: the L1 of a note. Its default text is a copy of the default text of **Note compression**. |
+| **Summary L2** | **Summarize**: the L2 of a note. |
+| **Summary L3 section** | **Summarize** on a folder: the section of one note in the **Summary** note. |
+| **Summary L3 overview** | **Summarize** on a folder: the overview at the start of the **Summary** note. |
+| **Short session summary** | **Save summary**: the short summary of a session. |
+| **Long session summary** | **Save summary**: the long summary of a session. |
+| **Page formatting** | The formatting of an imported page with very long paragraphs. |
+| **YouTube transcript formatting** | The formatting of an imported video transcript. |
+
+You cannot add, rename or delete a prompt.
+
+To change a prompt:
+
+1. Click **Settings → Prompts** and click the prompt. The screen shows its
+   text as plain text. Markdown marks show as they are.
+2. Click **Edit text**. To start from a file, click **Upload text** and select
+   a UTF-8 `.txt` or `.md` file. The file replaces the text in the dialog. It
+   does not save it.
+3. Change the text and click **Save**. **Cancel** or Escape discards the
+   change.
+
+The change applies to the tasks that start after the save. A task that is in
+work keeps the old text. Saving makes no request to the model and does not
+start the sessions again.
+
+Rules for the text:
+
+- It is plain UTF-8 text of a maximum of 256 KiB. Includes and variables do
+  not work. CHA sends the text as it is. See
+  [Prompt files and the template language](#30-prompt-files-and-the-template-language).
+- An empty text is permitted. The model then gets no instructions.
+- CHA has no command to go back to the default text. To get the default text
+  of one prompt, delete its file with the configuration files and import. See
+  [The files of the prompts](#the-files-of-the-prompts).
+
+Rules for the summary prompts:
+
+- **Save summary** makes two model requests with the same session text: one
+  with **Short session summary** and one with **Long session summary**. CHA
+  adds the headings *Short summary* and *Long summary* itself. Thus these
+  prompts must ask for text without a level-1 heading. If the answer has a
+  level-1 heading, the summary fails.
+- For **Summary L2**, **Summary L3 section** and **Summary L3 overview**, CHA
+  adds the name of the note or of the folder as a level-1 heading. Thus these
+  prompts must not ask for a title.
+- The results of **Summarize** are in Markdown. CHA changes tables into lines
+  of text.
+
+A new version of CHA does not change the prompts of a vault. A vault that has
+no prompts gets the default texts when the main process opens it.
 
 ## 16. Voices
 
@@ -1312,9 +1406,11 @@ starts with that vault the next time.
 3. Select the **Initial database**:
    - **New empty vault** — the new vault gets a copy of the configuration of
      the active vault: characters, forums, providers, saved keys and settings.
-     It gets no sessions and no notes.
-   - **Copy** *vault name* — the new vault gets a full copy of that vault. To
-     copy a protected vault, make it the active vault first.
+     It gets no sessions and no notes. It gets the default texts of the
+     [prompts](#prompts), not the texts of the active vault.
+   - **Copy** *vault name* — the new vault gets a full copy of that vault,
+     with its prompts. To copy a protected vault, make it the active vault
+     first.
 4. To give the vault a password, select **Protected vault** and type the
    **Password**.
 5. Click **Create vault**.
@@ -1389,9 +1485,9 @@ It does not copy sessions or notes.
 3. Confirm.
 
 When the two vaults have the same item, the item of the source replaces the
-item of the active vault. This includes the saved keys and the R2
-credentials. You cannot undo a merge. The D1 credentials of the active vault
-do not change.
+item of the active vault. This includes the saved keys, the R2 credentials
+and the prompts. You cannot undo a merge. The D1 credentials of the active
+vault do not change.
 
 If the source vault is protected, CHA asks for its password.
 
@@ -1567,14 +1663,16 @@ minute, if the two computers are in operation and connected.
 
 | Synchronized | Not synchronized |
 | --- | --- |
-| Notes and folders | Stored audio of answers and notes |
-| Configuration: personas, characters, forums, providers, styles, voices, settings, pictures | Events |
+| Notes and folders, with the compressed version, L1, L2 and the **Exclude from summaries** setting of each note | Stored audio of answers and notes |
+| Configuration: personas, characters, forums, providers, styles, voices, settings, prompts, pictures | Events |
 | Saved API keys and R2 credentials | D1 credentials |
 | Sessions that have a name and whose first message is complete (answered, failed or stopped) | The `machine` name, `app.toml`, the vault password |
 | | The ChatGPT connection |
 
 When a note changes through synchronization, CHA deletes the stored audio of
-that note.
+that note. A new compressed version, L1 or L2 from **Compress** or
+**Summarize** on a different computer does not delete the audio of the full
+text. A new L1 deletes the audio of the L1.
 
 ### Rules
 
@@ -1747,6 +1845,10 @@ It gives no message for this.
 - The sessions and the notes, with the exception in the warning above.
 - The D1 credentials of the vault. Import ignores D1 credentials in the files.
 
+Import replaces the prompts with the files in `system/prompts/`. A prompt
+without a file gets its default text. If the files contain no prompt at all,
+CHA writes the default texts of all prompts into the vault.
+
 ### Errors and warnings
 
 - An error in a file stops the import, and the screen shows the text. The
@@ -1798,6 +1900,7 @@ settings**. The Assistant cannot change its own settings.
   cannot change the address of a provider or a service that has a key, and it
   cannot select a key for a provider or a service at a new address.
 - Change its own settings, or the provider that it uses.
+- Change the [prompts](#prompts).
 - Read the text of sessions or notes.
 - Change pictures.
 - Create the database of a vault. Select, protect or delete a vault. Import,
@@ -1873,6 +1976,7 @@ These tasks write Events:
 | Task | Entries |
 | --- | --- |
 | Note compression | Start, result, cancellation, failure with a short reason. |
+| **Summarize** | The result of each L1, each L2 and each **Summary** note. Each failure with a short reason, and each cancelled request. |
 | **Save summary** | Start, result, cancellation, failure. |
 | Note audio | Start with the number of clips and the voice, result, each failed step, and the reason when CHA stops an audio task. |
 | **Upload to store** | The result, with the IDs of the store and its files. Problems with the removal of data at the provider. |
@@ -1894,6 +1998,7 @@ can remain at the provider, and gives the IDs. Delete those items with
 | Task | Result |
 | --- | --- |
 | Note compression, **Save summary** | Cancelled. Start it again. |
+| **Summarize** | Stopped. The L1 and L2 that CHA saved stay. The **Summary** note does not change. Start it again. |
 | Note audio | CHA continues the task at the next start of the desktop application. |
 | **Upload to store** | Stopped. Data can remain at the provider. |
 | R2 upload | Stopped. Upload again. |
@@ -1952,7 +2057,7 @@ For one vault:
 
 For the complete installation, copy the complete configuration directory. It
 also contains `app.toml`, the ChatGPT connection (`openai-auth.json`), and the
-state of the View menu (`view.json`).
+state of the View menu and the font size of notes (`view.json`).
 
 ### Make a backup
 
@@ -2287,7 +2392,8 @@ ChaWeb has no Settings screens. You have these possibilities:
 - **The Assistant.** In ChaWeb, open the conversation with the Assistant and
   ask it. ChaWeb shows the built-in forum with the name **Welcome**. See
   [The Assistant as a configuration tool](#22-the-assistant-as-a-configuration-tool).
-  The Assistant cannot save API keys. After the Assistant changes `app.toml`
+  The Assistant cannot save API keys or change the prompts. After the
+  Assistant changes `app.toml`
   or a vault definition file, start the process again with
   `sudo systemctl restart cha@<user>.service`.
 - **D1 synchronization.** If the server vault and a desktop vault synchronize,
@@ -2396,7 +2502,7 @@ steps in the opposite order:
 | `logs/cha.log`, `logs/cha.1.log` … | The log. |
 | `openai-auth.json` | The ChatGPT connection. A secret. |
 | `openai-auth.json.cha-lock` | A lock file. |
-| `view.json` | The state of the View menu. |
+| `view.json` | The state of the View menu and the font size of notes. |
 | `password` | ChaWeb only: the password of a protected vault. |
 | `api-keys.json` | Obsolete. See [Appendix B](#appendix-b--obsolete-settings). |
 
@@ -2536,6 +2642,7 @@ system/
   session/config.toml             session naming
   jev/config.toml                 recipient detection
   notes/config.toml               notes settings
+  prompts/<prompt-id>.md          the prompts
   web-search/config.toml          Search API
   voice-input/config.toml
   voice-output/config.toml
@@ -2763,11 +2870,42 @@ For voice input, `url`, `model` and `api_key` are necessary. For voice output,
 The file `system/assistant/character.toml` is necessary. It must have
 `display_name` and `provider`.
 
+### The files of the prompts
+
+Each file in `system/prompts/` holds the text of one prompt. See
+[Prompts](#prompts).
+
+| File | Prompt |
+| --- | --- |
+| `note-compression.md` | **Note compression** |
+| `summary-l1.md` | **Summary L1** |
+| `summary-l2.md` | **Summary L2** |
+| `summary-l3-section.md` | **Summary L3 section** |
+| `summary-l3-overview.md` | **Summary L3 overview** |
+| `session-short-summary.md` | **Short session summary** |
+| `session-long-summary.md` | **Long session summary** |
+| `page-formatting.md` | **Page formatting** |
+| `youtube-transcript.md` | **YouTube transcript formatting** |
+
+Rules:
+
+- The content is plain text. CHA does not apply the template language of
+  [chapter 30](#30-prompt-files-and-the-template-language) to it.
+- A missing file gives the default text of its prompt.
+- A file that is not valid UTF-8 text, or that is larger than 256 KiB, gives
+  the default text and a warning in the log. CHA keeps the file.
+- CHA ignores a file with a different name and writes a warning to the log.
+  You cannot add a prompt with a new file.
+
 ## 30. Prompt files and the template language
 
 A prompt file is a Markdown file whose text goes to the model. This chapter
 describes how CHA puts these files together. It does not tell you how to write
 good texts for characters.
+
+The template language applies only to the files of characters, forums and
+personas. The prompts of **Settings → Prompts** are plain text. See
+[Prompts](#prompts).
 
 ### The files
 
@@ -2906,6 +3044,8 @@ administration.
 | Stores in a Library with an OpenAI key | 2 |
 | Complete text for one character | 1 MiB |
 | Includes in one text | 256, to a depth of 16 |
+| Text of a prompt in **Settings → Prompts** | 256 KiB |
+| **Summarize**: retries of one model request | 3, after 10, 20 and 40 seconds |
 | Log | 10 MiB for each file, three older files |
 | Events | The newest 1,000 |
 | Provider test | 10 seconds |
@@ -2943,6 +3083,9 @@ administration.
 | **Select a compression provider in Notes settings.** | See [Notes settings](#15-notes-settings). |
 | **Page reading is not configured.** … | See [Web search and page reading](#13-web-search-and-page-reading). |
 | **Configure the audio service URL and API key in Notes settings.** | See [Note audio service](#note-audio-service). |
+| **Could not load voices. Check the audio service in Notes settings.** | The dialog **Generate audio** did not get the list of voices. Examine the **Audio service URL** and the key. See [Note audio service](#note-audio-service). |
+| **Prompt text is too large. The limit is 256 KiB.** | Make the text of the prompt shorter. See [Prompts](#prompts). |
+| **That prompt was not found.** | Open **Settings → Prompts** again. |
 | **Modify directory is not configured** | Add the key `modify` to `app.toml`. See [app.toml](#27-apptoml). |
 | **This machine has no name. Add machine to app.toml, then save again.** | See [Set up the first computer](#set-up-the-first-computer). |
 | **D1 could not be reached. Check the account ID, database ID, and API token.** | Examine the three values and the network connection. |
@@ -2972,6 +3115,7 @@ administration.
 | Import a web page | Page reading must be configured. | [Configure the Search API](#configure-the-search-api), [Page import into Notes](#page-import-into-notes) |
 | Compress a note | A compression provider must be selected. | [Compression provider](#compression-provider) |
 | Audio for a note | The note audio service must be configured. | [Note audio service](#note-audio-service) |
+| Summarize a note or a folder | A compression provider must be selected. | [Compression provider](#compression-provider), [Flex processing for Summarize](#flex-processing-for-summarize), [Prompts](#prompts) |
 | Session summaries | A compression provider must be selected. | [Compression provider](#compression-provider) |
 | Library | A cloud store API key is necessary. An administrator selects and manages the stores. | [Prepare a key](#prepare-a-key), [Manage stores](#manage-stores) |
 | Upload a folder to a store | An administrator must delete a store before a new upload. | [Manage stores](#manage-stores) |
@@ -3014,4 +3158,5 @@ For `CHA_LISTEN`, the warning shows in the terminal.
 | `file_references` | Character and forum files | Ignores it. The Library replaces this function. |
 | `stability`, `similarity_boost`, `style`, `use_speaker_boost` | Voice files | Ignores them. |
 | `CHA_LISTEN` | Environment of `install.sh` | Ignores it. Each ChaWeb port is set in nginx. |
+| `system/prompts/session-summary.md` | Configuration files and vault database | Ignores it. It keeps the file. **Short session summary** and **Long session summary** replace it. |
 
