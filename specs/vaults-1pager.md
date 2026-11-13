@@ -1,248 +1,217 @@
 # Assistant vault Download and Open: one-page design
 
 Date: November 13, 2026.
-Status: Short technical design. A detailed technical design follows from it.
+Status: High-level technical design. A detailed technical design follows from it.
 
 ## Goal
 
 The user downloads vaults from R2 and opens vaults with commands in the
-Entrance / Welcome prompt. This works in ChaWeb, without Settings and
-without a restart. The desktop application does not offer these commands.
+Entrance / Welcome prompt. This works in ChaWeb, without Settings or a
+restart in normal operation. The desktop application does not offer these
+commands. Existing maintenance failures can still require a restart.
 
 ## Operations
 
-- **`/download`.** Download the active vault from R2, replace the active
-  vault's database with it, and reopen the vault.
-- **`/open <name>`.** If `<name>` is a registered local vault, open it.
-  If not, download `<name>` from R2 as a new local vault, register it, and
-  open it. If `<name>` is already the active vault, report that and do
-  nothing.
+- **`/download`.** Perform local eligibility checks, then show the warning
+  and the exact command `/download confirm`. Confirmation replaces the active vault's database
+  with the R2 copy and reopens it, keeping the existing single `.bac` backup.
+- **`/open <name>`.** Open a registered local vault. If none matches,
+  download it from R2 as a new local vault, register it, and open it.
+  Opening the active vault reports that it is already open and does nothing.
 
-To refresh a vault that is not active, the user does Open and then Download.
+To refresh an inactive vault, the user does Open and then Download.
+The text after `/open` is the name, including spaces. Local lookup uses the
+existing vault-name comparison. If no local vault matches, the text identifies
+the R2 object `<name>.sqlite3` in its exact case. As on desktop, the downloaded
+vault takes its name from the companion definition, or from the object name
+if no companion exists. Registration and opening use that resolved vault
+name, and the result notice states it. A collision with a registered vault
+name or local destination fails before inbox deletion or file installation.
+A missing R2 database is `not_found`; the notice explains that remote lookup
+requires the R2 file name without `.sqlite3`, in its exact case.
 
 ## Key decisions
 
-1. **Two safety categories.** (A): Can the step run in the command handler?
-   (B): Can the step lose data?
+1. **Native commands, only in ChaWeb Welcome.** Native code handles the
+   commands before any model sees them, through the existing input request.
+   The application checks the existing ChaWeb host flag; desktop commands
+   are refused. Plain-language requests still go to the model, whose
+   instructions tell it to reply with the exact command to type. The
+   existing refusal of commands while Welcome generates a reply remains.
+   There is no model tool, new command control, or new request type.
 
-   | Step | A: in the command handler | B: data loss |
-   | --- | --- | --- |
-   | Download into a new file | Safe | Safe |
-   | Open an existing local vault | Not safe | Safe |
-   | Replace the active vault's database | Not safe | Not safe |
+2. **Confirmation before replacing existing local data.** Download warns
+   that local changes absent from R2 will survive only in `.bac`, and that
+   running work will stop. The
+   confirmation is stateless: `/download confirm` authorizes Download for
+   the request's active context. Before showing the warning, the job checks
+   the context, main-process status, protection, and presence of an R2 key
+   using local data. Showing the warning makes no R2 request. Confirmation
+   repeats these checks; the warning reserves nothing.
+   Open requires no confirmation: it does not replace existing local data.
+   Open with a download can still discard D1 inbox data and obtain an old
+   snapshot; those are accepted limits, not a guarantee against data loss.
 
-   A step that changes the active vault must first drain the application.
-   The drain asks each live session to shut down and waits until it is
-   released. The command handler runs on the Welcome session's thread. If
-   that thread ran the change, it would wait for itself.
+3. **Application-owned background work.** The command handler parses the
+   request, hands it and its context to an application `BackgroundJobs`
+   job, and returns. It never waits for the job, takes the lifecycle lock,
+   or performs network work. A session thread cannot drain itself.
+   These jobs survive a vault drain and are joined at application shutdown.
+   The D1 worker cannot own the operation because the drain stops it.
+   There is no command queue or persistent confirmation state.
 
-2. **A confirmation only where data can be lost.** The application cannot
-   tell whether the R2 copy is behind the local file or behind other
-   machines. This is a known limit.
-   - Download: local changes that R2 does not have are deleted. Only the
-     `.bac` copy keeps them. The warning names this risk and says that
-     running work stops (decision 6). The user accepts it with
-     `/download confirm`.
-   - Open, with or without a download: no confirmation. No local data is
-     lost, and the user cannot prevent the other effects. The command
-     itself is the user's request, as with the desktop Vault selector
-     today. The effects of a download (an old copy, deleted D1 inbox items)
-     are known limits.
+4. **Block the application for the whole operation.** The job takes the
+   lifecycle lock before its checks and holds it through the transfer and
+   the side effects. The only release is the one in remote Open (decision
+   5). Download drains first and then transfers within the same
+   maintenance operation, as Download in Settings does today. Remote Open
+   transfers under the lock without a drain, as the desktop R2 download
+   does today; its drain happens later, in the vault switch. While the
+   lock is held, every other application request waits, so ChaWeb does not
+   answer until the operation ends. The job transfers the database and
+   companion definition into temporary files and validates them before it
+   replaces, installs, or registers anything. Transfer or validation
+   failure removes the temporary files and leaves the vault's files
+   unchanged. The download itself detects missing objects; no preliminary
+   HEAD request is needed.
 
-3. **Native prompt commands, not model tools.** `/download` and
-   `/open <name>` join the existing slash commands in `text_input.cpp`
-   (`/mcast`, `/clear`, `/detach`). Native code handles them before any
-   model sees the text. ChaWeb sends them through the existing input
-   request. The commands work only in Entrance / Welcome.
-   - The commands work only in the ChaWeb daemon. The desktop uses the same
-     native input code, so the new application call checks the existing
-     `command.chaweb_host` flag, which only the daemon sets. If the flag is
-     false, the call refuses the command, and the handler shows a temporary
-     error. The desktop context-change handler does not change.
-   - The handler only parses the command. A syntax error gets the usage
-     notice at once, as for `/clear`. A valid command goes to the
-     application through one new call with the operation, the name, the
-     `confirm` flag, and the epoch. The handler then returns. No code on a
-     session thread takes the lifecycle lock or makes a network request,
-     because the drain holds that lock while it waits for the sessions.
-   - The confirmation keeps no state. Only `/download` has a `confirm`
-     form. `/download` without `confirm` only gets the warning and the
-     exact command `/download confirm`, which runs the operation. Native
-     code keeps nothing between the two. The text after `/open` is always
-     the vault name, so a name can contain spaces.
-   - The warning, the start notice, errors, and the result are notices in
-     the Welcome transcript. The job posts them with the existing
-     `post_session_notice`. Only the usage notice for a syntax error is a
-     temporary notice from the handler, as for the existing commands.
-   - The existing code refuses a command while the session generates a
-     reply.
-   - There is no model tool, no new UI control, and no new client request.
-   - A request in plain words goes to the model as usual. The Assistant
-     instructions tell the model to reply with the exact command to type.
+5. **Check once, under the lock that covers the side effects.** The checks
+   resolve the target, reject protected targets, and, for downloads,
+   require the main process and the active vault's R2 credentials. They
+   also cover the request's context and registry and destination
+   collisions. Nothing can change between the checks and the side effects,
+   so there is no second check. Download keeps its checks, drain, transfer,
+   backlog deletion, replacement, and reopen within one maintenance
+   operation. Remote Open saves in one locked step: check, transfer,
+   validate, delete the backlog, install, and register. It then releases
+   the lock and calls the existing vault switch with the original request
+   context. The switch takes its own lock and rechecks that context before
+   draining. If the context has changed between saving and switching, the
+   vault stays saved and registered, but this command does not open it.
 
-4. **The change runs on a separate application thread: `BackgroundJobs`.**
-   The new application call copies all data into a command: the operation,
-   the name, the `confirm` flag, and the epoch. It launches a
-   `BackgroundJobs` job with that command and returns immediately. It never
-   waits for the job. The job does all checks, one time (execution line 2).
-   - `BackgroundJobs` belongs to the application, not to a vault. The
-     drain does not stop it or wait for it, so the job can wait for the
-     lifecycle lock. Only shutdown joins it. Upload already uses it.
-   - The D1 sync worker cannot run the change. The drain stops and joins
-     it, and the change replaces it with a new worker for the new vault.
-     Also, it does not exist when the vault has no D1 key.
-   - There is no queue or command slot. If two commands run at the same
-     time, the one that reaches the drain second fails the epoch check,
-     because the first one changed the epoch.
+   Only one vault command runs at a time. The application sets a flag
+   when it launches the job and clears it when the job ends, on every exit
+   path, as Upload does with its flag today. While the flag is set, the
+   application refuses another vault command at once; no job waits behind
+   another. So no two transfers run at the same time, and no other vault
+   command runs between the save and the switch of a remote Open. A
+   destination or name collision still prevents a later command from
+   overwriting an already saved vault.
 
-5. **Transfer first.** After its checks, the job downloads the R2 files
-   into temporary files and validates them. This runs before the drain and
-   without the lifecycle lock, so the application continues to work and
-   other requests do not wait. If the transfer or the validation fails, the
-   job removes the temporary files, and nothing in the running application
-   changes. Only a ready file goes to the next steps. Today one download
-   function does the transfer, the validation, and the replacement. It is
-   split into these two parts.
+6. **Reuse the existing drain and maintenance behavior.** A switch or
+   replacement stops the old D1 worker, shuts down live sessions, cancels
+   replies and note work, and attempts a final outgoing D1 send. There is
+   no separate running-work check. A final-send failure is logged and does
+   not prevent the operation. For Open, unsent changes remain in the old
+   vault; for Download, they survive only in `.bac`. Maintenance changes
+   the context even when the vault name stays the same.
 
-6. **"Change the world."** When the new file is ready, or at once for Open
-   of a local vault, the job uses the existing drain:
-   - It checks the command's epoch. If the context changed after the
-     command, the operation fails. Each maintenance operation changes the
-     context, not only a vault change.
-   - It stops the old D1 worker, so it applies no more incoming items.
-   - It shuts down all live sessions and cancels all replies, note
-     compressions, summaries, and folder-store work.
-   - It tries one final send of the outgoing D1 queue.
+7. **Discard the queued D1 backlog when installing an R2 snapshot.** The
+   job deletes the backlog present at the deletion boundary in this
+   machine's inbox for the downloaded vault, using the downloaded
+   database's D1 key. It keeps the table. No key or no table means there
+   is nothing to delete. Download does this after the drain and the
+   transfer, and before replacement; Open with a download does it within
+   the locked save step, after validation and before installation and
+   registration. No worker for the downloaded
+   vault starts before deletion succeeds. A deletion failure prevents
+   installation and registration. Opening an existing local vault does
+   not clear its inbox.
 
-   There is no check for running work. The Download warning says that
-   running work stops. Open stops it without a warning. If the final D1
-   send fails, the operation continues with a warning in the log, as
-   Download in Settings does today. For Open, the unsent changes stay in
-   the old vault's own file. For Download, they stay only in the `.bac`
-   copy.
+   When Open actually switches vaults in ChaWeb, whether local or downloaded,
+   D1 startup uses the existing recovery mode that creates a missing inbox
+   table before synchronization, as daemon startup does today. Download
+   retains that recovery behavior too. This extends the daemon startup rule
+   to vault switches; it adds no automatic recovery while a vault remains
+   open. Opening the already active vault remains a no-op. Existing D1
+   startup failure handling and desktop behavior are unchanged.
 
-7. **A database from R2 starts with an empty D1 inbox.** In D1, each
-   machine has one inbox table for each vault. Other machines put their
-   changes in it, and this machine's D1 worker applies them. Items in the
-   inbox can be older than the R2 file, so they must not be applied to it.
-   - The job deletes all items in this machine's inbox for that vault
-     before any D1 worker for that vault starts. For Download, this happens
-     after the drain and before the file replaces the local file. For Open
-     of a vault with no local file, it happens after validation and before
-     the vault is registered.
-   - The job uses the existing `D1Client::delete_through` with the D1 key in
-     the downloaded file, because the new D1 worker uses that key. The table
-     stays, so other machines continue to send to it. If the file has no D1
-     key, or the table does not exist, there is nothing to delete.
-   - If the delete fails, the operation fails, and nothing is replaced or
-     registered.
-   - Open of a local file does not delete the items. They are changes that
-     the local copy still needs.
+   Clearing the backlog deliberately discards old queued records and changes newer
+   than the R2 snapshot. It is not a synchronization cutoff: other
+   machines can enqueue records immediately afterward, including old
+   changes they had not yet sent. The inbox need not be empty when the
+   new worker starts, and later records are not guaranteed to be newer
+   than the snapshot.
 
-8. **Old clients must not reach the new vault.** Welcome, sessions, and
-   notes have the same IDs in all vaults. Each client request carries the
-   context epoch that the client received. The application's existing epoch
-   check refuses an old epoch with `vault_changed`, and the client then
-   reloads its state.
+8. **Reuse existing failure outcomes; do not add rollback machinery.**
+   A failed check changes nothing. A failed transfer or validation leaves
+   the vault's files unchanged: for remote Open, the application continues
+   as before; for Download, the drain has already stopped running work and
+   changed the context, and the existing maintenance recovery reopens the
+   unchanged database. After that point, use the existing maintenance
+   recovery and file replacement behavior. If a downloaded vault has been
+   registered but cannot be opened, it stays registered. A failure after
+   closing, retargeting, or replacing a
+   database can leave the application unavailable and require a daemon
+   restart; returning to the old vault is not guaranteed.
 
-9. **Out of scope:** password-protected target vaults (the commands refuse
-   them), merge, upload, and any check of whether R2 is newer. A protected
-   active vault can be the source: Open from it to an unprotected vault
-   works, and Open with a download can use its R2 key. The existing
-   download code refuses a protected downloaded file.
+   Warnings, start notices, and results use the Welcome transcript of the
+   context active when the notice is posted, identifying the operation
+   and target. A partial success reports that the vault was saved but not
+   opened. If the application is unavailable, ChaWeb reports the existing
+   unavailable/restart-required failure outside the transcript. Reporting
+   such a failure must not depend on opening Welcome.
 
-   The desktop application is also out of scope. Its Download in Settings
-   does not change: the split of the download function must keep its
-   behavior, and it keeps today's D1 inbox behavior, in which old inbox
-   items are applied after a download.
+9. **Browser context includes daemon identity and epoch.** Bootstrap gives
+   the page a random token identifying this daemon instance and the
+   existing context epoch. Every vault request, including direct audio
+   URLs, carries both in the query string. The adapter rejects a different
+   daemon token and passes the supplied epoch to the application's
+   existing check. Missing or stale context is refused with `vault_changed`;
+   the adapter never substitutes the current context. Restart creates a
+   new token; no clock-based or persistent global counter is needed.
 
-## Main execution lines
+   On a context change, the browser resets to Welcome with fresh bootstrap
+   state. It discards old vault state, session/note routes, unsent drafts,
+   and pending actions, stops playback and voice input, and ignores late
+   responses from the old context. It never automatically replays a
+   mutation. Updating the epoch while retaining old page state is not
+   sufficient. These rules also apply to Download of the same vault.
 
-### 1. Command, in the Welcome session
+## Execution summary
 
-1. The user types `/download`, `/download confirm`, or `/open <name>`.
-2. Native code parses the command before any model sees it. A syntax
-   error gets the temporary usage notice at once.
-3. The handler gives the command to the application through the new call
-   and returns. The call launches the job. No file has changed yet.
+1. Parse and dispatch the command. The application refuses it while
+   another vault command runs. An unconfirmed Download performs local
+   eligibility checks, shows its warning, and stops. An Open of the active
+   vault reports that and stops. Other operations post a start notice.
+2. Take the lifecycle lock, check once, and do the operation while the
+   application is blocked. There is no progress indicator.
+   - Download: check, drain, transfer and validate temporary files, clear
+     the D1 backlog, replace with `.bac` backup, and reopen within one
+     maintenance operation.
+   - Open, local vault: use the existing vault switch's checks and drain.
+   - Open, remote vault: check, transfer and validate temporary files,
+     clear the D1 backlog, install and register under the lock. Release
+     it, then use the existing vault switch with the resolved name and
+     original request context. A rejected switch leaves the downloaded
+     vault saved but not opened by this command.
+3. Complete or recover using existing maintenance behavior. Publish the
+   resulting context and availability, and start a D1 worker only for a
+   usable resulting vault. Successful Open and Download use the D1 recovery
+   startup described in decision 7. Report success, partial success, or failure.
+   Browsers reset when their context becomes stale.
 
-### 2. Checks and vault change, in the job
+## Scope and accepted limits
 
-1. The job checks the request:
-   - Under the lifecycle lock, with an epoch check, as `list_r2_vaults`
-     does: the name and the target, and protection. For Open of the active
-     vault, it reports that and stops. For Download and Open with a
-     download, it also checks the main process and copies the active
-     vault's R2 key.
-   - Without the lock, for Download and Open with a download: for Open, it
-     checks that the destination file does not exist. Then it checks that
-     the R2 object exists with one HEAD request (`get_r2_database_etag`,
-     used only as an existence check). A name that is not local and not in
-     R2 gets `not_found`.
-
-   On any failure, the job posts the error and stops. All notices from the
-   job are transcript notices in Welcome (decision 3).
-2. For `/download` without `confirm`, the job posts the warning and the
-   exact command `/download confirm`, and stops.
-3. Otherwise, the job posts a short notice that the operation started.
-4. For Download, and for Open of a vault with no local file, the job
-   downloads the R2 files with the copied R2 key into temporary files and
-   validates them. There is no lock and no drain. On failure, it removes
-   the files, posts the error, and stops. During the transfer, the only
-   visible state is the notice that the operation started. There is no
-   progress indicator.
-5. The job runs one path:
-   - Download: epoch check, drain, final D1 send (a failure only writes a
-     warning), empty the D1 inbox, replace with the existing `.bac` backup,
-     reopen.
-   - Open, local vault: `switch_vault` (epoch check, drain, open).
-   - Open, no local vault: empty the D1 inbox, register the vault, then
-     `switch_vault`. If the open fails, the downloaded vault stays
-     registered.
-6. The application publishes the new epoch and starts a D1 worker for the
-   resulting vault.
-7. The job posts the result notice in the Welcome of the vault that is
-   active when it posts the notice:
-   - After success: the resulting vault.
-   - After a failure before the change: the old vault.
-   - After Open saved a downloaded vault but could not open it: the old
-     vault, and the notice states both facts.
-
-### 3. ChaWeb clients after the change
-
-- **Epoch in each request.** Today the adapter gives each application call
-  the daemon's current epoch, so the epoch check always passes. Instead,
-  the page gets the epoch from bootstrap and sends it with every vault
-  request, including the input request and direct audio URLs. The adapter
-  gives that epoch to the call. nginx does not forward request headers to
-  the daemon, so the epoch goes in the query string. An old page gets
-  `vault_changed` and reloads bootstrap.
-- **Epoch start value.** Today the epoch starts at 1 in each process, so
-  after a daemon restart an old page's epoch can be valid for a different
-  vault. Instead, the epoch starts at the clock time in milliseconds when
-  the process starts. A new process then starts above all epochs of the
-  earlier process. JavaScript numbers hold this value exactly.
-
-## Known limits
-
-- The application cannot tell if the R2 copy is old. For Download, the
-  user accepts the risk with `/download confirm`. Open with a download
-  asks nothing, and the copy can be older than the copies on other
-  machines.
-- Download deletes local changes that R2 does not have. Only the single
-  `.bac` copy keeps them. This includes changes that the user makes during
-  the transfer.
-- If the final D1 send fails, the unsent local changes stay only in the
-  `.bac` copy.
-- A Download or an Open with a download fails if another maintenance
-  operation runs during the transfer, for example an upload or a
-  configuration import.
-- Changes that other machines made after the R2 upload and that waited in
-  this machine's D1 inbox are not applied on this machine. The other
-  machines still have them.
-- If the replacement fails after the D1 inbox delete, the old file stays,
-  but the items that waited for it are gone.
-- When the drain starts, running work in all sessions, tabs, and devices
-  stops. For Open, this happens without a warning.
-- The user must type the exact command. The model does not run vault
-  operations.
+- Password-protected targets, merge, upload, and freshness checks are out
+  of scope. A protected active vault may be the source of Open and supply
+  the R2 key for downloading an unprotected target.
+- Desktop behavior is unchanged, including its current D1 inbox handling
+  after Download. Shared transfer code must preserve that behavior.
+- R2 can be older than local or other machines' data. Download preserves
+  replaced local data only in the single `.bac` copy. Open with a download
+  accepts an old snapshot without confirmation.
+- Deleted D1 backlog is not restored if a later step fails. A D1
+  error can also leave the deletion's remote outcome uncertain. This
+  design adds no cross-system rollback or snapshot/sync ordering protocol.
+- During Download and Open with a download, ChaWeb does not answer on any
+  client until the operation ends. A request that waits longer than the
+  web server's time limit fails in the page; the page recovers after the
+  operation. The start notice can become visible only then.
+- Download drains before it transfers. A failed transfer still stops
+  running work and resets browsers, although the vault is unchanged.
+- The drain stops running work on all sessions and clients attached to
+  this daemon, not on independent CHA applications. Open does this without
+  a warning. Browser context resets discard unsent drafts.
+- Some maintenance failures require a daemon restart. A Welcome transcript
+  result is available only while the application remains usable.
