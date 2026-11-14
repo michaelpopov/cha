@@ -5,6 +5,10 @@ import { bootstrapFixture, snapshotFixture } from '../test/fixtures';
 import { createChaWebClient } from './client';
 import { noteItem, noteDocument, paragraph } from '../test/notes';
 
+const context = { daemon_token: '0123456789abcdef0123456789abcdef', context_epoch: '1' };
+const webBootstrap = { ...bootstrapFixture, ...context };
+const query = '?daemon_token=' + context.daemon_token + '&context_epoch=1';
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -17,26 +21,42 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function installFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response) {
+function installFetch(handler: (url: string, init?: RequestInit) => Promise<Response> | Response,
+  mockBootstrap = true) {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (mockBootstrap && url === '/api/cha/v1/bootstrap') return jsonResponse(webBootstrap);
     calls.push({ url, init });
-    return handler(url, init);
+    if (!mockBootstrap) return handler(url, init);
+    expect(url.endsWith(query)).toBe(true);
+    return handler(url.slice(0, -query.length), init);
   });
   return calls;
 }
 
 describe('ChaWeb HTTP client', () => {
+  it('preserves the not_found code on an asynchronous Welcome result', async () => {
+    const notice = {
+      id: 1, kind: 'notice', participant_id: '', display_name: 'System',
+      addressed_to: '', addressed_to_name: '', created_at: null, status: 'complete',
+      text: 'R2 database object was not found.', error_code: 'not_found',
+    };
+    installFetch(() => jsonResponse({ ...snapshotFixture, transcript: [notice] }));
+    const client = await connectedClient();
+    await expect(client.getSession('builtin-entrance', 'builtin-welcome'))
+      .resolves.toMatchObject({ transcript: [{ kind: 'notice', error_code: 'not_found' }] });
+  });
+
   it('reads note metadata and full documents with cancellable GETs only', async () => {
     const item = noteItem();
     const detail = { item, document: noteDocument(paragraph('Large saved prose. '.repeat(20000))) };
     const calls = installFetch((url) => jsonResponse(url.endsWith('/notes') ? { items: [item] } : detail));
-    const client = createChaWebClient();
+    const client = await connectedClient();
     const controller = new AbortController();
     await expect(client.listNoteItems(controller.signal)).resolves.toEqual([item]);
     await expect(client.getNote(1, controller.signal)).resolves.toEqual(detail);
-    expect(calls.map((call) => [call.url, call.init?.method, call.init?.body])).toEqual([
+    expect(calls.map((call) => [call.url.slice(0, -query.length), call.init?.method, call.init?.body])).toEqual([
       ['/api/cha/v1/notes', 'GET', undefined], ['/api/cha/v1/notes/1', 'GET', undefined],
     ]);
     await expect(client.getNote(0)).rejects.toBeInstanceOf(ChaProtocolError);
@@ -46,7 +66,7 @@ describe('ChaWeb HTTP client', () => {
   it('rejects mismatched note IDs, folders, and malformed metadata', async () => {
     let payload: unknown = { item: noteItem({ id: 2 }), document: noteDocument(paragraph('Wrong')) };
     installFetch(() => jsonResponse(payload));
-    const client = createChaWebClient();
+    const client = await connectedClient();
     await expect(client.getNote(1)).rejects.toBeInstanceOf(ChaProtocolError);
     payload = { item: noteItem({ kind: 'folder' }), document: {} };
     await expect(client.getNote(1)).rejects.toBeInstanceOf(ChaProtocolError);
@@ -64,7 +84,7 @@ describe('ChaWeb HTTP client', () => {
       if (url.endsWith('/cancel')) return jsonResponse({});
       return jsonResponse({ session_id: 'dictation-1', pieces: ['Hello'], preview: '' });
     });
-    const client = createChaWebClient();
+    const client = await connectedClient();
     const signal = new AbortController().signal;
     await expect(client.getVoiceInputRuntime()).resolves.toMatchObject({ provider: 'openai' });
     await expect(client.connectVoiceInput('offer', ['en'], signal)).resolves.toBe('answer');
@@ -72,7 +92,7 @@ describe('ChaWeb HTTP client', () => {
     await expect(client.sendXaiVoiceAudio('dictation-1', 'AAAA', signal)).resolves.toMatchObject({ pieces: ['Hello'] });
     await client.stopXaiVoiceInput('dictation-1', 1000, signal);
     await client.cancelXaiVoiceInput('dictation-1');
-    expect(calls.map(({ url }) => url)).toEqual([
+    expect(calls.map(({ url }) => url.slice(0, -query.length))).toEqual([
       '/api/cha/v1/voice-input', '/api/cha/v1/voice-input/connect',
       '/api/cha/v1/voice-input/xai/start', '/api/cha/v1/voice-input/xai/audio',
       '/api/cha/v1/voice-input/xai/stop', '/api/cha/v1/voice-input/xai/cancel',
@@ -84,11 +104,11 @@ describe('ChaWeb HTTP client', () => {
 
   it('deletes the specified session without a body and reports failures without retrying', async () => {
     const calls = installFetch(() => new Response(null, { status: 204 }));
-    const client = createChaWebClient();
+    const client = await connectedClient();
     await expect(client.deleteSession('a/b', 'c d')).resolves.toBeUndefined();
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
-      url: '/api/cha/v1/forums/a%2Fb/sessions/c%20d',
+      url: '/api/cha/v1/forums/a%2Fb/sessions/c%20d' + query,
       init: { method: 'DELETE', redirect: 'error' },
     });
     expect(calls[0]?.init?.body).toBeUndefined();
@@ -102,7 +122,7 @@ describe('ChaWeb HTTP client', () => {
   });
 
   it('loads bootstrap from a relative URL and keeps extra fields', async () => {
-    const calls = installFetch(() => jsonResponse({ ...bootstrapFixture, future: true }));
+    const calls = installFetch(() => jsonResponse({ ...webBootstrap, future: true }), false);
     const bootstrap = await createChaWebClient().getBootstrap();
     expect(bootstrap.vault_name).toBe('Personal');
     expect(bootstrap.entrance_forum_id).toBe('entrance');
@@ -114,6 +134,48 @@ describe('ChaWeb HTTP client', () => {
     expect(calls[0]?.init?.headers).toBeUndefined();
     expect(calls[0]?.init?.body).toBeUndefined();
     expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('pins direct audio and refuses late responses and writes after a same-vault reset', async () => {
+    let epoch = '1';
+    let finish!: (response: Response) => void;
+    const calls = installFetch((url) => {
+      if (url.endsWith('/bootstrap')) return jsonResponse({ ...webBootstrap, context_epoch: epoch });
+      return new Promise((resolve) => { finish = resolve; });
+    }, false);
+    const changed = vi.fn();
+    const client = createChaWebClient(changed);
+    await client.getBootstrap();
+    expect(client.audioUrl('lobby', 'planning', 7))
+      .toBe('/api/cha/v1/forums/lobby/sessions/planning/entries/7/audio' + query);
+    const oldRead = expect(client.getSession('lobby', 'planning')).rejects.toMatchObject({ code: 'vault_changed' });
+    epoch = '2';
+    await expect(client.getBootstrap()).rejects.toMatchObject({ code: 'vault_changed' });
+    finish(jsonResponse(snapshotFixture));
+    await oldRead;
+    await expect(client.submitInput('lobby', 'planning', 'stale')).rejects.toMatchObject({ code: 'vault_changed' });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(3);
+  });
+
+  it.each([
+    { daemon_token: undefined },
+    { daemon_token: 'invalid' },
+    { context_epoch: undefined },
+    { context_epoch: 1 },
+    { context_epoch: '0' },
+    { context_epoch: '18446744073709551616' },
+  ])('requires a valid bootstrap context before opening a vault route (%o)', async (invalid) => {
+    let bootstrap = { ...webBootstrap, ...invalid };
+    const calls = installFetch((url) => jsonResponse(url.endsWith('/bootstrap') ? bootstrap : []), false);
+    const client = createChaWebClient();
+    await expect(client.getBootstrap()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.listSessions('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
+    expect(calls).toHaveLength(1);
+    bootstrap = webBootstrap;
+    await client.getBootstrap();
+    await expect(client.listSessions('lobby')).resolves.toEqual([]);
+    expect(calls.at(-1)?.url).toBe('/api/cha/v1/forums/lobby/sessions' + query);
   });
 
   it('lists sessions, creates one, reads a snapshot, and posts input and stop', async () => {
@@ -129,7 +191,7 @@ describe('ChaWeb HTTP client', () => {
       }
       return jsonResponse({ ...snapshotFixture, future: true });
     });
-    const client = createChaWebClient();
+    const client = await connectedClient();
 
     const listed = await client.listSessions('a/b');
     expect(listed.map((session) => session.id)).toEqual(['planning']);
@@ -140,7 +202,7 @@ describe('ChaWeb HTTP client', () => {
     await expect(client.submitInput('lobby', 'planning', 'next')).resolves.toBeUndefined();
     await expect(client.stopSession('lobby', 'planning')).resolves.toBeUndefined();
 
-    expect(calls.map((call) => [call.init?.method, call.url, call.init?.body])).toEqual([
+    expect(calls.map((call) => [call.init?.method, call.url.slice(0, -query.length), call.init?.body])).toEqual([
       ['GET', '/api/cha/v1/forums/a%2Fb/sessions', undefined],
       ['POST', '/api/cha/v1/forums/lobby/sessions', JSON.stringify({ text: 'hello' })],
       ['GET', '/api/cha/v1/forums/lobby/sessions/c%20d', undefined],
@@ -162,7 +224,7 @@ describe('ChaWeb HTTP client', () => {
         : { error: { code: 'invalid_argument', message: 'Unknown command' } },
       url.endsWith('/missing') ? 404 : 422,
     ));
-    const client = createChaWebClient();
+    const client = await connectedClient();
     await expect(client.getSession('lobby', 'missing')).rejects.toMatchObject({
       status: 404,
       code: 'not_found',
@@ -184,7 +246,7 @@ describe('ChaWeb HTTP client', () => {
         headers: { 'Content-Type': 'text/html' },
       });
     });
-    const error = await createChaWebClient().createSession('lobby', 'hello').then(
+    const error = await (await connectedClient()).createSession('lobby', 'hello').then(
       () => { throw new Error('create should fail'); },
       (failure: unknown) => failure,
     );
@@ -211,14 +273,14 @@ describe('ChaWeb HTTP client', () => {
     installFetch(() => new Response('<html></html>', {
       status: 200,
       headers: { 'Content-Type': 'text/html' },
-    }));
+    }), false);
     await expect(createChaWebClient().getBootstrap()).rejects.toMatchObject({
       status: 200,
       message: 'The request failed.',
     });
 
     installFetch(() => jsonResponse({ nope: true }));
-    await expect(createChaWebClient().listSessions('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect((await connectedClient()).listSessions('lobby')).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
   it('times out once and clears the timer', async () => {
@@ -232,7 +294,7 @@ describe('ChaWeb HTTP client', () => {
         });
       });
     });
-    const pending = createChaWebClient().stopSession('lobby', 'planning');
+    const pending = (await connectedClient()).stopSession('lobby', 'planning');
     const rejected = expect(pending).rejects.toMatchObject({
       status: 0,
       message: 'The request timed out.',
@@ -245,7 +307,7 @@ describe('ChaWeb HTTP client', () => {
 
   it('clears the timeout when a request finishes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    installFetch(() => jsonResponse(bootstrapFixture));
+    installFetch(() => jsonResponse(webBootstrap), false);
     await createChaWebClient().getBootstrap();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -259,7 +321,7 @@ describe('ChaWeb HTTP client', () => {
         });
       },
     }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
-    const request = createChaWebClient().createSession('lobby', 'Only once');
+    const request = (await connectedClient()).createSession('lobby', 'Only once');
     const rejected = expect(request).rejects.toMatchObject({ status: 0, message: 'The request timed out.' });
     await vi.advanceTimersByTimeAsync(60_000);
     await rejected;
@@ -269,13 +331,19 @@ describe('ChaWeb HTTP client', () => {
   it('treats a disconnected response body as a transport failure', async () => {
     installFetch(() => new Response(new ReadableStream({
       start(controller) { controller.error(new TypeError('Connection lost')); },
-    }), { headers: { 'Content-Type': 'application/json' } }));
+    }), { headers: { 'Content-Type': 'application/json' } }), false);
     await expect(createChaWebClient().getBootstrap()).rejects.toMatchObject({
       status: 0, message: 'The request failed.',
     });
   });
 });
 
-function clientSubmit() {
-  return createChaWebClient().submitInput('lobby', 'planning', 'again');
+async function connectedClient() {
+  const client = createChaWebClient();
+  await client.getBootstrap();
+  return client;
+}
+
+async function clientSubmit() {
+  return (await connectedClient()).submitInput('lobby', 'planning', 'again');
 }

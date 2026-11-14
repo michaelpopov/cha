@@ -44,6 +44,7 @@ nlohmann::json transcript_entry_json(const TranscriptEntry& value) {
         {"web_search_used", value.web_search_used},
     };
     put_optional(json, "request_id", value.request_id);
+    if (!value.error_code.empty()) json["error_code"] = value.error_code;
     json["created_at"] = value.created_at != 0
         ? nlohmann::json(value.created_at)
         : nlohmann::json(nullptr);

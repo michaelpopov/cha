@@ -14,6 +14,7 @@
 #include <chrono>
 #include <limits>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
 #include <thread>
@@ -50,10 +51,37 @@ int status_for(ErrorCode code) noexcept {
 }
 
 Error error_body(ErrorCode code, std::string message = {}) {
+    if (message.empty() && code == ErrorCode::application_unavailable) {
+        message = "The application is unavailable. Restart the daemon.";
+    }
     if (message.empty()) {
         message = std::string(bridge::public_error_message(code));
     }
     return {code, std::move(message)};
+}
+
+std::optional<std::uint64_t> request_epoch(std::string_view query, std::string_view daemon_token) {
+    std::optional<std::string_view> token;
+    std::optional<std::uint64_t> epoch;
+    while (!query.empty()) {
+        const auto end = query.find('&');
+        const auto parameter = query.substr(0, end);
+        if (parameter.starts_with("daemon_token=")) {
+            if (token) return std::nullopt;
+            token = parameter.substr(std::string_view("daemon_token=").size());
+        } else if (parameter.starts_with("context_epoch=")) {
+            if (epoch) return std::nullopt;
+            const auto value = parameter.substr(std::string_view("context_epoch=").size());
+            std::uint64_t number{};
+            const auto [last, error] = std::from_chars(value.data(), value.data() + value.size(), number);
+            if (error != std::errc{} || last != value.data() + value.size() || number == 0)
+                return std::nullopt;
+            epoch = number;
+        }
+        if (end == std::string_view::npos) break;
+        query.remove_prefix(end + 1);
+    }
+    return token == daemon_token ? epoch : std::nullopt;
 }
 
 // Exception text is not shown to the browser.
@@ -365,6 +393,7 @@ void serve_voice_input(
     app::Application& application,
     const ScgiRequest& request,
     Route route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
     using namespace std::chrono_literals;
@@ -406,8 +435,8 @@ void serve_voice_input(
     static std::atomic<std::uint64_t> next_request{0};
     const auto id = ++next_request;
     // Each dictation owns a stable scope across separate HTTP requests.
-    const std::string connection = "chaweb-voice-" + (connect ? std::to_string(id) : session);
-    const auto epoch = application.context_epoch();
+    const std::string connection = "chaweb-voice-" + std::to_string(epoch) + "-"
+        + (connect ? std::to_string(id) : session);
     std::shared_ptr<app::OperationReply> reply;
     if (connect) {
         if (!body["sdp"].is_string()) invalid();
@@ -454,21 +483,25 @@ void serve_voice_input(
 }
 
 void serve_bootstrap(
-    app::Application& application, int fd, const std::atomic<bool>& stop) {
+    app::Application& application, int fd, const std::atomic<bool>& stop,
+    std::string_view daemon_token) {
     const app::ApplicationBootstrap boot = application.bootstrap();
     if (!application_running(boot)) {
         write_code(fd, ErrorCode::application_unavailable, stop);
         return;
     }
-    write_json(fd, 200, boot.presentation, stop);
+    nlohmann::json payload = boot.presentation;
+    payload["daemon_token"] = daemon_token;
+    payload["context_epoch"] = std::to_string(boot.context_epoch);
+    write_json(fd, 200, payload, stop);
 }
 
 void serve_list(
     app::Application& application,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
-    const std::uint64_t epoch = application.context_epoch();
     const auto listing = application.list_sessions(route.forum_id, epoch);
     write_json(fd, 200, listing, stop);
 }
@@ -477,9 +510,9 @@ void serve_audio(
     app::Application& application,
     const ScgiRequest& request,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
-    const auto epoch = application.context_epoch();
     if (const auto error = open_named(application, route.forum_id, route.session_id, epoch)) {
         write_code(fd, *error, stop);
         return;
@@ -566,9 +599,9 @@ void serve_audio(
 void serve_snapshot(
     app::Application& application,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
-    const std::uint64_t epoch = application.context_epoch();
     if (const auto error = open_named(
             application, route.forum_id, route.session_id, epoch)) {
         write_code(fd, *error, stop);
@@ -586,10 +619,11 @@ void serve_snapshot(
 void serve_delete(
     app::Application& application,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
     const auto error = application.delete_session(
-        route.forum_id, route.session_id, application.context_epoch());
+        route.forum_id, route.session_id, epoch);
     if (error) {
         write_code(fd, *error, stop, *error == ErrorCode::session_stopping
             ? "The session is still stopping. Try deleting it again." : "");
@@ -602,13 +636,13 @@ void serve_input(
     app::Application& application,
     const ScgiRequest& request,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
     if (!require_json_body(request, fd, stop)) return;
     const auto text = parse_text_object(request.body, fd, stop);
     if (!text) return;
     if (!prompt_allowed(application, *text, fd, stop)) return;
-    const std::uint64_t epoch = application.context_epoch();
     if (const auto error = open_named(
             application, route.forum_id, route.session_id, epoch)) {
         write_code(fd, *error, stop);
@@ -631,11 +665,11 @@ void serve_stop(
     app::Application& application,
     const ScgiRequest& request,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop) {
     if (!require_json_body(request, fd, stop)) return;
     if (!parse_empty_object(request.body, fd, stop)) return;
-    const std::uint64_t epoch = application.context_epoch();
     if (const auto error = open_named(
             application, route.forum_id, route.session_id, epoch)) {
         write_code(fd, *error, stop);
@@ -654,6 +688,7 @@ void serve_create(
     app::Application& application,
     const ScgiRequest& request,
     const ParsedRoute& route,
+    std::uint64_t epoch,
     int fd,
     const std::atomic<bool>& stop,
     ChaWebDeleteSession delete_session,
@@ -662,7 +697,6 @@ void serve_create(
     const auto text = parse_text_object(request.body, fd, stop);
     if (!text) return;
     if (!prompt_allowed(application, *text, fd, stop)) return;
-    const std::uint64_t epoch = application.context_epoch();
     (void)application.get_forum(route.forum_id, epoch);
 
     std::string session_id;
@@ -722,18 +756,42 @@ void serve_create(
 
 } // namespace
 
+std::string make_chaweb_daemon_token() {
+    std::random_device random;
+    std::uniform_int_distribution<unsigned> digit(0, 15);
+    std::string token(32, '0');
+    for (char& value : token) value = "0123456789abcdef"[digit(random)];
+    return token;
+}
+
 void handle_chaweb_request(
     app::Application& application,
     const ScgiRequest& request,
     int fd,
     std::atomic<bool>& stop,
+    std::string_view daemon_token,
     ChaWebDeleteSession delete_session,
     ChaWebSubmitInput submit_input) {
     try {
         if (stop.load()) return;
         const ParsedRoute route = parse_route(request.document_uri);
+        if (route.route == Route::bootstrap) {
+            if (request.method == "GET") serve_bootstrap(application, fd, stop, daemon_token);
+            else write_code(fd, ErrorCode::not_found, stop, "The request was not found.");
+            return;
+        }
+        if (route.route == Route::unknown) {
+            write_code(fd, ErrorCode::not_found, stop, "The request was not found.");
+            return;
+        }
+        const auto supplied_epoch = request_epoch(request.query_string, daemon_token);
+        if (!supplied_epoch) {
+            write_code(fd, ErrorCode::vault_changed, stop);
+            return;
+        }
+        const auto epoch = *supplied_epoch;
+        application.require_chaweb_context(epoch);
         if (request.method == "GET" && (route.route == Route::notes || route.route == Route::note)) {
-            const auto epoch = application.context_epoch();
             const auto items = application.list_note_items(epoch);
             if (route.route == Route::notes) {
                 write_json(fd, 200, {{"items", items}}, stop);
@@ -750,17 +808,13 @@ void handle_chaweb_request(
             }
             return;
         }
-        if (request.method == "GET" && route.route == Route::bootstrap) {
-            serve_bootstrap(application, fd, stop);
-            return;
-        }
         if (request.method == "GET" && route.route == Route::voice_output) {
-            const auto runtime = application.get_voice_output_runtime(application.context_epoch());
+            const auto runtime = application.get_voice_output_runtime(epoch);
             write_json(fd, 200, runtime ? nlohmann::json(*runtime) : nlohmann::json(nullptr), stop);
             return;
         }
         if (request.method == "GET" && route.route == Route::voice_input) {
-            const auto runtime = application.get_voice_input_runtime(application.context_epoch());
+            const auto runtime = application.get_voice_input_runtime(epoch);
             write_json(fd, 200, runtime ? nlohmann::json(*runtime) : nlohmann::json(nullptr), stop);
             return;
         }
@@ -768,39 +822,39 @@ void handle_chaweb_request(
             && (route.route == Route::voice_connect || route.route == Route::voice_xai_start
                 || route.route == Route::voice_xai_audio || route.route == Route::voice_xai_stop
                 || route.route == Route::voice_xai_cancel)) {
-            serve_voice_input(application, request, route.route, fd, stop);
+            serve_voice_input(application, request, route.route, epoch, fd, stop);
             return;
         }
         if ((request.method == "GET"
                 && (route.route == Route::audio_status || route.route == Route::entry_audio))
             || (request.method == "POST"
                 && (route.route == Route::entry_audio || route.route == Route::audio_status))) {
-            serve_audio(application, request, route, fd, stop);
+            serve_audio(application, request, route, epoch, fd, stop);
             return;
         }
         if (request.method == "GET" && route.route == Route::sessions) {
-            serve_list(application, route, fd, stop);
+            serve_list(application, route, epoch, fd, stop);
             return;
         }
         if (request.method == "POST" && route.route == Route::sessions) {
             serve_create(
-                application, request, route, fd, stop, delete_session, submit_input);
+                application, request, route, epoch, fd, stop, delete_session, submit_input);
             return;
         }
         if (request.method == "GET" && route.route == Route::session) {
-            serve_snapshot(application, route, fd, stop);
+            serve_snapshot(application, route, epoch, fd, stop);
             return;
         }
         if (request.method == "DELETE" && route.route == Route::session) {
-            serve_delete(application, route, fd, stop);
+            serve_delete(application, route, epoch, fd, stop);
             return;
         }
         if (request.method == "POST" && route.route == Route::input) {
-            serve_input(application, request, route, fd, stop);
+            serve_input(application, request, route, epoch, fd, stop);
             return;
         }
         if (request.method == "POST" && route.route == Route::stop) {
-            serve_stop(application, request, route, fd, stop);
+            serve_stop(application, request, route, epoch, fd, stop);
             return;
         }
         write_code(fd, ErrorCode::not_found, stop, "The request was not found.");

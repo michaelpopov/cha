@@ -383,6 +383,11 @@ Application::Impl::Impl(
         opened.update_audio = [this, identity](std::span<const TranscriptEntry> entries) {
             if (audio_downloads) audio_downloads->update_live(identity, entries);
         };
+        if (workspace::is_welcome_session(identity.forum_id, identity.session_id)) {
+            opened.host_command = [this, epoch](std::string_view input) {
+                return vault_maintenance.submit_welcome_command(input, epoch);
+            };
+        }
         return opened;
     };
     audio_downloads = std::make_unique<AudioDownloadManager>(
@@ -583,7 +588,7 @@ ApplicationBootstrap Application::bootstrap() {
     };
     result.state = read_published_state();
     result.capabilities = impl_->capabilities();
-    if (result.state != ApplicationState::running) {
+    if (result.state != ApplicationState::running && !impl_->command.chaweb_host) {
         result.context_epoch = impl_->published_epoch.load();
         auto [vault, names] = impl_->current_vault_.snapshot();
         result.presentation.vault_name = std::move(vault.name);
@@ -659,12 +664,12 @@ Application::open_session(
         }
     }
     const auto outcome =
-        impl_->live_sessions->select(key, impl_->settings.open_deadline);
+        impl_->live_sessions->select(key, impl_->settings.open_deadline, epoch);
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         if (const auto error = impl_->admit_locked(epoch)) {
             if (std::holds_alternative<LiveSessionReady>(outcome)) {
-                impl_->live_sessions->close_session(key);
+                impl_->live_sessions->close_session(key, epoch);
             }
             return *error;
         }
@@ -1754,6 +1759,11 @@ std::optional<FullSessionId> Application::selected_session() const {
 
 std::uint64_t Application::context_epoch() const {
     return impl_->published_epoch.load();
+}
+
+void Application::require_chaweb_context(std::uint64_t epoch) const {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
 }
 
 std::optional<ErrorCode> Application::check_context(

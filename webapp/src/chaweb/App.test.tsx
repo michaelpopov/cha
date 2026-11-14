@@ -76,8 +76,47 @@ function snapshot(sessionId: string, extras: Partial<SessionSnapshot> = {}): Ses
 }
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   Reflect.deleteProperty(window, 'visualViewport');
+});
+
+it('clears the draft and old history on a same-vault context change', async () => {
+  const user = userEvent.setup();
+  const token = '0123456789abcdef0123456789abcdef';
+  let epoch = '1';
+  let sends = 0;
+  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
+    status, headers: { 'Content-Type': 'application/json' },
+  });
+  vi.stubGlobal('fetch', async (input: string) => {
+    const url = new URL(input, window.location.origin);
+    if (url.pathname.endsWith('/bootstrap'))
+      return json({ ...boot(), daemon_token: token, context_epoch: epoch });
+    if (url.pathname.endsWith('/input')) {
+      sends += 1;
+      epoch = '2';
+    }
+    if (url.searchParams.get('context_epoch') !== epoch)
+      return json({ error: { code: 'vault_changed', message: 'The vault context has changed.' } }, 409);
+    if (url.pathname.endsWith('/planning')) return json(snapshot('planning'));
+    if (url.pathname.endsWith('/builtin-welcome')) return json(welcomeSnapshot('saved'));
+    if (url.pathname.endsWith('/sessions')) return json(lobbySessions);
+    if (url.pathname.endsWith('/audio')) return json({ cached_entry_ids: [], downloads: [] });
+    return json(null);
+  });
+  window.history.replaceState(null, '', sessionHash('lobby', 'planning'));
+  render(<App />);
+  const field = await screen.findByRole('textbox', { name: 'Message' });
+  await user.type(field, 'Old draft{Enter}');
+  await screen.findByText('Configuration was saved.');
+  expect(window.location.hash).toBe(sessionHash('entrance', 'builtin-welcome'));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+  expect(screen.queryByText('First note')).toBeNull();
+  expect(sends).toBe(1);
+  window.history.replaceState({ chawebContext: token + '/1' }, '', sessionHash('lobby', 'planning'));
+  act(() => window.dispatchEvent(new PopStateEvent('popstate')));
+  expect(window.location.hash).toBe(sessionHash('entrance', 'builtin-welcome'));
 });
 
 function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
@@ -93,6 +132,7 @@ function client(overrides: Partial<ChaWebClient> = {}): ChaWebClient {
     getVoiceOutputRuntime: vi.fn(async () => null),
     startAudio: vi.fn(),
     startAudioBatch: vi.fn(),
+    audioUrl: vi.fn(),
     getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [], downloads: [] })),
     getBootstrap: vi.fn(async () => boot()),
     listSessions: vi.fn(async (forumId: string) => (

@@ -136,7 +136,7 @@ public:
     void shutdown();
     [[nodiscard]] std::uint64_t context_epoch() const noexcept { return context_epoch_; }
     // Queues the notice while an answer is active. Returns true when it was stored now.
-    bool record_configuration_notice(std::string text);
+    bool record_configuration_notice(std::string text, std::string error_code = {});
     void prune_folder_associations(std::span<const std::int64_t> folder_ids);
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
     [[nodiscard]] std::chrono::steady_clock::time_point next_deadline() const noexcept;
@@ -223,7 +223,7 @@ private:
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
     void flush_configuration_notices();
-    void append_configuration_notice(std::string text);
+    void append_configuration_notice(std::string text, std::string error_code);
     void cancel_generation_requests() noexcept;
     void apply(const GenerationEventDelta& event, ControllerUpdate& update);
     void apply(const GenerationToolProgress& event, ControllerUpdate& update);
@@ -302,7 +302,11 @@ private:
     bool shutdown_{};
     std::uint64_t context_epoch_{};
     std::shared_ptr<const std::string> maintenance_prompt_;
-    std::vector<std::string> pending_notices_;
+    struct PendingNotice {
+        std::string text;
+        std::string error_code;
+    };
+    std::vector<PendingNotice> pending_notices_;
 };
 
 } // namespace cha

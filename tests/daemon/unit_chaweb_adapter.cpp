@@ -43,6 +43,7 @@ using namespace std::chrono_literals;
 
 constexpr std::string_view json_type = "application/json";
 constexpr std::string_view bootstrap_path = "/api/cha/v1/bootstrap";
+constexpr std::string_view test_daemon_token = "0123456789abcdef0123456789abcdef";
 
 ApplicationCommand make_command(
     const test::TestWorkspace& workspace,
@@ -120,9 +121,10 @@ struct CgiResponse {
 
 CgiResponse exchange(
     Application& application,
-    const ScgiRequest& request,
+    ScgiRequest request,
     ChaWebDeleteSession delete_session = nullptr,
-    ChaWebSubmitInput submit_input = nullptr) {
+    ChaWebSubmitInput submit_input = nullptr,
+    bool include_context = true) {
     int fds[2]{};
     if (::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
         throw std::runtime_error("socketpair failed");
@@ -130,8 +132,12 @@ CgiResponse exchange(
     UniqueFd server(fds[0]);
     UniqueFd client(fds[1]);
     std::atomic<bool> stop{false};
+    if (include_context && request.query_string.empty()) {
+        request.query_string = "daemon_token=" + std::string(test_daemon_token)
+            + "&context_epoch=" + std::to_string(application.context_epoch());
+    }
     handle_chaweb_request(
-        application, request, server.get(), stop, delete_session, submit_input);
+        application, request, server.get(), stop, test_daemon_token, delete_session, submit_input);
     server.close();
     CgiResponse response;
     char buffer[4096];
@@ -245,11 +251,33 @@ TEST_F(ChaWebAdapterTest, BootstrapUsesExistingSerializer) {
     const CgiResponse response = get(std::string(bootstrap_path));
     EXPECT_EQ(response.status, 200);
     nlohmann::json expected = boot.presentation;
+    expected["daemon_token"] = test_daemon_token;
+    expected["context_epoch"] = std::to_string(boot.context_epoch);
     EXPECT_EQ(response.json, expected);
     EXPECT_EQ(response.json.at("entrance_forum_id"), std::string(entrance_id));
     EXPECT_FALSE(response.json.contains("state"));
-    EXPECT_FALSE(response.json.contains("context_epoch"));
     EXPECT_NE(response.raw.find("Content-Type: application/json"), std::string::npos);
+}
+
+TEST_F(ChaWebAdapterTest, MissingOrStaleContextRefusesWritesAndDirectAudio) {
+    const auto id = create_session();
+    const auto path = session_path("lobby", id);
+    const auto before = get(path).json.at("transcript");
+    const auto epoch = std::to_string(application_->context_epoch());
+    for (const std::string& query : std::vector<std::string>{
+            {}, "daemon_token=old&context_epoch=" + epoch,
+            "daemon_token=" + std::string(test_daemon_token) + "&context_epoch=999999"}) {
+        auto post = post_request(path + "/input", text_body("@- stale input").dump());
+        post.query_string = query;
+        auto audio = get_request(path + "/entries/1/audio");
+        audio.query_string = query;
+        for (const auto& request : {post, audio}) {
+            const auto response = exchange(*application_, request, nullptr, nullptr, false);
+            EXPECT_EQ(response.status, 409);
+            EXPECT_EQ(response.json.at("error").at("code"), "vault_changed");
+        }
+    }
+    EXPECT_EQ(get(path).json.at("transcript"), before);
 }
 
 TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrMutations) {
@@ -984,7 +1012,7 @@ TEST_F(ChaWebAdapterTest, UnavailableApplicationReturns503) {
         response.json.at("error").at("code"), "application_unavailable");
     EXPECT_EQ(
         response.json.at("error").at("message"),
-        "The application is unavailable.");
+        "The application is unavailable. Restart the daemon.");
     EXPECT_EQ(get("/api/cha/v1/notes").status, 503);
     EXPECT_EQ(get("/api/cha/v1/notes/1").status, 503);
 }

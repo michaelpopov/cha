@@ -9,7 +9,8 @@ import {
 } from '../api/client';
 import { lastEntryId, type PromptFocus } from '../transcriptScroll';
 import { welcomeSnapshot, welcomeSubmission, type WelcomeTurn } from '../welcomeTurn';
-import { chaWebMessage, type ChaWebClient } from './client';
+import { chaWebMessage, type ChaWebBootstrap, type ChaWebClient } from './client';
+import { welcomeSessionId } from '../state/route';
 import {
   applyAcknowledgement,
   classifyReadFailure,
@@ -146,8 +147,8 @@ function buildCommand(
   };
 }
 
-export function useChaweb(client: ChaWebClient) {
-  const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
+export function useChaweb(client: ChaWebClient, resetToWelcome = false) {
+  const [bootstrap, setBootstrap] = useState<ChaWebBootstrap | null>(null);
   const [loading, setLoading] = useState(true);
   const [startupError, setStartupError] = useState<string | null>(null);
   const [startupCanRetry, setStartupCanRetry] = useState(false);
@@ -171,7 +172,7 @@ export function useChaweb(client: ChaWebClient) {
 
   const clientRef = useRef(client);
   const mounted = useRef(true);
-  const bootstrapRef = useRef<Bootstrap | null>(null);
+  const bootstrapRef = useRef<ChaWebBootstrap | null>(null);
   const forumRef = useRef('');
   const screenRef = useRef<Screen>('list');
   const lastChatScreen = useRef<'list' | 'conversation'>('list');
@@ -679,13 +680,20 @@ export function useChaweb(client: ChaWebClient) {
     assignSession(route.forumId, route.sessionId);
   }
 
+  function historyContext() {
+    const loaded = bootstrapRef.current;
+    return loaded?.daemon_token ? {
+      chawebContext: `${loaded.daemon_token}/${loaded.context_epoch}`,
+    } : {};
+  }
+
   function navigate(hash: string) {
     if (sameChawebPlace(window.location.hash, hash)) return;
     if (screenRef.current === 'notes' && noteList.current) {
       window.history.replaceState({ ...window.history.state,
         chawebNotesScroll: noteList.current.scrollTop }, '');
     }
-    window.history.pushState(null, '', locationUrl(hash));
+    window.history.pushState(historyContext(), '', locationUrl(hash));
     applyHistory(hash);
   }
 
@@ -720,7 +728,7 @@ export function useChaweb(client: ChaWebClient) {
     const hash = sessionHash(forum, sessionId);
     appliedHash.current = hash;
     if (window.location.hash !== hash) {
-      window.history.pushState(null, '', locationUrl(hash));
+      window.history.pushState(historyContext(), '', locationUrl(hash));
     }
     setListError(null);
     assignSession(forum, sessionId);
@@ -731,7 +739,7 @@ export function useChaweb(client: ChaWebClient) {
     if (!forum || forum === bootstrapRef.current?.entrance_forum_id) return;
     invalidateList();
     appliedHash.current = '';
-    if (window.location.hash) window.history.pushState(null, '', locationUrl());
+    if (window.location.hash) window.history.pushState(historyContext(), '', locationUrl());
     const next: ConversationRef = { kind: 'draft', forumId: forum };
     conversationRef.current = next;
     screenRef.current = 'conversation';
@@ -876,7 +884,7 @@ export function useChaweb(client: ChaWebClient) {
       ? rows.filter((row) => row.id !== session) : rows);
     if (sameChawebPlace(window.location.hash, sessionHash(forum, session))) {
       appliedHash.current = '';
-      window.history.replaceState(null, '', locationUrl());
+      window.history.replaceState(historyContext(), '', locationUrl());
     }
     const selected = conversationRef.current;
     if (selected && conversationKey(selected) === key && screenRef.current === 'conversation') {
@@ -912,7 +920,7 @@ export function useChaweb(client: ChaWebClient) {
     const hash = sessionHash(forum, created.id);
     appliedHash.current = hash;
     if (window.location.hash !== hash) {
-      window.history.pushState(null, '', locationUrl(hash));
+      window.history.pushState(historyContext(), '', locationUrl(hash));
     }
     setPromptFocus((current) => current === marker
       ? { ...marker, key: focusContext(key) } : current);
@@ -1117,10 +1125,28 @@ export function useChaweb(client: ChaWebClient) {
   useEffect(() => {
     if (!bootstrapReady) return;
     let active = true;
+    const context = historyContext();
+    const welcome = sessionHash(bootstrapRef.current!.entrance_forum_id, welcomeSessionId);
+    function replaceWithWelcome() {
+      window.history.replaceState(context, '', locationUrl(welcome));
+    }
+    function staleHistory() {
+      return context.chawebContext !== undefined
+        && window.history.state?.chawebContext !== context.chawebContext;
+    }
+    if (resetToWelcome || (window.history.state?.chawebContext && staleHistory())) {
+      replaceWithWelcome();
+    } else if (context.chawebContext !== undefined) {
+      window.history.replaceState({ ...window.history.state, ...context }, '');
+    }
     applyHistory(window.location.hash);
     setRouteReady(true);
     function onHistory() {
       if (!active) return;
+      if (staleHistory()) {
+        if (window.history.state?.chawebContext || resetToWelcome) replaceWithWelcome();
+        else window.history.replaceState({ ...window.history.state, ...context }, '');
+      }
       if (appliedHash.current !== null
           && sameChawebPlace(window.location.hash, appliedHash.current)) {
         return;

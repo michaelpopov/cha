@@ -2,7 +2,6 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
-import { createChaWebClient } from './client';
 import './styles.css';
 
 const root = document.getElementById('root');
@@ -13,6 +12,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <App client={createChaWebClient()} />
+    <App />
   </StrictMode>,
 );

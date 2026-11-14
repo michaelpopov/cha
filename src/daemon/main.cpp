@@ -292,6 +292,7 @@ void install_stop_handlers() {
 // backlog until the current one is closed.
 void run_accept_loop(app::Application& application) {
     using daemon::ScgiReadStatus;
+    const std::string daemon_token = daemon::make_chaweb_daemon_token();
     while (!stop_requested.load()) {
         const daemon::UniqueFd client =
             daemon::accept_connection(listen_fd, stop_requested);
@@ -313,7 +314,7 @@ void run_accept_loop(app::Application& application) {
         } else if (result.status == ScgiReadStatus::ok
             && !stop_requested.load() && !daemon::peer_closed(client.get())) {
             daemon::handle_chaweb_request(
-                application, result.request, client.get(), stop_requested);
+                application, result.request, client.get(), stop_requested, daemon_token);
         }
     }
 }

@@ -353,6 +353,10 @@ void insert_entry(
         sqlite_token_count(entry.output_tokens, "Output token count"),
         static_cast<std::int64_t>(entry.web_search_used));
     statement.run();
+    if (!entry.error_code.empty()) {
+        database.prepare("UPDATE entries SET error_code = ?1 WHERE session_key = ?2 AND entry_id = ?3",
+            std::string_view(entry.error_code), session_key, sqlite_id(entry.id, "Transcript entry ID")).run();
+    }
 }
 
 TranscriptEntry read_entry(Statement& statement) {
@@ -373,6 +377,7 @@ TranscriptEntry read_entry(Statement& statement) {
     entry.input_tokens = read_token_count(statement, 10, "input token count");
     entry.output_tokens = read_token_count(statement, 11, "output token count");
     entry.web_search_used = statement.integer(12) != 0;
+    if (!statement.is_null(13)) entry.error_code = statement.text(13);
     try {
         require_storable_transcript_entry(entry);
     } catch (const std::invalid_argument& error) {
@@ -388,10 +393,13 @@ std::vector<TranscriptEntry> read_current_entries(
     SessionKey session_key,
     std::int64_t epoch) {
     std::vector<TranscriptEntry> result;
-    Statement entries = database.prepare(
+    // Read-only callers can inspect a vault that has not been migrated yet.
+    auto column = database.prepare("SELECT 1 FROM pragma_table_info('entries') WHERE name = 'error_code'");
+    const char* error_code = column.step() ? "error_code" : "NULL";
+    Statement entries = database.prepare(std::string(
         "SELECT entry_id, request_id, kind, participant_id, display_name, "
         "addressed_to, addressed_to_name, text, status, created_at, "
-        "input_tokens, output_tokens, web_search_used "
+        "input_tokens, output_tokens, web_search_used, ") + error_code + " "
         "FROM entries WHERE session_key = ?1 AND epoch = ?2 "
         "ORDER BY entry_id",
         session_key, epoch);
@@ -656,7 +664,7 @@ void SessionJournal::Impl::finish_turn(
                 auto prompt = database.prepare(
                     "SELECT entry_id, request_id, kind, participant_id, display_name, "
                     "addressed_to, addressed_to_name, text, status, created_at, "
-                    "input_tokens, output_tokens, web_search_used FROM entries "
+                    "input_tokens, output_tokens, web_search_used, NULL FROM entries "
                     "WHERE session_key=?1 AND request_id=?2 AND kind=0",
                     session_key, sqlite_id(request_id, "Request ID"));
                 if (prompt.step()) {

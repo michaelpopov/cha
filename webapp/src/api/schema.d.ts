@@ -706,6 +706,8 @@ export interface components {
             web_search_used?: boolean;
             /** @description Whether saved audio is available for this entry. */
             has_cached_audio?: boolean;
+            /** @description Machine-readable failure code on a command result notice. */
+            error_code?: string;
         };
         GenerationActivity: {
             id: components["schemas"]["UnsignedInteger"];

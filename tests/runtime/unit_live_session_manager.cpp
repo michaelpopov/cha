@@ -916,6 +916,26 @@ TEST(LiveSessionManager, MaintenanceResultIgnoresAnOldEpochAndKeepsWelcomeOpen) 
     manager.begin_shutdown();
 }
 
+TEST(LiveSessionManager, StaleSelectionAndCleanupLeaveCurrentSessionsAlone) {
+    test::TestWorkspace fixture;
+    const test::WebGraph graph(fixture.root());
+    LiveSessionManager manager(manager_settings(3), graph.opener());
+    const auto shared_id = graph.sessions()->create("lobby", "Overlapping ID").identity;
+    const auto selected = graph.sessions()->create("lobby", "Current selection").identity;
+    const auto old_epoch = manager.context_epoch();
+    const auto current_epoch = manager.bump_context_epoch();
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(shared_id, 2s)));
+    const auto current_session = manager.lookup(shared_id, current_epoch);
+    ASSERT_TRUE(current_session);
+    ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.select(selected, 2s, current_epoch)));
+
+    EXPECT_EQ(failure_of(manager.select(shared_id, 2s, old_epoch)),
+        LiveSessionOpenFailure::manager_stopping);
+    manager.close_session(shared_id, old_epoch);
+    EXPECT_EQ(manager.selected(), selected);
+    EXPECT_EQ(manager.lookup(shared_id, current_epoch), current_session);
+}
+
 TEST(LiveSessionManager, SessionNoticeStaysWithItsConversationAcrossUnloading) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());

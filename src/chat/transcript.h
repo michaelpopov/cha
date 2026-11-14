@@ -80,6 +80,7 @@ struct TranscriptEntry {
     std::optional<std::uint64_t> input_tokens;
     std::optional<std::uint64_t> output_tokens;
     bool web_search_used{false};
+    std::string error_code;
 
     bool operator==(const TranscriptEntry&) const = default;
 };

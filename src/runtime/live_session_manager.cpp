@@ -582,9 +582,10 @@ LiveSessionOpenResult LiveSessionManager::open(
 
 LiveSessionOpenResult LiveSessionManager::select(
     FullSessionId key,
-    std::chrono::milliseconds deadline) {
+    std::chrono::milliseconds deadline,
+    std::uint64_t epoch) {
     auto& impl = *runtime_->impl_;
-    const auto epoch = impl.context_epoch.load();
+    if (epoch == 0) epoch = impl.context_epoch.load();
     const auto absolute_deadline = std::chrono::steady_clock::now() + deadline;
     if (impl.stopping_requested.load()) {
         return LiveSessionOpenFailure::manager_stopping;
@@ -760,19 +761,20 @@ bool LiveSessionManager::post_maintenance_result(
 }
 
 bool LiveSessionManager::post_session_notice(
-    std::uint64_t epoch, FullSessionId identity, std::string notice) {
+    std::uint64_t epoch, FullSessionId identity, std::string notice, std::string error_code) {
     auto& impl = *runtime_->impl_;
     if (epoch == 0 || epoch != impl.context_epoch.load()) return false;
     return impl.enqueue_control_until(
-        [&impl, epoch, identity = std::move(identity), notice = std::move(notice)] {
+        [&impl, epoch, identity = std::move(identity), notice = std::move(notice),
+            error_code = std::move(error_code)] {
             try {
                 if (impl.stopping_requested.load() || epoch != impl.context_epoch.load()
                     || impl.global_maintenance || impl.maintenance.contains(identity)) return;
                 if (const auto found = impl.sessions.find(identity); found != impl.sessions.end()) {
-                    found->second->record_configuration_notice(notice);
+                    found->second->record_configuration_notice(notice, error_code);
                 } else {
                     auto temporary = impl.create_session(identity, epoch);
-                    temporary->record_configuration_notice(notice);
+                    temporary->record_configuration_notice(notice, error_code);
                     temporary->finalize(ShutdownReason::retired);
                 }
             } catch (const std::exception& error) {

@@ -55,6 +55,7 @@ struct ScgiRequest {
     std::string body;
     std::string content_type;
     std::string audio_offset;
+    std::string query_string;
 };
 
 enum class ScgiReadStatus {

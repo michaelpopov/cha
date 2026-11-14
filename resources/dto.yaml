@@ -1654,6 +1654,9 @@ components:
         has_cached_audio:
           description: Whether saved audio is available for this entry.
           type: boolean
+        error_code:
+          description: Machine-readable failure code on a command result notice.
+          type: string
 
     GenerationActivity:
       type: object

@@ -305,6 +305,12 @@ std::optional<D1Client::Error> D1Client::delete_through(
     return result.error;
 }
 
+std::optional<D1Client::Error> D1Client::clear_queue(std::string_view table) {
+    const std::string sql = "DELETE FROM " + sync_escape_identifier(table);
+    return run_batch(query_url(), transport_, credentials_,
+        nlohmann::json::array({statement(sql, nlohmann::json::array())})).error;
+}
+
 std::pair<std::vector<std::int64_t>, std::optional<D1Client::Error>> D1Client::count_rows(
     const std::vector<std::string>& tables) {
     if (tables.empty()) return {};

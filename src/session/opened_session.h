@@ -1,5 +1,6 @@
 #pragma once
 
+#include "runtime/protocol.h"
 #include "session/session_controller.h"
 
 #include <functional>
@@ -32,6 +33,8 @@ struct OpenedSession {
     std::optional<std::string> notice;
     std::function<std::set<EntryId>()> cached_audio_entries;
     std::function<void(std::span<const TranscriptEntry>)> update_audio;
+    // Host commands are handled on the owner thread before normal chat input.
+    std::function<std::optional<CommandResult>(std::string_view)> host_command;
 };
 
 } // namespace cha

@@ -64,6 +64,7 @@ export type WriteKind = 'rejected' | 'missing' | 'unknown';
 export function classifyReadFailure(error: unknown): ReadKind {
   if (error instanceof ChaProtocolError) return 'terminal';
   if (error instanceof ChaWebError) {
+    if (error.code === 'application_unavailable') return 'terminal';
     if (error.status === 404 || error.code === 'not_found') return 'missing';
     if (error.status === 0 || error.status === 408 || error.status === 429
         || error.status === 500 || error.status === 502

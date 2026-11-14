@@ -87,7 +87,8 @@ std::string exchange_scgi(
     std::string_view method,
     std::string_view uri,
     std::string_view body = {},
-    std::string_view content_type = {}) {
+    std::string_view content_type = {},
+    std::string_view query = {}) {
     daemon::UniqueFd client = connect_ready(process);
     EXPECT_TRUE(client);
     if (!client) return {};
@@ -99,6 +100,9 @@ std::string exchange_scgi(
     if (!content_type.empty()) {
         headers +=
             std::string("CONTENT_TYPE") + '\0' + std::string(content_type) + '\0';
+    }
+    if (!query.empty()) {
+        headers += std::string("QUERY_STRING") + '\0' + std::string(query) + '\0';
     }
     const std::string request =
         std::to_string(headers.size()) + ":" + headers + "," + std::string(body);
@@ -119,6 +123,12 @@ nlohmann::json cgi_json(std::string_view raw) {
     const auto body = raw.substr(body_at + 4);
     if (body.empty()) return {};
     return nlohmann::json::parse(std::string(body));
+}
+
+std::string bootstrap_query(DaemonProcess& process) {
+    const auto bootstrap = cgi_json(request_bootstrap(process));
+    return "daemon_token=" + bootstrap.at("daemon_token").get<std::string>()
+        + "&context_epoch=" + bootstrap.at("context_epoch").get<std::string>();
 }
 
 class DaemonProcessTest : public testing::Test {
@@ -340,24 +350,25 @@ TEST_F(DaemonProcessTest, ScgiErrorsUseChaWebFormat) {
 
 TEST_F(DaemonProcessTest, ChaWebSessionSurvivesRequestClose) {
     DaemonProcess process(DaemonSpawn{.config_directory = config_});
+    const auto query = bootstrap_query(process);
     const std::string created = exchange_scgi(
         process,
         "POST",
         "/api/cha/v1/forums/lobby/sessions",
         R"({"text":"Hello"})",
-        "application/json");
+        "application/json", query);
     EXPECT_NE(created.find("Status: 201 Created"), std::string::npos) << created;
     const std::string id = cgi_json(created).at("id").get<std::string>();
 
     const std::string listed = exchange_scgi(
-        process, "GET", "/api/cha/v1/forums/lobby/sessions");
+        process, "GET", "/api/cha/v1/forums/lobby/sessions", {}, {}, query);
     EXPECT_NE(listed.find("Status: 200 OK"), std::string::npos) << listed;
     EXPECT_NE(listed.find(id), std::string::npos) << listed;
 
     const std::string snapshot = exchange_scgi(
         process,
         "GET",
-        "/api/cha/v1/forums/lobby/sessions/" + id);
+        "/api/cha/v1/forums/lobby/sessions/" + id, {}, {}, query);
     EXPECT_NE(snapshot.find("Status: 200 OK"), std::string::npos) << snapshot;
     EXPECT_EQ(cgi_json(snapshot).at("session_id"), id);
 
@@ -386,20 +397,21 @@ TEST(DaemonProcess, ChaWebReturnsWhileGenerationContinues) {
     const auto config = write_config(workspace, database);
     DaemonProcess process(DaemonSpawn{.config_directory = config});
     server.start();
+    const auto query = bootstrap_query(process);
 
     const std::string created = exchange_scgi(
         process,
         "POST",
         "/api/cha/v1/forums/lobby/sessions",
         R"({"text":"Hello"})",
-        "application/json");
+        "application/json", query);
     EXPECT_NE(created.find("Status: 201 Created"), std::string::npos) << created;
     ASSERT_TRUE(server.wait_for_requests(1, 5s));
     const std::string id = cgi_json(created).at("id").get<std::string>();
     const std::string snapshot = exchange_scgi(
         process,
         "GET",
-        "/api/cha/v1/forums/lobby/sessions/" + id);
+        "/api/cha/v1/forums/lobby/sessions/" + id, {}, {}, query);
     EXPECT_NE(snapshot.find("Status: 200 OK"), std::string::npos) << snapshot;
     EXPECT_TRUE(cgi_json(snapshot).at("generation").at("active").get<bool>())
         << snapshot;

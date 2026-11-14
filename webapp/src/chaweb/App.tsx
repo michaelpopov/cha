@@ -7,15 +7,27 @@ import { SessionsView } from './sessions';
 import { useChaweb } from './useChaweb';
 import { useReadAloud } from './useReadAloud';
 import { useVoiceInput } from './useVoiceInput';
-import type { ChaWebClient } from './client';
+import { createChaWebClient, type ChaWebClient } from './client';
 import { NotesView, followLocalLink } from './notes';
 import { NoteView } from './note';
 
 const emptyTranscript: [] = [];
 
-export function App({ client }: { client: ChaWebClient }) {
+export function App({ client }: { client?: ChaWebClient }) {
+  const [revision, setRevision] = useState(0);
+  return <VaultApp key={revision} client={client} resetToWelcome={revision > 0}
+    onContextLost={() => setRevision((current) => current + 1)} />;
+}
+
+function VaultApp({ client: provided, resetToWelcome, onContextLost }: {
+  client?: ChaWebClient;
+  resetToWelcome: boolean;
+  onContextLost: () => void;
+}) {
+  const [contextClient] = useState(() => createChaWebClient(onContextLost));
+  const client = provided ?? contextClient;
   const viewport = useVisualViewport();
-  const model = useChaweb(client);
+  const model = useChaweb(client, resetToWelcome);
   const reading = model.screen === 'note';
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('chaweb-reading', reading);

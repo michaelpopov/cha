@@ -455,6 +455,7 @@ void create_workspace_session_schema(Database& database) {
             input_tokens INTEGER CHECK (input_tokens IS NULL OR input_tokens >= 0),
             output_tokens INTEGER CHECK (output_tokens IS NULL OR output_tokens >= 0),
             web_search_used INTEGER NOT NULL DEFAULT 0 CHECK (web_search_used IN (0, 1)),
+            error_code TEXT,
             PRIMARY KEY (session_key, entry_id),
             FOREIGN KEY (session_key, request_id)
                 REFERENCES turns(session_key, request_id),
@@ -535,12 +536,14 @@ void ensure_entry_metadata_columns(Database& database) {
     bool has_input_tokens = false;
     bool has_output_tokens = false;
     bool has_web_search_used = false;
+    bool has_error_code = false;
     Statement columns = database.prepare("PRAGMA table_info(entries)");
     while (columns.step()) {
         const std::string name = columns.text(1);
         has_input_tokens |= name == "input_tokens";
         has_output_tokens |= name == "output_tokens";
         has_web_search_used |= name == "web_search_used";
+        has_error_code |= name == "error_code";
     }
     if (!has_input_tokens) {
         database.execute(
@@ -557,6 +560,7 @@ void ensure_entry_metadata_columns(Database& database) {
             "ALTER TABLE entries ADD COLUMN web_search_used INTEGER NOT NULL "
             "DEFAULT 0 CHECK (web_search_used IN (0, 1))");
     }
+    if (!has_error_code) database.execute("ALTER TABLE entries ADD COLUMN error_code TEXT");
     transaction.commit();
 }
 

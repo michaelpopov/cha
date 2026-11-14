@@ -13,6 +13,8 @@
 
 namespace cha {
 
+struct VaultDefinition;
+
 struct R2DatabaseTransfer {
     std::uintmax_t byte_count{};
     std::string etag;
@@ -33,6 +35,15 @@ class R2HttpStatusError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
 };
+
+class R2ObjectNotFoundError : public R2HttpStatusError {
+public:
+    using R2HttpStatusError::R2HttpStatusError;
+};
+
+// Runs after validation and before installing either downloaded file.
+using BeforeR2Install = std::function<void(
+    const std::filesystem::path& temporary_database, VaultDefinition definition)>;
 
 enum class R2DatabaseLease {
     acquire,
@@ -91,7 +102,8 @@ R2DatabaseTransfer download_database_from_r2(
     const R2StorageKey& storage,
     R2DatabaseLease lease = R2DatabaseLease::acquire,
     std::string_view database_password = {},
-    const std::function<bool()>& cancelled = {});
+    const std::function<bool()>& cancelled = {},
+    const BeforeR2Install& before_install = {});
 
 std::optional<std::string> get_r2_database_etag(
     std::string_view database_name,
@@ -109,6 +121,7 @@ R2DatabaseTransfer download_new_database_from_r2(
     const std::filesystem::path& vault_definition_path,
     std::string_view database_name,
     const R2StorageKey& storage,
-    const std::function<bool()>& cancelled = {});
+    const std::function<bool()>& cancelled = {},
+    const BeforeR2Install& before_install = {});
 
 } // namespace cha

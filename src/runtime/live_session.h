@@ -107,7 +107,7 @@ public:
     void acknowledge_output() noexcept;
     void refresh_presentation();
     // Stores a configuration notice, or queues it while an answer is active.
-    void record_configuration_notice(std::string text);
+    void record_configuration_notice(std::string text, std::string error_code = {});
     void prune_folder_associations(std::vector<std::int64_t> folder_ids);
     [[nodiscard]] std::shared_ptr<app::SessionOutput> output() const {
         return output_;
@@ -177,6 +177,7 @@ private:
     std::shared_ptr<CommandReply> deferred_submit_;
     std::function<std::set<EntryId>()> cached_audio_entries_;
     std::function<void(std::span<const TranscriptEntry>)> update_audio_;
+    std::function<std::optional<CommandResult>(std::string_view)> host_command_;
     std::string label_;
     std::atomic<bool> naming_{};
     std::function<void(std::string_view)> persist_default_character_;

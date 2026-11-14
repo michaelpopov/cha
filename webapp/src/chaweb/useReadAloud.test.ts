@@ -17,7 +17,7 @@ it('stops local playback and disables automatic audio when the conversation is l
   const entry = { ...snapshotFixture.transcript[0], id: 1, kind: 'character' as const,
     status: 'complete' as const, text: 'Cached reply', has_cached_audio: true };
   const snapshot = { ...snapshotFixture, transcript: [entry] };
-  const client = { ...createChaWebClient(), getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
+  const client = { ...createChaWebClient(), audioUrl: () => '/test-audio', getVoiceOutputRuntime: vi.fn(async () => voiceOutputRuntimeFixture),
     getAudioStatus: vi.fn(async () => ({ cached_entry_ids: [1], downloads: [] })) };
   const { result, rerender } = renderHook(({ current }: { current: SessionSnapshot | null }) => useReadAloud(
     client, current, 'Test', false, current ? 'session:lobby/planning' : ''),

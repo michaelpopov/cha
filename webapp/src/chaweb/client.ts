@@ -31,6 +31,7 @@ const API = '/api/cha/v1';
 const TIMEOUT_MS = 60_000;
 const FAILED = 'The request failed.';
 const TIMED_OUT = 'The request timed out.';
+const MAX_CONTEXT_EPOCH = '18446744073709551615';
 
 export class ChaWebError extends Error {
   readonly status: number;
@@ -50,6 +51,15 @@ export function chaWebMessage(failure: unknown, fallback: string): string {
 }
 
 export type ChaWebNote = { item: NoteItem; document: NoteContent['document'] };
+type VaultContext = { daemon_token: string; context_epoch: string };
+export type ChaWebBootstrap = Bootstrap & Partial<VaultContext>;
+
+function contextQuery(context: VaultContext): string {
+  return new URLSearchParams({
+    daemon_token: context.daemon_token,
+    context_epoch: context.context_epoch,
+  }).toString();
+}
 
 export interface ChaWebClient {
   listNoteItems(signal?: AbortSignal): Promise<NoteItem[]>;
@@ -64,7 +74,8 @@ export interface ChaWebClient {
   startAudio(forumId: string, sessionId: string, entryId: number, vaultName: string): Promise<AudioDownloadAcceptance>;
   startAudioBatch(forumId: string, sessionId: string, entryIds: number[], vaultName: string): Promise<AudioDownloadBatchAcceptance>;
   getAudioStatus(forumId: string, sessionId: string): Promise<AudioDownloadStatus>;
-  getBootstrap(): Promise<Bootstrap>;
+  audioUrl(forumId: string, sessionId: string, entryId: number): string;
+  getBootstrap(): Promise<ChaWebBootstrap>;
   listSessions(forumId: string): Promise<SessionListing[]>;
   createSession(forumId: string, text: string): Promise<CreateSessionResult>;
   getSession(forumId: string, sessionId: string): Promise<SessionSnapshot>;
@@ -85,7 +96,7 @@ function sessionPath(forumId: string, sessionId: string): string {
   return `${sessionsPath(forumId)}/${segment(sessionId)}`;
 }
 
-export function audioUrl(forumId: string, sessionId: string, entryId: number): string {
+function audioPath(forumId: string, sessionId: string, entryId: number): string {
   return `${sessionPath(forumId, sessionId)}/entries/${entryId}/audio`;
 }
 
@@ -114,7 +125,7 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-async function exchange<T>(
+async function fetchResponse<T>(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   expected: number,
@@ -162,8 +173,50 @@ async function readGuarded<T>(
   return payload;
 }
 
-export function createChaWebClient(): ChaWebClient {
+export function createChaWebClient(onContextLost = () => {}): ChaWebClient {
+  let context: VaultContext | undefined;
+  let contextError: ChaWebError | undefined;
+
+  function loseContext(error: ChaWebError): never {
+    if (!contextError) {
+      contextError = error;
+      onContextLost();
+    }
+    throw contextError;
+  }
+
+  function withContext(path: string): string {
+    if (contextError) throw contextError;
+    if (!context) throw new ChaProtocolError();
+    return `${path}?${contextQuery(context)}`;
+  }
+
+  async function exchange<T>(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    expected: number,
+    consume: (response: Response) => Promise<T>,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (contextError) throw contextError;
+    try {
+      const result = await fetchResponse(method,
+        path === `${API}/bootstrap` ? path : withContext(path), expected, consume, body, signal);
+      if (contextError) throw contextError;
+      return result;
+    } catch (error) {
+      if (contextError) throw contextError;
+      if (context && error instanceof ChaWebError
+        && (error.code === 'vault_changed' || error.code === 'application_unavailable')) {
+        loseContext(error);
+      }
+      throw error;
+    }
+  }
+
   return {
+    audioUrl: (forumId, sessionId, entryId) => withContext(audioPath(forumId, sessionId, entryId)),
     async listNoteItems(signal) {
       return (await exchange('GET', `${API}/notes`, 200,
         (response) => readGuarded(response, isNoteItemList), undefined, signal)).items;
@@ -223,7 +276,7 @@ export function createChaWebClient(): ChaWebClient {
     },
 
     async startAudio(forumId, sessionId, entryId, vaultName) {
-      return exchange('POST', audioUrl(forumId, sessionId, entryId), 200,
+      return exchange('POST', audioPath(forumId, sessionId, entryId), 200,
         (response) => readGuarded(response,
           (value): value is AudioDownloadAcceptance => isAudioAcceptance(value) && value.entry_id === entryId),
         { vault_name: vaultName });
@@ -244,14 +297,32 @@ export function createChaWebClient(): ChaWebClient {
     },
 
     async getBootstrap() {
-      return exchange('GET', `${API}/bootstrap`, 200, async (response) => {
+      const loaded = await exchange('GET', `${API}/bootstrap`, 200, async (response) => {
         const payload = await readJson(response);
+        if (!isRecord(payload) || typeof payload.daemon_token !== 'string'
+          || !/^[0-9a-f]{32}$/.test(payload.daemon_token)
+          || typeof payload.context_epoch !== 'string' || !/^[1-9]\d{0,19}$/.test(payload.context_epoch)
+          || (payload.context_epoch.length === MAX_CONTEXT_EPOCH.length
+            && payload.context_epoch > MAX_CONTEXT_EPOCH)) {
+          throw new ChaProtocolError();
+        }
         try {
-          return validateBootstrap(payload);
+          return {
+            ...validateBootstrap(payload),
+            daemon_token: payload.daemon_token,
+            context_epoch: payload.context_epoch,
+          };
         } catch {
           throw new ChaProtocolError();
         }
       });
+      if (contextError) throw contextError;
+      if (context && (loaded.daemon_token !== context.daemon_token
+        || loaded.context_epoch !== context.context_epoch)) {
+        loseContext(new ChaWebError(409, 'The vault context has changed.', 'vault_changed'));
+      }
+      context = { daemon_token: loaded.daemon_token, context_epoch: loaded.context_epoch };
+      return loaded;
     },
 
     async listSessions(forumId) {

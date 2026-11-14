@@ -1093,8 +1093,9 @@ void SessionController::finish_generation_run(ControllerUpdate& update) {
     }
 }
 
-void SessionController::append_configuration_notice(std::string text) {
+void SessionController::append_configuration_notice(std::string text, std::string error_code) {
     TranscriptEntry entry = make_notice_entry(next_entry_id_++, std::move(text));
+    entry.error_code = std::move(error_code);
     persist("record a configuration notice", [this, &entry] {
         journal_.record_entry(entry);
     });
@@ -1102,8 +1103,8 @@ void SessionController::append_configuration_notice(std::string text) {
 }
 
 void SessionController::flush_configuration_notices() {
-    for (std::string& text : pending_notices_) {
-        append_configuration_notice(std::move(text));
+    for (auto& notice : pending_notices_) {
+        append_configuration_notice(std::move(notice.text), std::move(notice.error_code));
     }
     pending_notices_.clear();
 }
@@ -1115,12 +1116,12 @@ void SessionController::prune_folder_associations(
     });
 }
 
-bool SessionController::record_configuration_notice(std::string text) {
+bool SessionController::record_configuration_notice(std::string text, std::string error_code) {
     if (generation_) {
-        pending_notices_.push_back(std::move(text));
+        pending_notices_.push_back({std::move(text), std::move(error_code)});
         return false;
     }
-    append_configuration_notice(std::move(text));
+    append_configuration_notice(std::move(text), std::move(error_code));
     return true;
 }
 

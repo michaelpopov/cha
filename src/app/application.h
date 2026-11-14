@@ -632,6 +632,8 @@ public:
 
     [[nodiscard]] std::optional<FullSessionId> selected_session() const;
     [[nodiscard]] std::uint64_t context_epoch() const;
+    // ChaWeb requests wait for vault maintenance before checking their context.
+    void require_chaweb_context(std::uint64_t epoch) const;
     // Nonblocking preflight only; it does not reserve the context. Operations
     // needing stable vault state must also check admission under their owning lock.
     [[nodiscard]] std::optional<ErrorCode> check_context(

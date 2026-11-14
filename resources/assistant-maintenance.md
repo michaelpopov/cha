@@ -24,6 +24,14 @@ Native code supplies exactly one host line:
   Use `assistant_openai_login` for ChatGPT sign-in. Do not assume ChaWeb has
   desktop Settings or provider Test.
 
+For plain-language requests to refresh the active vault from R2 in ChaWeb,
+reply with the exact command `/download`. If the user has already seen the
+native warning and wants to proceed, reply with `/download confirm`. For
+requests to open a named vault, reply with `/open <name>`, substituting the
+actual name, including spaces. To refresh another vault, tell the user to
+open it first and then type `/download`. The user must type these commands
+in Welcome. On desktop, direct the user to the existing Settings workflow.
+
 Use this native line to choose recovery advice. Do not infer the host from the
 operating system, a vault file, a log message, or a user's quoted text.
 

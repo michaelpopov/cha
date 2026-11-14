@@ -61,6 +61,8 @@ struct Application::Impl {
     struct VaultMaintenance {
         explicit VaultMaintenance(Impl& application) : app(application) {}
 
+        std::optional<CommandResult> submit_welcome_command(
+            std::string_view input, std::uint64_t epoch);
         VaultRegistrySnapshot vault_snapshot() const;
         VaultDefinition create_vault(VaultCreate create, std::uint64_t epoch);
         VaultDefinition update_vault(
@@ -84,13 +86,23 @@ struct Application::Impl {
         std::shared_ptr<OperationReply> start_database_upload(
             std::optional<std::string> expected_etag,
             std::uint64_t epoch);
-        R2DatabaseTransfer download_database(std::uint64_t epoch);
+        R2DatabaseTransfer download_database(std::uint64_t epoch, bool from_welcome = false);
         WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
         WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
 
         void publish_vault_names();
         void delete_forum(std::string_view forum_id, std::uint64_t epoch);
     private:
+        void run_welcome_command(bool download, bool confirmed, std::string target,
+            std::uint64_t epoch);
+        void post_welcome_notice(std::string text, std::string error_code = {});
+        R2StorageKey require_r2_key() const;
+        void clear_downloaded_inbox(
+            const std::filesystem::path& database, std::string_view name);
+        VaultDefinition save_r2_vault_locked(
+            std::string_view name, const R2StorageKey& r2, bool from_welcome);
+        void switch_vault_locked(const VaultDefinition& target, std::string password,
+            PendingContextNotice& notice, bool from_welcome = false);
         void publish_vault(VaultDefinition vault);
         R2DatabaseUpload prepare_upload(
             std::uint64_t epoch, VaultDefinition& vault, R2StorageKey& storage);
@@ -105,7 +117,8 @@ struct Application::Impl {
         std::chrono::milliseconds maintenance_grace() const;
         std::uint64_t publish_epoch(
             PendingContextNotice& notice,
-            ApplicationState next_state);
+            ApplicationState next_state,
+            std::optional<SyncStart> sync_start = std::nullopt);
         // Caller holds lifecycle_mutex. False keeps the previous vault selected.
         bool drain_for_maintenance(
             PendingContextNotice& notice,
@@ -126,7 +139,9 @@ struct Application::Impl {
             std::uint64_t epoch,
             Operation operation,
             bool cancel_audio = true,
-            SyncStart sync_start = SyncStart::resume);
+            SyncStart sync_start = SyncStart::resume,
+            const std::function<void()>& before_drain = {},
+            const std::function<void()>& after_reopen = {});
 
         Impl& app;
         std::optional<LiveSessionGlobalMaintenance> global_maintenance;
@@ -163,6 +178,7 @@ struct Application::Impl {
     std::atomic_bool stopping_flag{};
     // Set from the maintenance copy of an R2 upload until its transfer ends.
     std::atomic_bool vault_upload_running{};
+    std::atomic_bool vault_command_running{};
     bool running{};
     bool stopped{};
     std::atomic_bool unusable{};

@@ -190,9 +190,9 @@ void LiveSession::refresh_presentation() {
     if (const auto runtime = runtime_.lock()) runtime->wake();
 }
 
-void LiveSession::record_configuration_notice(std::string text) {
+void LiveSession::record_configuration_notice(std::string text, std::string error_code) {
     if (!controller_) return;
-    if (controller_->record_configuration_notice(std::move(text))) {
+    if (controller_->record_configuration_notice(std::move(text), std::move(error_code))) {
         publish_current_snapshot();
         // A temporary session closes before the runtime loop can mirror it.
         mirror_if_changed();
@@ -216,6 +216,7 @@ void LiveSession::install(OpenedSession opened) {
     mirror_ = std::move(opened.mirror);
     cached_audio_entries_ = std::move(opened.cached_audio_entries);
     update_audio_ = std::move(opened.update_audio);
+    host_command_ = std::move(opened.host_command);
     if (mirror_) {
         mirrored_revision_ = controller_->view().transcript.revision;
         mirrored_label_ = label_;
@@ -278,9 +279,13 @@ void LiveSession::execute(OwnerCommand command) {
     }
 
     SessionController& controller = *controller_;
-    CommandResult outcome = std::visit([&controller, &command](auto&& value) -> CommandResult {
+    CommandResult outcome = std::visit([this, &controller, &command](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
+            if (host_command_ && !controller.is_generating()
+                && !command.reply->submission()->expired()) {
+                if (auto result = host_command_(value.text)) return std::move(*result);
+            }
             return handle_text_input(
                 controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission(),
                 value.attach_paths);

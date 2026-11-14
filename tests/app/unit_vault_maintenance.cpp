@@ -144,6 +144,53 @@ void set_r2(Application& application, int port) {
     }, application.context_epoch());
 }
 
+CommandResult welcome_input(Application& application, std::string text) {
+    const auto epoch = application.context_epoch();
+    (void)application.open_session(entrance_id, welcome_id, epoch);
+    return std::get<CommandResult>(
+        application.submit(entrance_id, welcome_id, RawCommand{std::move(text)}, epoch));
+}
+
+bool wait_for_welcome_notice(Application& application, std::string_view text,
+    std::string_view error_code = {}) {
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto epoch = application.context_epoch();
+        try {
+            (void)application.open_session(entrance_id, welcome_id, epoch);
+            const auto result = application.snapshot(entrance_id, welcome_id, epoch);
+            if (const auto* snapshot = std::get_if<SessionSnapshot>(&result);
+                snapshot && std::ranges::any_of(snapshot->transcript, [&](const auto& entry) {
+                    return entry.kind == EntryKind::notice && entry.error_code == error_code
+                        && entry.text.find(text) != std::string::npos;
+                })) return true;
+        } catch (const ApplicationError& error) {
+            if (error.code != ErrorCode::vault_changed) throw;
+        }
+        std::this_thread::sleep_for(5ms);
+    }
+    return false;
+}
+
+TEST(ApplicationVault, WelcomeOpensLocalVaultAndRefusesDesktopCommands) {
+    TwoVaults pair;
+    {
+        auto desktop = Application::open(pair.command);
+        EXPECT_FALSE(welcome_input(*desktop, "/open B").session.input_consumed);
+        EXPECT_EQ(desktop->current_vault().get().name, "A");
+    }
+    pair.command.chaweb_host = true;
+    auto web = Application::open(pair.command);
+    const auto epoch = web->context_epoch();
+    ASSERT_TRUE(welcome_input(*web, "/open A").session.input_consumed);
+    ASSERT_TRUE(wait_for_welcome_notice(*web, "Vault 'A' is already open."));
+    EXPECT_EQ(web->context_epoch(), epoch);
+    ASSERT_TRUE(welcome_input(*web, "/open B").session.input_consumed);
+    ASSERT_TRUE(wait_for_welcome_notice(*web, "Opened vault 'B'."));
+    EXPECT_EQ(web->current_vault().get().name, "B");
+    EXPECT_GT(web->context_epoch(), epoch);
+}
+
 TEST(ApplicationVault, SecondarySharesNotesAndSwitchesWithoutAcquiringMainRole) {
     TwoVaults pair;
     auto main = Application::open(pair.command);
@@ -386,6 +433,146 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     auto expected = saved;
     expected["audio"] = nlohmann::json::array();
     EXPECT_EQ(stored_notes(uploaded), expected);
+}
+
+TEST(ApplicationVault, WelcomeRefreshWarnsLocallyAndReopensWithABackup) {
+    TwoVaults pair;
+    pair.command.chaweb_host = true;
+    const auto definition = "vault_name = \"A\"\ndata = \"a.sqlite3\"\n";
+    (void)seed_notes(pair.database_b, "New snapshot");
+    MockHttpServer server({
+        http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
+        http_response("application/toml", definition),
+    });
+    auto web = Application::open(pair.command);
+    set_r2(*web, server.port());
+    const auto local_note = web->create_note_item({}, NoteItemKind::note, "Keep in backup", web->context_epoch());
+    const auto epoch = web->context_epoch();
+    server.start();
+    ASSERT_TRUE(welcome_input(*web, "/download").session.input_consumed);
+    ASSERT_TRUE(wait_for_welcome_notice(*web, "Running work will stop. Type /download confirm"));
+    EXPECT_FALSE(server.wait_for_requests(1, 20ms));
+    EXPECT_EQ(web->context_epoch(), epoch);
+    ASSERT_TRUE(welcome_input(*web, "/download confirm").session.input_consumed);
+    ASSERT_TRUE(wait_for_welcome_notice(*web, "Downloaded and reopened vault 'A'."));
+    server.join();
+    EXPECT_GT(web->context_epoch(), epoch);
+    EXPECT_EQ(web->current_vault().get().name, "A");
+    const auto backup = stored_notes(pair.database_a.string() + ".bac");
+    EXPECT_TRUE(std::ranges::any_of(backup.at("items"), [&](const auto& row) {
+        return row.at(0) == local_note.id && row.at(3) == "Keep in backup";
+    }));
+    EXPECT_EQ(stored_notes(pair.database_a), stored_notes(pair.database_b));
+}
+
+TEST(ApplicationVault, WelcomeReportsMissingR2DatabaseWithDurableNotFoundCode) {
+    constexpr auto missing = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    for (const bool download : {false, true}) {
+        SCOPED_TRACE(download);
+        TwoVaults pair;
+        pair.command.chaweb_host = true;
+        {
+            storage::SqliteDatabase old_vault(pair.database_a, storage::SqliteDatabase::Mode::read_write);
+            old_vault.execute("ALTER TABLE entries DROP COLUMN error_code");
+        }
+        MockHttpServer server(download ? std::vector<std::string>{missing}
+                                       : std::vector<std::string>{missing, missing});
+        auto web = Application::open(pair.command);
+        set_r2(*web, server.port());
+        const auto original_epoch = web->context_epoch();
+        server.start();
+        ASSERT_TRUE(welcome_input(*web, download ? "/download confirm" : "/open Missing File")
+            .session.input_consumed);
+        const auto guidance = download ? "R2 database object 'a.sqlite3' was not found."
+                                      : "without .sqlite3, in its exact case.";
+        ASSERT_TRUE(wait_for_welcome_notice(*web, guidance, "not_found"));
+        server.join();
+        EXPECT_EQ(web->current_vault().get().name, "A");
+        EXPECT_EQ(web->context_epoch() > original_epoch, download);
+        EXPECT_FALSE(std::filesystem::exists(pair.database_a.string() + ".bac"));
+        EXPECT_FALSE(std::filesystem::exists(pair.command.config_directory / "Missing File.sqlite3"));
+
+        const auto snapshot = SessionSnapshot{.transcript = load_session_history(
+            web->store().welcome_path() / "sessions.sqlite3",
+            {std::string(entrance_id), std::string(welcome_id)})};
+        const nlohmann::json payload = snapshot;
+        const auto& entries = payload.at("transcript");
+        EXPECT_TRUE(std::ranges::any_of(entries, [&](const auto& entry) {
+            return entry.at("kind") == "notice" && entry.value("error_code", "") == "not_found"
+                && entry.at("text").template get<std::string>().find(guidance) != std::string::npos;
+        }));
+    }
+}
+
+TEST(ApplicationVault, WelcomeRemoteOpenChecksCollisionBeforeClearingDownloadedInbox) {
+    for (const bool collision : {true, false}) {
+        SCOPED_TRACE(collision);
+        TwoVaults pair;
+        pair.command.chaweb_host = true;
+        pair.command.machine = "this-machine";
+        {
+            storage::SqliteDatabase database(pair.database_b, storage::SqliteDatabase::Mode::read_write);
+            database.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)",
+                "system/keys/api_key_1/config.toml",
+                "display_name = \"D1\"\ntype = \"D1\"\n"
+                "account_id = \"download-account\"\ndatabase_id = \"download-db\"\napi_token = \"test-token\"\n").run();
+        }
+        const std::string name = collision ? "B" : "Companion Name";
+        MockHttpServer server({
+            http_response("application/toml", "vault_name = " + nlohmann::json(name).dump()
+                + "\ndata = \"elsewhere.sqlite3\"\n"),
+            http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
+        });
+        std::vector<std::string> statements;
+        std::mutex statements_mutex;
+        bool inbox_created = false;
+        auto web = Application::open(pair.command, {}, {},
+            [&](const std::string& url, const std::string& body, const auto&) {
+                EXPECT_NE(url.find("/accounts/download-account/d1/database/download-db/"), std::string::npos);
+                const auto sql = nlohmann::json::parse(body).at("batch").at(0).at("sql").get<std::string>();
+                const std::lock_guard lock(statements_mutex);
+                statements.push_back(sql);
+                if (sql.starts_with("DELETE FROM")) {
+                    return std::pair<long, std::string>{400,
+                        R"({"success":false,"errors":[{"message":"no such table: q"}]})"};
+                }
+                auto rows = nlohmann::json::array();
+                if (sql.starts_with("CREATE TABLE")) inbox_created = true;
+                if (sql.starts_with("SELECT name FROM sqlite_master") && inbox_created)
+                    rows.push_back({{"name", "q/Companion Name/this-machine"}});
+                return std::pair<long, std::string>{200, nlohmann::json{
+                    {"success", true}, {"result", nlohmann::json::array({
+                        {{"success", true}, {"results", rows}},
+                    })},
+                }.dump()};
+            });
+        set_r2(*web, server.port());
+        const auto epoch = web->context_epoch();
+        server.start();
+        ASSERT_TRUE(welcome_input(*web, "/open Exact File").session.input_consumed);
+        if (collision) {
+            ASSERT_TRUE(wait_for_welcome_notice(*web, "duplicates vault"));
+            EXPECT_EQ(web->current_vault().get().name, "A");
+            EXPECT_EQ(web->context_epoch(), epoch);
+            EXPECT_FALSE(std::filesystem::exists(pair.command.config_directory / "Exact File.sqlite3"));
+            const std::lock_guard lock(statements_mutex);
+            EXPECT_TRUE(statements.empty());
+        } else {
+            ASSERT_TRUE(wait_for_welcome_notice(*web, "Downloaded and opened vault 'Companion Name'."));
+            EXPECT_EQ(web->current_vault().get().name, name);
+            EXPECT_GT(web->context_epoch(), epoch);
+            EXPECT_TRUE(std::filesystem::exists(pair.command.config_directory / "Exact File.sqlite3"));
+            const std::lock_guard lock(statements_mutex);
+            ASSERT_GE(statements.size(), 4u);
+            EXPECT_EQ(statements[0], "DELETE FROM \"q/Companion Name/this-machine\"");
+            EXPECT_TRUE(statements[1].starts_with("SELECT name FROM sqlite_master"));
+            EXPECT_TRUE(statements[2].starts_with("CREATE TABLE"));
+            EXPECT_NE(std::find_if(statements.begin() + 3, statements.end(),
+                [](const auto& sql) { return sql.starts_with("SELECT rowid"); }), statements.end());
+        }
+        server.join();
+        EXPECT_TRUE(server.requests()[1].starts_with("GET /bucket/Exact%20File.sqlite3 HTTP/1.1"));
+    }
 }
 
 TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlderSchema2) {

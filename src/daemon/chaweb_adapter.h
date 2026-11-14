@@ -5,9 +5,12 @@
 
 #include <atomic>
 #include <optional>
+#include <string>
 #include <string_view>
 
 namespace cha::daemon {
+
+std::string make_chaweb_daemon_token();
 
 // Tests replace session deletion after a failed create.
 using ChaWebDeleteSession = std::optional<ErrorCode> (*)(
@@ -29,6 +32,7 @@ void handle_chaweb_request(
     const ScgiRequest& request,
     int fd,
     std::atomic<bool>& stop,
+    std::string_view daemon_token,
     ChaWebDeleteSession delete_session = nullptr,
     ChaWebSubmitInput submit_input = nullptr);
 

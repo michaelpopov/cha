@@ -66,11 +66,6 @@ struct R2ResponseHeaders {
     std::exception_ptr error;
 };
 
-class R2ObjectNotFoundError : public R2HttpStatusError {
-public:
-    using R2HttpStatusError::R2HttpStatusError;
-};
-
 class R2UploaderExistsError : public R2HttpStatusError {
 public:
     using R2HttpStatusError::R2HttpStatusError;
@@ -1147,7 +1142,8 @@ R2DatabaseTransfer download_database_from_r2(
     const R2StorageKey& storage,
     R2DatabaseLease lease_mode,
     std::string_view database_password,
-    const std::function<bool()>& cancelled) {
+    const std::function<bool()>& cancelled,
+    const BeforeR2Install& before_install) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -1168,13 +1164,19 @@ R2DatabaseTransfer download_database_from_r2(
     TemporaryPath database_temporary(unique_sibling(database, "download"));
     TemporaryPath vault_temporary(unique_sibling(vault, "download"));
     const std::string vault_object = database_name + ".toml";
+    const auto fetch_database = [&] {
+        return download_file(database_temporary.get(), database_name, storage, cancelled,
+            "R2 database object '" + database_name + "' was not found.");
+    };
+    const auto web_database = before_install
+        ? std::optional(fetch_database()) : std::nullopt;
     const R2DatabaseTransfer vault_download = download_file(
         vault_temporary.get(), vault_object, storage, cancelled,
         "R2 vault definition was not found. The bucket may contain a legacy "
               "database-only upload; upload with the current CHA version "
               "before downloading.");
-    const R2DatabaseTransfer database_download = download_file(
-        database_temporary.get(), database_name, storage, cancelled);
+    const R2DatabaseTransfer database_download = web_database
+        ? *web_database : download_file(database_temporary.get(), database_name, storage, cancelled);
     if (inspect_workspace_session_database(
             database_temporary.get(), database_password)
         != WorkspaceDatabaseState::valid_v2) {
@@ -1198,6 +1200,11 @@ R2DatabaseTransfer download_database_from_r2(
 
     cleanup_downloaded_database(database_temporary.get(), database_password);
     remove_sidecars(database_temporary.get());
+    if (before_install) {
+        auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
+        definition.source = vault;
+        before_install(database_temporary.get(), std::move(definition));
+    }
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
     return {
@@ -1252,7 +1259,8 @@ R2DatabaseTransfer download_new_database_from_r2(
     const std::filesystem::path& vault_definition_path,
     std::string_view database_name,
     const R2StorageKey& storage,
-    const std::function<bool()>& cancelled) {
+    const std::function<bool()>& cancelled,
+    const BeforeR2Install& before_install) {
     constexpr std::string_view suffix = ".sqlite3";
     if (database_name.size() <= suffix.size()
         || !database_name.ends_with(suffix)
@@ -1286,8 +1294,13 @@ R2DatabaseTransfer download_new_database_from_r2(
     } catch (const R2ObjectNotFoundError&) {
         downloaded_vault = false;
     }
+    // Desktop keeps its HTTP status error for a missing database.
+    const std::string database_not_found = before_install
+        ? "R2 database object '" + std::string(database_name) + "' was not found."
+        : std::string();
     const R2DatabaseTransfer database_download = download_file(
-        database_temporary.get(), database_name, storage, cancelled);
+        database_temporary.get(), database_name, storage, cancelled,
+        database_not_found);
     std::optional<VaultDefinition> downloaded_definition;
     if (downloaded_vault) {
         downloaded_definition = load_vault_definition_file(
@@ -1323,6 +1336,11 @@ R2DatabaseTransfer download_new_database_from_r2(
     }
     cleanup_downloaded_database(database_temporary.get(), {});
     remove_sidecars(database_temporary.get());
+    if (before_install) {
+        auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
+        definition.source = vault;
+        before_install(database_temporary.get(), std::move(definition));
+    }
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
     return {

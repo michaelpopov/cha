@@ -106,7 +106,8 @@ public:
         std::chrono::milliseconds deadline);
     [[nodiscard]] LiveSessionOpenResult select(
         FullSessionId key,
-        std::chrono::milliseconds deadline);
+        std::chrono::milliseconds deadline,
+        std::uint64_t epoch = 0);
     [[nodiscard]] std::optional<FullSessionId> selected() const;
     void close_session(const FullSessionId& key, std::uint64_t epoch = 0);
     [[nodiscard]] std::uint64_t context_epoch() const;
@@ -119,7 +120,8 @@ public:
         FullSessionId welcome,
         std::string notice);
     // Stores a transcript notice on the session's owner thread, including when unloaded.
-    bool post_session_notice(std::uint64_t epoch, FullSessionId identity, std::string notice);
+    bool post_session_notice(std::uint64_t epoch, FullSessionId identity,
+        std::string notice, std::string error_code = {});
     bool post_welcome_folder_prune(
         std::uint64_t epoch, std::vector<std::int64_t> folder_ids);
     // Asks one live session to reopen, so that it captures the current epoch.

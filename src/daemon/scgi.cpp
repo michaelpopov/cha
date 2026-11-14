@@ -89,6 +89,7 @@ ScgiReadStatus parse_headers(
     std::optional<std::string_view> uri;
     std::optional<std::string_view> content_type;
     std::optional<std::string_view> audio_offset;
+    std::optional<std::string_view> query;
     std::size_t offset = 0;
     while (offset < block.size()) {
         const auto name = next_token(block, offset);
@@ -104,6 +105,7 @@ ScgiReadStatus parse_headers(
         else if (*name == "DOCUMENT_URI") field = &uri;
         else if (*name == "CONTENT_TYPE") field = &content_type;
         else if (*name == "HTTP_X_CHA_AUDIO_OFFSET") field = &audio_offset;
+        else if (*name == "QUERY_STRING") field = &query;
         if (field == nullptr) continue;
         if (*field) return ScgiReadStatus::bad_request;
         *field = *value;
@@ -118,6 +120,7 @@ ScgiReadStatus parse_headers(
     request.document_uri = std::string(*uri);
     if (content_type) request.content_type = std::string(*content_type);
     if (audio_offset) request.audio_offset = std::string(*audio_offset);
+    if (query) request.query_string = std::string(*query);
     return ScgiReadStatus::ok;
 }
 

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChaError, type ChaClient, type SessionSnapshot } from '../api/client';
 import { useAudioDownloads } from '../audioDownloads';
 import { TextToSpeechError, TextToSpeechSession, useTextToSpeechConfiguration } from '../textToSpeech';
-import { audioUrl, ChaWebError, chaWebMessage, type ChaWebClient } from './client';
+import { ChaWebError, chaWebMessage, type ChaWebClient } from './client';
 import type { TranscriptEntry } from './transcript';
 
 export interface ReadAloud {
@@ -170,7 +170,7 @@ export function useReadAloud(
         : failure instanceof TextToSpeechError
           ? failure.message : chaWebMessage(failure, 'Audio could not be played. Try again.'));
     };
-    function play(streaming = false) {
+    async function play(streaming = false) {
       if (!active()) return;
       const playback = new TextToSpeechSession({
         text: entry.text,
@@ -182,7 +182,7 @@ export function useReadAloud(
             else positions.current.delete(entry.id);
           },
         },
-        cachedUrl: audioUrl(forum!, session!, entry.id),
+        cachedUrl: client.audioUrl(forum!, session!, entry.id),
         onCached: markCached,
         streaming,
         onError: failed,
@@ -190,20 +190,19 @@ export function useReadAloud(
         ...(automaticAudio.current ? { audio: automaticAudio.current } : {}),
       });
       player.current = playback;
-      void playback.play().then(() => {
-        if (active()) setState('playing');
-      }, failed);
+      await playback.play();
+      if (active()) setState('playing');
     }
-    if (isCached(entry)) { play(); return; }
-    if (automatically) { play(true); return; }
+    if (isCached(entry)) { void play().catch(failed); return; }
+    if (automatically) { void play(true).catch(failed); return; }
     const request = downloadsClient.startAudioDownload(forum, session, entry.id,
       { vault_name: vaultName, reference_id: configuration?.voiceId ?? '' });
     void request.then((accepted) => {
       if (!active()) return;
       if (accepted.cached) markCached();
       downloads.refresh();
-      play(!accepted.cached);
-    }, failed);
+      return play(!accepted.cached);
+    }).catch(failed);
   }
 
   useEffect(() => {

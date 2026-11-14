@@ -362,8 +362,11 @@ class ChaWebIntegration(DaemonHarness):
                 if process.poll() is not None:
                     self.assertEqual(process.returncode, 0, self.logs())
             try:
-                status, _, _ = self.exchange("GET", CHAWEB + "/bootstrap")
+                status, _, raw = self.exchange("GET", CHAWEB + "/bootstrap")
                 if status == 200:
+                    boot = json.loads(raw)
+                    self.context_query = (
+                        f"daemon_token={boot['daemon_token']}&context_epoch={boot['context_epoch']}")
                     return
             except (OSError, http.client.HTTPException):
                 pass
@@ -386,6 +389,9 @@ class ChaWebIntegration(DaemonHarness):
 
     def exchange(self, method, path, body=None, header_map=None):
         """Returns (status, lowercase headers, raw body). Does not parse JSON."""
+        if (path.startswith(CHAWEB + "/") and "?" not in path
+                and path != CHAWEB + "/bootstrap"):
+            path += "?" + self.context_query
         headers = {}
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
@@ -513,6 +519,7 @@ class ChaWebIntegration(DaemonHarness):
             return sum(text in prompt for prompt in self.provider.prompts)
 
     def raw_post(self, path, payload):
+        path += "?" + self.context_query
         raw = json.dumps(payload).encode()
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.addCleanup(sock.close)
