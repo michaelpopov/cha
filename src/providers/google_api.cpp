@@ -53,6 +53,11 @@ std::string build_google_request_body(
             contents.back()["parts"].push_back({{"text", message.content}});
         }
     }
+    if (!input.step_instruction.empty()) {
+        // The note is the first part and the task is the second part.
+        if (text_sizes) text_sizes->conversation_bytes += input.step_instruction.size();
+        body["contents"].back()["parts"].push_back({{"text", input.step_instruction}});
+    }
     Json generation{{"candidateCount", 1}};
     if (config.temperature) generation["temperature"] = *config.temperature;
     if (config.max_tokens) generation["maxOutputTokens"] = *config.max_tokens;

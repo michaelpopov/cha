@@ -75,6 +75,20 @@ TEST(AnthropicApi, ConfigurationAndCustomEndpointsIgnoreUnusedValues) {
     EXPECT_TRUE(provider_config_error(config));
 }
 
+TEST(AnthropicApi, PlacesTheStepInstructionAfterTheNote) {
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"", "User"}, .prompt_text = "Note text"},
+        .include_tool_instructions = false,
+        .step_instruction = "Make L1.",
+    };
+    const ModelBackendConfig config{.model = "claude", .api = ProviderApi::anthropic};
+    const auto body = Json::parse(build_anthropic_request_body(request, config, "System prompt"));
+    EXPECT_EQ(body["system"], "System prompt");
+    EXPECT_EQ(body["messages"], Json::array({{{"role", "user"}, {"content", Json::array({
+        {{"type", "text"}, {"text", "from User:\nNote text"}}, {{"type", "text"}, {"text", "Make L1."}}})}}}));
+}
+
 TEST(AnthropicApi, ProjectsHistoryAndTranslatesTheCompleteSharedToolCatalog) {
     Transcript transcript;
     transcript.add_entry(make_character_entry(1, "assistant", "Assistant", "Retained reply", EntryStatus::complete, 1));

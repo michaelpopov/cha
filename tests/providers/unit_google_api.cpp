@@ -77,6 +77,20 @@ TEST(GoogleApi, EncodesFlexAtTheTopLevel) {
     }
 }
 
+TEST(GoogleApi, PlacesTheStepInstructionAfterTheNote) {
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"", "User"}, .prompt_text = "Note text"},
+        .include_tool_instructions = false,
+        .step_instruction = "Make L1.",
+    };
+    const ModelBackendConfig config{.model = "gemini", .api = ProviderApi::google};
+    const auto body = Json::parse(build_google_request_body(request, config, "System prompt"));
+    EXPECT_EQ(body["systemInstruction"], Json({{"parts", Json::array({{{"text", "System prompt"}}})}}));
+    EXPECT_EQ(body["contents"], Json::array({{{"role", "user"}, {"parts", Json::array({
+        {{"text", "from User:\nNote text"}}, {{"text", "Make L1."}}})}}}));
+}
+
 TEST(GoogleApi, EncodesProjectedHistoryOptionsAndSharedTools) {
     Transcript transcript;
     transcript.add_entry(make_character_entry(1, "assistant", "Assistant", "Retained reply",

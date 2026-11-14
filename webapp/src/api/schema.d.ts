@@ -870,6 +870,7 @@ export interface components {
         SummaryTarget: {
             id: components["schemas"]["NoteId"];
             name: string;
+            has_compressed: boolean;
             has_l1: boolean;
             has_l2: boolean;
         };
@@ -892,6 +893,15 @@ export interface components {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */
             part: "l1" | "l2" | "l3";
+        };
+        SummaryCompressRequest: {
+            id: components["schemas"]["NoteId"];
+        };
+        SummaryCompressed: {
+            compressed: boolean;
+        };
+        NotesFlexTestRequest: {
+            provider_id: string;
         };
         NoteSummaryExcludedRequest: {
             id: components["schemas"]["NoteId"];

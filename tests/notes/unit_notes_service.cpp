@@ -1,6 +1,7 @@
 #include "notes/notes_service.h"
 #include "app/background_jobs.h"
 #include "providers/api_key_store.h"
+#include "providers/model_backend.h"
 #include "providers/openai_oauth.h"
 #include "runtime/runtime_settings.h"
 #include "runtime/live_session_manager.h"
@@ -101,6 +102,19 @@ TEST_F(NotesServiceTest, AdmissionRejectsBeforeMutation) {
     try { (void)notes.get_note(item.id, 2); FAIL(); }
     catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::vault_changed); }
     EXPECT_EQ(store->list_note_items().back().name, "Draft");
+}
+
+TEST(FlexTest, MapsTheResultToItsPanelText) {
+    GenerationResult result;
+    EXPECT_EQ(flex_test_failure(result), std::nullopt);
+    result.service_tier = "flex";
+    EXPECT_EQ(flex_test_failure(result), std::nullopt);
+    result.service_tier = "default";
+    EXPECT_EQ(flex_test_failure(result), "The provider did not use Flex for this request.");
+    result.outcome = GenerationOutcome::protocol_error;
+    EXPECT_EQ(flex_test_failure(result), "Flex test failed: The provider returned an error.");
+    result.message = "Provider rate limit exceeded.";
+    EXPECT_EQ(flex_test_failure(result), "Flex test failed: Provider rate limit exceeded.");
 }
 
 } // namespace

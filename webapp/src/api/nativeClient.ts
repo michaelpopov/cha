@@ -1,5 +1,5 @@
 import {
-  hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent, isSummaryGenerated, isSummaryPlan,
+  hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent, isSummaryCompressed, isSummaryGenerated, isSummaryPlan,
 } from './noteGuards';
 import { prepareEpubImport } from '../notes/epubImport';
 import { readFileBytes } from '../notes/pictures';
@@ -780,6 +780,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     listEvents: async () => (await call('events.list', {}, isActivityEventList)).items,
     saveNotesSettings: (settings: NotesSettings) => call(
       'notesSettings.save', settings, isNotesSettings),
+    testNotesFlex: async (providerId: string) => {
+      await call('notesSettings.testFlex', { provider_id: providerId }, isEmptyResult);
+    },
     getWebSearchSettings: () => call('webSearch.get', {}, isWebSearchSettings),
     saveWebSearchSettings: (settings: WebSearchSettings) => call(
       'webSearch.save', settings, isWebSearchSettings),
@@ -1060,6 +1063,7 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     summaryCancel: async () => {
       await call('notes.summaryCancel', {}, isEmptyResult);
     },
+    summaryCompress: async id => (await call('notes.summaryCompress', { id }, isSummaryCompressed)).compressed,
     setNoteSummaryExcluded: (id, excluded) => call('notes.setSummaryExcluded', { id, excluded }, isNoteItem),
     readNotePage: (url, onProgress) => call('notes.readPage', { url }, (value): value is NotePage => (
       isRecord(value)

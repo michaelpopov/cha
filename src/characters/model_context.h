@@ -66,6 +66,9 @@ struct GenerationRequest {
         std::string_view, std::string_view, const std::atomic_bool&)> maintenance_tool;
     // Auxiliary requests such as session naming do not need conversation tool rules.
     bool include_tool_instructions{true};
+    // Note steps: the task text that comes after the prompt text.
+    // Empty for all other requests.
+    std::string step_instruction;
     // Native File Search store IDs. Empty for application retrieval.
     std::vector<std::string> library_store_ids;
     std::optional<LibrarySearchScope> library_search;

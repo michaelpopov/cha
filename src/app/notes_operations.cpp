@@ -56,6 +56,15 @@ nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, 
     return impl_->notes->compress_note(id, epoch, skip_ineligible);
 }
 
+std::shared_ptr<OperationReply> Application::compress_summary_note(std::string connection_id,
+    std::int64_t id, std::uint64_t epoch) {
+    return impl_->notes->compress_summary_note(std::move(connection_id), id, epoch);
+}
+
+std::shared_ptr<OperationReply> Application::test_notes_flex(std::string provider_id, std::uint64_t epoch) {
+    return impl_->notes->test_flex(std::move(provider_id), epoch);
+}
+
 nlohmann::json Application::note_compression_status(std::int64_t id, std::uint64_t epoch) {
     return impl_->notes->note_compression_status(id, epoch);
 }

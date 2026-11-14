@@ -322,8 +322,17 @@ describe('native CHA client', () => {
     expect(save).toHaveBeenCalledWith(settings);
     const invalid = createNativeChaClient(createFakeNativeBridge({
       'notesSettings.get': () => ({ compression_provider: 42 }),
+      'notesSettings.testFlex': () => ({ tier: 'flex' }),
     }));
     await expect(invalid.getNotesSettings()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(invalid.testNotesFlex('provider_7')).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
+  it('tests Flex with the selected provider ID', async () => {
+    const testFlex = vi.fn(() => ({}));
+    const client = createNativeChaClient(createFakeNativeBridge({ 'notesSettings.testFlex': testFlex }));
+    await expect(client.testNotesFlex('provider_7')).resolves.toBeUndefined();
+    expect(testFlex).toHaveBeenCalledExactlyOnceWith({ provider_id: 'provider_7' });
   });
 
   it('loads the forum system prompt using saved server settings', async () => {
@@ -688,8 +697,8 @@ describe('notes native client', () => {
   const note = noteItem({ id: 4, parent_id: 1, name: 'Draft' });
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
-  it('calls the six summary methods with their wire parameters', async () => {
-    const plan = { notes: [{ id: 4, name: 'Draft', has_l1: true, has_l2: false }] };
+  it('calls the seven summary methods with their wire parameters', async () => {
+    const plan = { notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: true, has_l2: false }] };
     const excluded = { ...note, summary_excluded: true };
     const handlers = {
       'notes.summaryPlan': vi.fn(() => plan),
@@ -697,6 +706,7 @@ describe('notes native client', () => {
       'notes.summaryCommit': vi.fn(() => ({})),
       'notes.summaryAbandon': vi.fn(() => ({})),
       'notes.summaryCancel': vi.fn(() => ({})),
+      'notes.summaryCompress': vi.fn(() => ({ compressed: true })),
       'notes.setSummaryExcluded': vi.fn(() => excluded),
     };
     const client = clientFor(handlers);
@@ -706,6 +716,7 @@ describe('notes native client', () => {
     expect(await client.summaryCommit(4, 'l1', document)).toBeUndefined();
     expect(await client.summaryAbandon(1, 'l3')).toBeUndefined();
     expect(await client.summaryCancel()).toBeUndefined();
+    expect(await client.summaryCompress(4)).toBe(true);
     expect(await client.setNoteSummaryExcluded(4, true)).toEqual(excluded);
 
     expect(handlers['notes.summaryPlan']).toHaveBeenCalledExactlyOnceWith({ id: 1 });
@@ -716,16 +727,18 @@ describe('notes native client', () => {
     expect(handlers['notes.summaryCommit']).toHaveBeenCalledExactlyOnceWith({ id: 4, part: 'l1', document });
     expect(handlers['notes.summaryAbandon']).toHaveBeenCalledExactlyOnceWith({ id: 1, part: 'l3' });
     expect(handlers['notes.summaryCancel']).toHaveBeenCalledExactlyOnceWith({});
+    expect(handlers['notes.summaryCompress']).toHaveBeenCalledExactlyOnceWith({ id: 4 });
     expect(handlers['notes.setSummaryExcluded']).toHaveBeenCalledExactlyOnceWith({ id: 4, excluded: true });
   });
 
-  it('rejects malformed replies to all six summary methods', async () => {
+  it('rejects malformed replies to all seven summary methods', async () => {
     const client = clientFor({
-      'notes.summaryPlan': () => ({ notes: [{ id: 4, name: 'Draft', has_l1: 'true', has_l2: false }] }),
+      'notes.summaryPlan': () => ({ notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: 'true', has_l2: false }] }),
       'notes.summaryGenerate': () => ({ markdown: 42 }),
       'notes.summaryCommit': () => null,
       'notes.summaryAbandon': () => ({ unexpected: true }),
       'notes.summaryCancel': () => [],
+      'notes.summaryCompress': () => ({ compressed: 'yes' }),
       'notes.setSummaryExcluded': () => ({ ...note, folder_summary: true }),
     });
     await expect(client.summaryPlan(1)).rejects.toBeInstanceOf(ChaProtocolError);
@@ -733,6 +746,7 @@ describe('notes native client', () => {
     await expect(client.summaryCommit(4, 'l1', document)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryAbandon(1, 'l3')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryCancel()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryCompress(4)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.setNoteSummaryExcluded(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
   });
 

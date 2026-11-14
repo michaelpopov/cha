@@ -69,6 +69,17 @@ struct NotesService::Impl {
     void notify_compression(std::int64_t id, std::uint64_t epoch) noexcept;
     void retire_compression(std::int64_t id, const std::shared_ptr<CompressionControl>& control,
         std::uint64_t epoch, EventSeverity severity, const std::string& message) noexcept;
+    // Caller holds lifecycle_mutex. Returns nothing when skip_ineligible skips the note.
+    std::optional<NoteText> compression_source_locked(std::int64_t id, bool skip_ineligible);
+    struct CompressionResult {
+        enum class Kind { saved, discarded, cancelled, failed } kind;
+        std::string failure;
+    };
+    // The worker body of both compression entry points. It records the outcome
+    // in Events and retires the reservation.
+    CompressionResult run_compression(const std::shared_ptr<CompressionControl>& control,
+        const SharedCharacterDefinition& definition, const std::string& instruction, const NoteText& note,
+        std::uint64_t epoch, std::atomic_bool& cancel, bool serialized);
 
     struct SummaryCall {
         std::string connection_id;

@@ -62,7 +62,7 @@ async function nativeParity() {
 
     await select('Book');
     await action('Book', 'Summarize');
-    await progress('Note 1 of 2');
+    // Both notes start at the same time, so the dialog shows the last started note.
     await progress('Note 2 of 2');
     await finish();
     await select('Summary');
@@ -76,13 +76,13 @@ async function nativeParity() {
     completed.push('folder progress, Summary headings, and version dots');
 
     await action('Book', 'Summarize');
-    await progress('Note 1 of 2');
+    await progress('Note 2 of 2');
     await finish();
     const second = JSON.stringify((await summaryText(2)).getJSON());
     completed.push('folder Summary refreshed');
 
     await action('Book', 'Summarize');
-    const delayed = await progress('Note 1 of 2');
+    const delayed = await progress('Note 2 of 2');
     await until('provider holding the section request', async () =>
       (await fetch('/summary-request-held', { cache: 'no-store' })).ok);
     await click('Cancel', delayed);

@@ -101,6 +101,7 @@ export type NoteContent = components['schemas']['NoteContent'];
 export type SummaryPlan = components['schemas']['SummaryPlan'];
 export type SummaryTarget = components['schemas']['SummaryTarget'];
 export type SummaryGenerated = components['schemas']['SummaryGenerated'];
+export type SummaryCompressed = components['schemas']['SummaryCompressed'];
 export type SummaryGeneratePart = components['schemas']['SummaryGenerateRequest']['part'];
 export type SummaryCommitPart = components['schemas']['SummaryCommitRequest']['part'];
 export type NoteTextMode = components['schemas']['NoteTextMode'];
@@ -212,6 +213,8 @@ export interface NotesClient {
   summaryCommit(id: number, part: SummaryCommitPart, document: Record<string, unknown>): Promise<void>;
   summaryAbandon(id: number, part: SummaryCommitPart): Promise<void>;
   summaryCancel(): Promise<void>;
+  // Resolves true when it saved a new Compressed version.
+  summaryCompress(id: number): Promise<boolean>;
   setNoteSummaryExcluded(id: number, excluded: boolean): Promise<NoteItem>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;
@@ -327,6 +330,7 @@ export interface ChaClient {
   getNotesSettings(): Promise<NotesSettings>;
   listEvents(): Promise<ActivityEvent[]>;
   saveNotesSettings(settings: NotesSettings): Promise<NotesSettings>;
+  testNotesFlex(providerId: string): Promise<void>;
   getWebSearchSettings(): Promise<WebSearchSettings>;
   saveWebSearchSettings(settings: WebSearchSettings): Promise<WebSearchSettings>;
   getVoiceOutputSettings(): Promise<VoiceOutputSettings | null>;

@@ -101,6 +101,41 @@ describe('summarizing a notes folder', () => {
     expect(editor().getText()).toBe('Updated content');
     expect(editor().isEditable).toBe(false);
   });
+
+  it.each([true, false])('reloads an open Compressed version only when the run made it (%s)', async made => {
+    const folder = noteItem({ id: 10, kind: 'folder', name: 'Study' });
+    const source = noteItem({ id: 5, parent_id: folder.id, name: 'Chapter', has_l1: true, has_l2: true });
+    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: documentFor('Chapter text') }));
+    const compressed = deferred<boolean>();
+    render(<App client={fixtureClient({
+      listNoteItems: async () => [folder, source],
+      getNote,
+      summaryPlan: async () => ({ notes: [
+        { id: source.id, name: source.name, has_compressed: false, has_l1: true, has_l2: true },
+      ] }),
+      summaryCompress: () => compressed.promise,
+      summaryGenerate: async (_id, part) => part === 'l3_section' ? 'Section' : 'Overview',
+      summaryCommit: async () => {},
+    })} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
+    fireEvent.click(await screen.findByRole('treeitem', { name: 'Chapter' }));
+    await screen.findByText('Chapter text');
+    fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Compressed' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
+      .toHaveAttribute('title', 'Compressed mode; showing full text'));
+    getNote.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
+    const summarize = screen.getByRole('menuitem', { name: 'Summarize' });
+    await waitFor(() => expect(summarize).toBeEnabled());
+    fireEvent.click(summarize);
+    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
+    await act(async () => compressed.resolve(made));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    if (made) expect(getNote).toHaveBeenCalledExactlyOnceWith(source.id, 'compressed');
+    else expect(getNote).not.toHaveBeenCalled();
+  });
 });
 
 describe('saving session summaries', () => {

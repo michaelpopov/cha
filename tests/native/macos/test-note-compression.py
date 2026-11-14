@@ -16,6 +16,7 @@ REPOSITORY = Path(__file__).resolve().parents[3]
 
 def main():
     requests = []
+    systems = []
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -25,6 +26,7 @@ def main():
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             text = body['messages'][-1]['content']
             requests.append(text)
+            systems.append(body['messages'][0]['content'])
             if len(requests) == 1 or 'SLOW_FOLDER' in text:
                 # Hold the response until native cancellation closes the socket.
                 # A test-only bound prevents a failed probe from hanging cleanup.
@@ -88,6 +90,9 @@ def main():
             assert counts['SINGLE'] == 2 and counts['FAST_NESTED'] == 2, counts
             # A may be cancelled before its provider transfer starts.
             assert counts['SLOW_FOLDER'] <= 1 and len(requests) == sum(counts.values()), counts
+            # The fixed system prompt comes first, and the compression prompt follows the note.
+            assert all(system.startswith('The user message contains a note.') for system in systems), systems
+            assert all('COMPRESSION RULES' in text for text in requests), [text[-200:] for text in requests]
         finally:
             server.shutdown()
             server.server_close()

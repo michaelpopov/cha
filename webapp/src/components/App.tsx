@@ -1168,8 +1168,9 @@ export function App({
           // Disable Cancel before the folder commit is sent.
           else flushSync(() => setCompression(progress));
         });
-        reload = (state.noteTextMode === 'l1' || state.noteTextMode === 'l2')
-          && noteId !== null && result.targetIds.includes(noteId);
+        reload = noteId !== null && ((state.noteTextMode === 'l1' || state.noteTextMode === 'l2')
+          ? result.targetIds.includes(noteId)
+          : state.noteTextMode === 'compressed' && result.compressedIds.includes(noteId));
         if (result.folderSummaryCommitted) {
           reload ||= noteItems.some(item => item.id === noteId && item.parent_id === source.id
             && (item.folder_summary || item.kind === 'annotation'));

@@ -23,11 +23,15 @@ class LiveSessionManager;
 class ApiKeyStore;
 class OpenAiOAuth;
 struct RuntimeSettings;
+struct GenerationResult;
 }
 
 namespace cha::app {
 
 class BackgroundJobs;
+
+// The failure text of a completed Flex test request, or nothing when it passed.
+std::optional<std::string> flex_test_failure(const GenerationResult& result);
 
 // Borrows the application lifecycle lock and admission policy. Ordinary methods
 // acquire that lock; methods ending in _locked require the caller to hold it.
@@ -65,6 +69,12 @@ public:
     NoteItem set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch);
 
     nlohmann::json compress_note(std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
+    // The Compress step of a summary line: no wait for other compressions, and
+    // the reply settles after the save, skip, or failure.
+    std::shared_ptr<OperationReply> compress_summary_note(std::string connection_id,
+        std::int64_t id, std::uint64_t epoch);
+    // One small Flex request to the provider, for Notes settings.
+    std::shared_ptr<OperationReply> test_flex(std::string provider_id, std::uint64_t epoch);
     nlohmann::json note_compression_status(std::int64_t id, std::uint64_t epoch);
     void cancel_note_compression(std::int64_t id, std::uint64_t epoch);
 

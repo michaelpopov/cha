@@ -26,6 +26,8 @@ ANSWERS = {
     'section': 'Section result',
 }
 SOURCE_MARKERS = ('SINGLE_ORIGINAL', 'FIRST_CHAPTER', 'SECOND_CHAPTER', 'EXCLUDED', 'SMALL')
+# Compression, L1, L2, and L3 sections use this system prompt and send their own prompt after the note.
+SOURCE_SYSTEM_PROMPT = 'The user message contains a note.'
 
 
 def folder_summaries(database):
@@ -41,6 +43,7 @@ def main():
         shutil.copytree(os.environ.get('CHA_NATIVE_ASSETS', REPOSITORY / 'webapp/dist'), assets)
         requests = Counter()
         chat_requests = []
+        system_errors = []
         first_summary = []
         second_summary = []
         cancelled = threading.Event()
@@ -59,8 +62,12 @@ def main():
                 else:
                     assert messages[0]['role'] == 'system', messages[0]['role']
                     system = messages[0]['content']
-                    part = next((part for part, prompt in PROMPTS.items() if system.startswith(prompt)), 'l1')
                     source = messages[-1]['content']
+                    # The default L1 prompt is a copy of the compression prompt, so a Compress step counts as L1.
+                    part = 'overview' if system.startswith(PROMPTS['overview']) else next(
+                        (part for part in ('section', 'l2') if PROMPTS[part] in source), 'l1')
+                    if part != 'overview' and not system.startswith(SOURCE_SYSTEM_PROMPT):
+                        system_errors.append(system[:80])
                     # Chat Completions can wrap the source in a speaker prefix.
                     marker = 'overview' if part == 'overview' else next(
                         (marker for marker in SOURCE_MARKERS if marker in source), 'unknown')
@@ -134,6 +141,11 @@ def main():
                         WHERE v.compressed=1 AND v.level IN (1,2) ORDER BY n.name, v.level''').fetchall()
                     assert versions == [(name, level) for name in ('A First chapter', 'B Second chapter', 'Single')
                                         for level in (1, 2)], versions
+                    # The folder lines made the missing Compressed versions; the single-note run makes none.
+                    compressed = database.execute('''SELECT n.name FROM note_items n
+                        JOIN note_items v ON v.parent_id=n.id
+                        WHERE v.compressed=1 AND v.level=0 ORDER BY n.name''').fetchall()
+                    assert compressed == [('A First chapter',), ('B Second chapter',)], compressed
                     summary = folder_summaries(database)
                     assert database.execute('SELECT 1 FROM event_history WHERE severity=? AND message=?', (
                         'info', f'L3 section cancelled for “A First chapter” (note {first_chapter}).')).fetchone(), (
@@ -146,9 +158,13 @@ def main():
                 assert cancelled.wait(2), 'Held provider request was not cancelled'
                 expected = Counter({(part, marker): 1 for part in ('l1', 'l2')
                                     for marker in ('SINGLE_ORIGINAL', 'FIRST_CHAPTER', 'SECOND_CHAPTER')})
-                expected.update({('section', 'FIRST_CHAPTER'): 3, ('section', 'SECOND_CHAPTER'): 2,
+                # Each chapter's Compress step in the first folder run.
+                expected.update({('l1', 'FIRST_CHAPTER'): 1, ('l1', 'SECOND_CHAPTER'): 1})
+                # The cancelled run starts both sections at the same time, one in each line.
+                expected.update({('section', 'FIRST_CHAPTER'): 3, ('section', 'SECOND_CHAPTER'): 3,
                                  ('overview', 'overview'): 2})
                 assert requests == expected, requests
+                assert not system_errors, system_errors
                 assert len(chat_requests) == 1, len(chat_requests)
                 assert original in chat_requests[0], 'Chat provider did not receive the original note'
                 assert 'L1 result' not in chat_requests[0] and 'L2 result' not in chat_requests[0]

@@ -557,6 +557,9 @@ public:
 
     [[nodiscard]] nlohmann::json compress_note(
         std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
+    [[nodiscard]] std::shared_ptr<OperationReply> compress_summary_note(std::string connection_id,
+        std::int64_t id, std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> test_notes_flex(std::string provider_id, std::uint64_t epoch);
     [[nodiscard]] nlohmann::json note_compression_status(std::int64_t id, std::uint64_t epoch);
     void cancel_note_compression(std::int64_t id, std::uint64_t epoch);
     [[nodiscard]] std::int64_t import_note_book(

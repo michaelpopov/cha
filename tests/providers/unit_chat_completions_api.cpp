@@ -159,6 +159,45 @@ TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
     EXPECT_EQ(*result.result.usage.cache_write_tokens, 7U);
 }
 
+TEST(ChatCompletionsApi, PlacesTheStepInstructionAfterTheNote) {
+    using Json = nlohmann::json;
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"", "User"}, .prompt_text = "Note text"},
+        .include_tool_instructions = false,
+        .step_instruction = "Make L1.",
+    };
+    const Json system = {{"role", "system"}, {"content", "System prompt"}};
+    const Json joined = Json::array({system, {{"role", "user"}, {"content", "from User:\nNote text\n\nMake L1."}}});
+    struct Case { const char* host; Json messages; };
+    const Case cases[]{
+        {"api.openai.com", Json::array({
+            system,
+            {{"role", "user"}, {"content", "from User:\nNote text"}},
+            {{"role", "developer"}, {"content", "Make L1."}},
+        })},
+        {"openrouter.ai", joined},
+        {"example.test", joined},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.host);
+        ModelBackendConfig config{.host = item.host, .model = "test-model", .api = ProviderApi::chat_completions};
+        const Json body = Json::parse(build_chat_completions_request_body(request, config, "System prompt"));
+        EXPECT_EQ(body["messages"], item.messages);
+    }
+}
+
+TEST(ChatCompletionsApi, ReportsTheServedTierOfANonStreamingBody) {
+    Output output;
+    const GenerationResult result = decode_chat_completions_response(
+        R"({"service_tier":"default","choices":[{"message":{"content":"OK"},"finish_reason":"stop"}]})",
+        ReasoningFormat::automatic, output.sink());
+    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(result.service_tier, "default");
+    EXPECT_EQ(decode_chat_completions_response(R"({"choices":[{"message":{"content":"OK"}}]})",
+        ReasoningFormat::automatic, output.sink()).service_tier, "");
+}
+
 TEST(ChatCompletionsApi, ResolvesNonStreamingCacheUsage) {
     struct Case {
         const char* body;

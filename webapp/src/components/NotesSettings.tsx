@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { publicErrorMessage, type NotesSettings, type ApiKeyDetail, type ProviderSummary } from '../api/client';
 import { StaleNotice, useFormReload } from '../detailRefresh';
 import { BackToSettings, LoadFailure, type SettingsScreenProps } from './SettingsShared';
@@ -10,6 +10,11 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
   const [keys, setKeys] = useState<ApiKeyDetail[]>([]);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testPassed, setTestPassed] = useState(false);
+  // A provider change, a vault switch, or leaving the panel starts a new number,
+  // so a late Flex test reply has no effect.
+  const testRun = useRef(0);
   const reload = useFormReload('notes-settings');
 
   function applySettings(value: { config: NotesSettings; providers: ProviderSummary[] }) {
@@ -38,6 +43,12 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
     return () => { current = false; };
   }, [client, reload.epoch, reload.attempt]);
 
+  useEffect(() => {
+    setTesting(false);
+    setTestPassed(false);
+    return () => { testRun.current += 1; };
+  }, [reload.epoch]);
+
   const dirty = settings !== null && saved !== null
     && (settings.compression_provider !== saved.compression_provider
       || settings.compression_reasoning_effort !== saved.compression_reasoning_effort
@@ -59,6 +70,22 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
     } finally { setPending(false); }
   }
 
+  async function testFlex() {
+    if (!settings?.compression_provider || testing) return;
+    const run = ++testRun.current;
+    setTesting(true);
+    setTestPassed(false);
+    setError(null);
+    try {
+      await client.testNotesFlex(settings.compression_provider);
+      if (run === testRun.current) setTestPassed(true);
+    } catch (failure: unknown) {
+      if (run === testRun.current) setError(publicErrorMessage(failure, 'Flex test failed.'));
+    } finally {
+      if (run === testRun.current) setTesting(false);
+    }
+  }
+
   return <section className="cha-screen cha-navigation" aria-label="Notes settings">
     <BackToSettings navigate={navigate} />
     {!settings && !error && <p className="cha-state-message" role="status">Loading notes settings…</p>}
@@ -69,7 +96,13 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
     {settings && <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
       <label>Compression provider<select className="cha-form-control" disabled={pending}
         value={settings.compression_provider}
-        onChange={(event) => setSettings({ ...settings, compression_provider: event.target.value })}>
+        onChange={(event) => {
+          testRun.current += 1;
+          setTesting(false);
+          setTestPassed(false);
+          setError(null);
+          setSettings({ ...settings, compression_provider: event.target.value });
+        }}>
         <option value="">Select provider</option>
         {providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}</option>)}
       </select></label>
@@ -89,7 +122,11 @@ export function NotesSettingsScreen({ client, navigate }: SettingsScreenProps) {
           {keys.map(key => <option key={key.id} value={key.id}>{key.display_name}</option>)}
         </select></label>
       </>}
+      {testPassed && <p className="cha-settings-saved" role="status"><span aria-hidden="true"
+        className="cha-settings-status-marker" /> Flex test passed.</p>}
       <div className="cha-settings-form-actions">
+        <button className="cha-button" type="button" disabled={!settings.compression_provider || testing}
+          onClick={() => void testFlex()}>{testing ? 'Testing…' : 'Test Flex API'}</button>
         <button className="cha-button cha-button-primary" type="submit"
           disabled={!dirty || pending || reload.blocked}>Save</button>
       </div>

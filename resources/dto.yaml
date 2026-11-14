@@ -2003,10 +2003,11 @@ components:
     SummaryTarget:
       type: object
       additionalProperties: false
-      required: [id, name, has_l1, has_l2]
+      required: [id, name, has_compressed, has_l1, has_l2]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         name: {type: string, minLength: 1}
+        has_compressed: {type: boolean}
         has_l1: {type: boolean}
         has_l2: {type: boolean}
 
@@ -2050,6 +2051,27 @@ components:
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         part: {type: string, enum: [l1, l2, l3]}
+
+    SummaryCompressRequest:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+
+    SummaryCompressed:
+      type: object
+      additionalProperties: false
+      required: [compressed]
+      properties:
+        compressed: {type: boolean}
+
+    NotesFlexTestRequest:
+      type: object
+      additionalProperties: false
+      required: [provider_id]
+      properties:
+        provider_id: {type: string, minLength: 1}
 
     NoteSummaryExcludedRequest:
       type: object

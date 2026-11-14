@@ -2747,6 +2747,63 @@ describe('notes settings', () => {
     expect(screen.getByLabelText('Effort')).toHaveValue('medium');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
+
+  const flexProviders = async () => [
+    { id: 'test', display_name: 'Test', model: 'fake', host: 'localhost' },
+    { id: 'provider_7', display_name: 'Notes model', model: 'fake', host: 'localhost' },
+  ];
+
+  it('tests Flex once with the selected unsaved provider and shows the result', async () => {
+    const user = userEvent.setup();
+    let finish!: () => void;
+    let fail!: (failure: unknown) => void;
+    const testNotesFlex = vi.fn(() => new Promise<void>((resolve, reject) => { finish = resolve; fail = reject; }));
+    const saveNotesSettings = vi.fn(async (settings) => settings);
+    render(<NotesSettingsScreen client={fixtureClient({
+      getNotesSettings: async () => ({ compression_provider: '', compression_reasoning_effort: 'high' }),
+      listProviders: flexProviders, testNotesFlex, saveNotesSettings,
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
+    const test = await screen.findByRole('button', { name: 'Test Flex API' });
+    expect(test).toBeDisabled();
+    await user.selectOptions(screen.getByLabelText('Compression provider'), 'Notes model');
+    await user.click(test);
+    expect(testNotesFlex).toHaveBeenCalledExactlyOnceWith('provider_7');
+    expect(test).toHaveTextContent('Testing…');
+    expect(test).toBeDisabled();
+    await act(async () => finish());
+    expect(await screen.findByRole('status')).toHaveTextContent('Flex test passed.');
+    expect(test).toHaveTextContent('Test Flex API');
+    expect(saveNotesSettings).not.toHaveBeenCalled();
+
+    await user.click(test);
+    await act(async () => fail(new ChaError('invalid_argument', 'CHA does not use Flex with this provider.')));
+    expect(await screen.findByRole('alert')).toHaveTextContent('CHA does not use Flex with this provider.');
+    expect(screen.queryByText('Flex test passed.')).not.toBeInTheDocument();
+    expect(testNotesFlex).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a Flex test reply after a provider change or after leaving the panel', async () => {
+    const user = userEvent.setup();
+    const replies: Array<() => void> = [];
+    const testNotesFlex = vi.fn(() => new Promise<void>(resolve => { replies.push(resolve); }));
+    const view = render(<NotesSettingsScreen client={fixtureClient({
+      getNotesSettings: async () => ({ compression_provider: 'test', compression_reasoning_effort: 'high' }),
+      listProviders: flexProviders, testNotesFlex,
+    })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
+    const test = await screen.findByRole('button', { name: 'Test Flex API' });
+    await user.click(test);
+    await user.selectOptions(screen.getByLabelText('Compression provider'), 'Notes model');
+    expect(test).toHaveTextContent('Test Flex API');
+    expect(test).toBeEnabled();
+    await act(async () => replies[0]());
+    expect(screen.queryByText('Flex test passed.')).not.toBeInTheDocument();
+
+    await user.click(test);
+    expect(testNotesFlex).toHaveBeenLastCalledWith('provider_7');
+    view.unmount();
+    await act(async () => replies[1]());
+    expect(testNotesFlex).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('session settings', () => {

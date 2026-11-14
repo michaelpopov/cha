@@ -59,6 +59,10 @@ std::string build_anthropic_request_body(
             messages.back()["content"].push_back({{"type", "text"}, {"text", message.content}});
         }
     }
+    if (!input.step_instruction.empty()) {
+        if (text_sizes) text_sizes->conversation_bytes += input.step_instruction.size();
+        body["messages"].back()["content"].push_back({{"type", "text"}, {"text", input.step_instruction}});
+    }
     if (input.maintenance_tool) add_maintenance_tools(body, ProviderApi::anthropic);
     if (input.web_search_tool) add_web_search_tool(body, ProviderApi::anthropic);
     if (input.web_read_tool) add_web_read_tool(body, ProviderApi::anthropic);

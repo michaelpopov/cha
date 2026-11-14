@@ -131,6 +131,46 @@ TEST(ResponsesApi, BuildsRequestFieldsAndMapsRoles) {
     }
 }
 
+TEST(ResponsesApi, PlacesTheStepInstructionAfterTheNote) {
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"", "User"}, .prompt_text = "Note text"},
+        .include_tool_instructions = false,
+        .step_instruction = "Make L1.",
+    };
+    const Json joined = Json::array({{{"role", "user"}, {"content", "from User:\nNote text\n\nMake L1."}}});
+    struct Case { const char* host; Json input; };
+    const Case cases[]{
+        {"api.openai.com", Json::array({
+            {{"role", "user"}, {"content", "from User:\nNote text"}},
+            {{"role", "developer"}, {"content", "Make L1."}},
+        })},
+        {"openrouter.ai", joined},
+        {"example.test", joined},
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.host);
+        ModelBackendConfig config = responses_config();
+        config.host = item.host;
+        RequestTextSizes sizes;
+        const Json body = Json::parse(build_responses_request_body(request, config, "System prompt", &sizes));
+        EXPECT_EQ(body["instructions"], "System prompt");
+        EXPECT_EQ(body["input"], item.input);
+        EXPECT_EQ(sizes.conversation_bytes, std::string("from User:\nNote text").size() + 8);
+    }
+}
+
+TEST(ResponsesApi, ReportsTheServedTierOfANonStreamingBody) {
+    const std::string output = R"("output":[{"type":"message","role":"assistant",)"
+        R"("content":[{"type":"output_text","text":"OK"}]}])";
+    Output sink;
+    const GenerationResult flex = decode_responses_response(
+        R"({"status":"completed","service_tier":"flex",)" + output + "}", sink.sink());
+    EXPECT_EQ(flex.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(flex.service_tier, "flex");
+    EXPECT_EQ(decode_responses_response(R"({"status":"completed",)" + output + "}", sink.sink()).service_tier, "");
+}
+
 TEST(ResponsesApi, SubscriptionBodyUsesFallbackInstructionsAndOmitsExtras) {
     Transcript transcript;
     GenerationRequest request = make_request(

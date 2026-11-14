@@ -85,6 +85,8 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_export:
     case Method::vault_r2_download:
     case Method::notes_summary_generate:
+    case Method::notes_summary_compress:
+    case Method::notes_settings_test_flex:
     case Method::session_summary_generate:
     case Method::notes_read_page:
     case Method::cloud_store_list:
@@ -1164,6 +1166,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = nlohmann::json::object();
                 break;
             }
+            case Method::notes_settings_test_flex:
+                require_only_keys(params, {"provider_id"});
+                start_background(connection_id, id,
+                    application.test_notes_flex(require_identifier(params, "provider_id"), epoch));
+                return;
             case Method::provider_test: {
                 const std::string provider_id =
                     require_identifier(params, "provider_id");
@@ -1481,6 +1488,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 application.cancel_summary_parts(connection_id, epoch);
                 result = nlohmann::json::object();
                 break;
+            case Method::notes_summary_compress:
+                require_only_keys(params, {"id"});
+                start_background(connection_id, id, application.compress_summary_note(connection_id,
+                    static_cast<std::int64_t>(require_safe_id(params, "id")), epoch), true);
+                return;
             case Method::notes_compress_start:
                 if (params.contains("skip_ineligible")) require_only_keys(params, {"id", "skip_ineligible"});
                 else require_only_keys(params, {"id"});

@@ -1,4 +1,4 @@
-import type { NoteItem, SummaryGenerated, SummaryPlan, SummaryTarget } from './client';
+import type { NoteItem, SummaryCompressed, SummaryGenerated, SummaryPlan, SummaryTarget } from './client';
 import { isRecord } from './guards';
 
 export function isNoteId(value: unknown): value is number {
@@ -44,9 +44,10 @@ export function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
 
 function isSummaryTarget(value: unknown): value is SummaryTarget {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'name', 'has_l1', 'has_l2'])
+    && hasExactKeys(value, ['id', 'name', 'has_compressed', 'has_l1', 'has_l2'])
     && isNoteId(value.id)
     && typeof value.name === 'string' && value.name.length > 0
+    && typeof value.has_compressed === 'boolean'
     && typeof value.has_l1 === 'boolean' && typeof value.has_l2 === 'boolean';
 }
 
@@ -54,6 +55,12 @@ export function isSummaryPlan(value: unknown): value is SummaryPlan {
   return isRecord(value)
     && hasExactKeys(value, ['notes'])
     && Array.isArray(value.notes) && value.notes.every(isSummaryTarget);
+}
+
+export function isSummaryCompressed(value: unknown): value is SummaryCompressed {
+  return isRecord(value)
+    && hasExactKeys(value, ['compressed'])
+    && typeof value.compressed === 'boolean';
 }
 
 export function isSummaryGenerated(value: unknown): value is SummaryGenerated {

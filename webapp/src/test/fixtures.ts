@@ -326,6 +326,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     getNotesSettings: async () => ({ compression_provider: '', compression_reasoning_effort: 'high' }),
     listEvents: async () => [],
     saveNotesSettings: async (settings) => settings,
+    testNotesFlex: unavailable('notesSettings.testFlex'),
     disableJev: async () => {},
     getWebSearchSettings: async () => ({
       provider: 'brave', api_key: '', tool_enabled: false,
@@ -433,6 +434,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     summaryCommit: unavailable('notes.summaryCommit'),
     summaryAbandon: unavailable('notes.summaryAbandon'),
     summaryCancel: unavailable('notes.summaryCancel'),
+    summaryCompress: unavailable('notes.summaryCompress'),
     setNoteSummaryExcluded: unavailable('notes.setSummaryExcluded'),
     compressNote: unavailable('notes.compressStart'),
     ...overrides,

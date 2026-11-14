@@ -132,6 +132,15 @@ std::string build_responses_request_body(
             {"content", message.content},
         });
     }
+    if (!input.step_instruction.empty()) {
+        // Direct OpenAI keeps the note as a complete user message, so its cache
+        // breakpoint is at the end of the note text.
+        if (text_sizes) text_sizes->conversation_bytes += input.step_instruction.size();
+        if (is_direct_openai_host(config.host))
+            messages.push_back({{"role", "developer"}, {"content", input.step_instruction}});
+        else
+            messages.back()["content"].get_ref<std::string&>() += "\n\n" + input.step_instruction;
+    }
 
     Json body{
         {"model", config.model},
@@ -622,6 +631,7 @@ GenerationResult decode_responses_response(
         collect_tool_calls, "Response completed without answer content", {},
         argument_limit, maintenance);
     result.refused = has_refusal(*output);
+    result.service_tier = first_string_field(value, "service_tier");
     return result;
 }
 

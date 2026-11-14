@@ -56,6 +56,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     summaryCommit: async () => undefined,
     summaryAbandon: async () => undefined,
     summaryCancel: async () => undefined,
+    summaryCompress: async () => { throw new Error('notes.summaryCompress'); },
     setNoteSummaryExcluded: async () => { throw new Error('notes.setSummaryExcluded'); },
     compressionStatus: async () => ({ pending: false }),
     cancelCompression: async () => undefined,
