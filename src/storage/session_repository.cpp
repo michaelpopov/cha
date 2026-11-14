@@ -8,6 +8,7 @@
 #include "storage/sync_chat.h"
 #include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
+#include "util/crypto.h"
 #include "util/logging.h"
 #include "util/path_name.h"
 #include "workspace/workspace.h"
@@ -256,6 +257,10 @@ void SessionRepository::MaintenanceGuard::retarget(
     if (path_changed) {
         SessionJournal welcome(repository_->temporary_database_path_);
         welcome.clear_folder_associations();
+        if (repository_->temporary_session_per_vault_) {
+            repository_->temporary_database_path_ =
+                repository_->prepare_temporary_database(database_path);
+        }
     }
     repository_->database_path_ = std::move(database_path);
     repository_->database_password_ = std::move(database_password);
@@ -301,30 +306,51 @@ SessionRepository::SessionRepository(
       database_path_(std::move(database_path)),
       database_password_(std::move(database_password)),
       temporary_identity_(std::move(temporary.identity)),
-      temporary_label_(std::move(temporary.label)) {
+      temporary_label_(std::move(temporary.label)),
+      temporary_session_per_vault_(temporary.per_vault),
+      welcome_directory_(std::move(welcome_directory)) {
     if (!std::filesystem::is_regular_file(database_path_)) {
         throw std::runtime_error(
             "Workspace session database path '" + utf8_path(database_path_)
             + "' is not a regular file");
     }
-    if (!std::filesystem::is_directory(welcome_directory)) {
+    if (!std::filesystem::is_directory(welcome_directory_)) {
         throw std::runtime_error(
-            "Welcome directory '" + utf8_path(welcome_directory)
+            "Welcome directory '" + utf8_path(welcome_directory_)
             + "' is not a directory");
     }
     recover_sessions();
     synchronize_forums();
 
-    temporary_database_path_ = welcome_directory / "sessions.sqlite3";
+    temporary_database_path_ = prepare_temporary_database(database_path_);
+}
+
+std::filesystem::path SessionRepository::prepare_temporary_database(
+    const std::filesystem::path& vault_database) const {
+    auto path = welcome_directory_ / "sessions.sqlite3";
+    if (temporary_session_per_vault_) {
+        // Use the vault path so replacing or renaming the same vault keeps its Welcome.
+        const auto digest = sha256_digest(utf8_path(vault_database));
+        constexpr char hex[] = "0123456789abcdef";
+        std::string filename;
+        filename.reserve(digest.size() * 2);
+        for (const auto byte : digest) {
+            filename.push_back(hex[byte >> 4]);
+            filename.push_back(hex[byte & 0xf]);
+        }
+        path = welcome_directory_ / (filename + ".sqlite3");
+        if (std::filesystem::exists(path)) return path;
+    }
     if (!create_session_database(
-            temporary_database_path_,
+            path,
             {.id = temporary_identity_.session_id,
              .forum = temporary_identity_.forum_id,
              .label = temporary_label_})) {
         throw std::runtime_error(
             "Failed to create the temporary session database");
     }
-    initialize_workspace_session_database_runtime(temporary_database_path_);
+    initialize_workspace_session_database_runtime(path);
+    return path;
 }
 
 SessionRepository::~SessionRepository() {

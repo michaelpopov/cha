@@ -170,6 +170,9 @@ selections for the next start.
 CHA saves the open note, changes the vault, and shows the Welcome
 conversation. The text that you typed in a prompt but did not send is removed.
 
+In ChaWeb, use the command `/open`. See
+[Change and refresh the vault](#change-and-refresh-the-vault).
+
 **Setup:** The administrator guide describes how to create and manage vaults.
 
 ### A second window
@@ -1155,7 +1158,7 @@ ChaWeb is the browser client of CHA. It is made for a phone, and it also works
 in a desktop browser.
 
 **Setup:** An administrator installs ChaWeb and gives you its address. ChaWeb
-uses one vault. Forums, characters and voices come from that vault.
+uses one vault at a time. Forums, characters and voices come from that vault.
 
 ### Screens
 
@@ -1235,6 +1238,51 @@ In ChaWeb you can only read notes. You cannot change them. ChaWeb shows the
 full text of a note. It does not show L1, L2 and the compressed version. It
 shows the **Summary** note of a folder as a regular note.
 
+### Change and refresh the vault
+
+**Setup:** The commands that use R2 need R2 credentials in the active vault.
+The commands do not work with protected vaults. See the administrator guide.
+
+ChaWeb has no **Vault** list. Type these commands in the session
+**Entrance** of the forum **Welcome**:
+
+| Command | Result |
+| --- | --- |
+| `/open <name>` | Opens the vault `<name>`. If the server does not have this vault, ChaWeb gets it from R2 first. |
+| `/download` | Shows a warning. It changes nothing. |
+| `/download confirm` | Replaces the active vault with its copy in R2. |
+
+- To refresh a vault that is not active, open it first. Then type
+  `/download` and `/download confirm`.
+- You can also ask the Assistant in normal words, for example “Refresh this
+  vault”. It tells you the command to type. It does not do the command.
+- For a vault on the server, capital letters in the name are not important.
+  For a vault from R2, type the name of its R2 file without `.sqlite3`, with
+  the correct capital letters. The result notice shows the vault name. Use
+  that name the next time.
+- Only one vault command can run at a time.
+
+> **WARNING:** `/download confirm` replaces the complete vault on the server:
+> the configuration, the sessions and the notes. Changes that are not in the
+> copy in R2 are lost. Only the administrator can get them back from a backup
+> file. The stored audio of the vault is lost.
+
+> **CAUTION:** `/open` and `/download confirm` stop all answers and all work
+> in progress, in all browsers that use this ChaWeb. `/open` does not ask for
+> a confirmation.
+
+During and after a command:
+
+- ChaWeb shows a notice when the command starts, and a notice with the
+  result. Each vault has its own Welcome conversation. The start notice is
+  in the Welcome of the old vault, and the result notice is in the Welcome
+  of the new vault.
+- During a transfer from R2, ChaWeb does not answer. This can take some
+  minutes. If the page shows an error, wait. The page recovers after the
+  transfer.
+- After the vault changes, each open ChaWeb page goes to Welcome. Text that
+  you typed but did not send is lost. Audio playback and voice input stop.
+
 ### If the connection stops
 
 ChaWeb shows **Reconnecting** and tries again by itself. If that fails, an
@@ -1253,7 +1301,9 @@ not there.
 - Creation and change of notes.
 - Compression, summaries, audio and export of notes.
 - Pictures.
-- Settings and the selection of a vault.
+- Settings, and the **Vault** list. To change the vault, use the commands in
+  [Change and refresh the vault](#change-and-refresh-the-vault).
+- The upload of a vault to R2.
 
 ---
 
@@ -1274,6 +1324,8 @@ Type these at the start of a chat message.
 | `/clear` | Deletes all messages of the session, with no confirmation. |
 | `##xxxxxx` (a Ref ID, as the only text) | Adds that note to the chat. |
 | A full file path (as the only text) | Adds that text file to the chat. |
+| `/open <name>` | ChaWeb, Welcome only: opens a vault. See [Change and refresh the vault](#change-and-refresh-the-vault). |
+| `/download`, `/download confirm` | ChaWeb, Welcome only: replaces the active vault with its copy in R2. See [Change and refresh the vault](#change-and-refresh-the-vault). |
 
 Rules for `@Name`:
 
@@ -1374,3 +1426,10 @@ screens give Ref IDs for notes only, so this command has no use in daily work.
 | **The summary could not be saved. Check Settings → Events and try again.** | Read the newest entries in [Events](#events). |
 | **A store with this name already exists.** | Rename the folder, or ask an administrator to delete the old store. |
 | **This folder has no notes to upload.** | Add notes with text to the folder. |
+| **Vault commands are available in ChaWeb Welcome.** | In the desktop application, use the **Vault** list. |
+| **Type /download or /download confirm.** | Type the command again, in this form. |
+| `Type /open <name>.` | Type the name of the vault after `/open`. |
+| **A vault command is running. Try again when it finishes.** | Wait for the result notice. |
+| **Open failed for vault '…'. R2 database object '…' was not found. Remote lookup requires the R2 file name without .sqlite3, in its exact case.** | Type the name of the R2 file with the correct capital letters. Ask the administrator for the name. |
+| **Download failed for vault '…'.** … / **Open failed for vault '…'.** … | Read the reason in the message. If you cannot correct it, ask the administrator. |
+| **The application is unavailable. Restart the daemon.** | Ask the administrator to start ChaWeb again. |

@@ -341,8 +341,9 @@ Application::Impl::Impl(
       d1_test_transport(std::move(d1_transport)) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
-        {std::string(entrance_id), std::string(welcome_id)},
-        std::string(welcome_name)};
+        .identity = {std::string(entrance_id), std::string(welcome_id)},
+        .label = std::string(welcome_name),
+        .per_vault = command.chaweb_host};
     sessions = std::make_shared<SessionRepository>(
         [this] { return store->snapshot(); },
         store->database_path(),
@@ -479,8 +480,13 @@ ApplicationCapabilities Application::Impl::capabilities() const noexcept {
     };
 }
 
+bool Application::Impl::shutdown_requested() const noexcept {
+    return stopping_flag.load()
+        || (command.host_stop_requested && command.host_stop_requested->load());
+}
+
 std::optional<ErrorCode> Application::Impl::admit_locked(std::uint64_t epoch) const {
-    if (unusable || stopping_flag || stopped) {
+    if (unusable || shutdown_requested() || stopped) {
         return ErrorCode::application_unavailable;
     }
     const ApplicationState current_state = state.load();

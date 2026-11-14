@@ -156,6 +156,7 @@ ApplicationCommand load_daemon_command(const std::filesystem::path& directory) {
         .log_level = settings.log_level,
         .warnings = settings.warnings,
         .chaweb_host = true,
+        .host_stop_requested = &stop_requested,
     };
 }
 

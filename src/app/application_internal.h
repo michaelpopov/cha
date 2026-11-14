@@ -32,6 +32,8 @@ struct Application::Impl {
 
     [[nodiscard]] ApplicationCapabilities capabilities() const noexcept;
 
+    [[nodiscard]] bool shutdown_requested() const noexcept;
+
     [[nodiscard]] std::optional<ErrorCode> admit_locked(std::uint64_t epoch) const;
 
     void require_admitted(std::uint64_t epoch) const;

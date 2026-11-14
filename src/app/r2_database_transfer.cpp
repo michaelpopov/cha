@@ -710,6 +710,8 @@ void publish_downloads(
     TemporaryPath& vault_temporary,
     const std::filesystem::path& database,
     const std::filesystem::path& vault) {
+    // BeforeR2Install may open the temporary database and recreate sidecars.
+    remove_sidecars(database_temporary.get());
     std::array targets{database, vault};
     std::array<TemporaryPath*, 2> temporaries{
         &database_temporary, &vault_temporary};
@@ -1199,7 +1201,8 @@ R2DatabaseTransfer download_database_from_r2(
     });
 
     cleanup_downloaded_database(database_temporary.get(), database_password);
-    remove_sidecars(database_temporary.get());
+    // BeforeR2Install can clear the D1 inbox. After it starts, finish the installation.
+    if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
     if (before_install) {
         auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
         definition.source = vault;
@@ -1335,7 +1338,8 @@ R2DatabaseTransfer download_new_database_from_r2(
         throw std::runtime_error("R2 download is not a valid CHA database");
     }
     cleanup_downloaded_database(database_temporary.get(), {});
-    remove_sidecars(database_temporary.get());
+    // BeforeR2Install can clear the D1 inbox. After it starts, finish the installation.
+    if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
     if (before_install) {
         auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
         definition.source = vault;

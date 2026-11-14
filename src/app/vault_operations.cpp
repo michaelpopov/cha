@@ -250,7 +250,7 @@ std::optional<CommandResult> Application::Impl::VaultMaintenance::submit_welcome
 }
 
 void Application::Impl::VaultMaintenance::post_welcome_notice(std::string text, std::string error_code) {
-    if (app.state.load() != ApplicationState::running || app.stopping_flag) return;
+    if (app.state.load() != ApplicationState::running || app.shutdown_requested()) return;
     if (!app.live_sessions->post_session_notice(app.published_epoch.load(),
             {std::string(entrance_id), std::string(welcome_id)}, std::move(text), std::move(error_code))) {
         log_warn("Could not post the vault command notice.");
@@ -959,7 +959,7 @@ VaultDefinition Application::Impl::VaultMaintenance::save_r2_vault_locked(
 
     (void)download_new_database_from_r2(
         destination.data, destination.source, database_name, r2,
-        [this] { return app.stopping_flag.load(); }, before_install);
+        [this] { return app.shutdown_requested(); }, before_install);
     if (!from_welcome) {
         try {
             register_candidate(load_vault_definition_file(
@@ -1315,7 +1315,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
             }
             const auto transferred = download_database_from_r2(
                 active.data, active.source, r2, R2DatabaseLease::already_held,
-                app.active_password, [this] { return app.stopping_flag.load(); }, before_install);
+                app.active_password, [this] { return app.shutdown_requested(); }, before_install);
             downloaded_vault = load_vault_definition_file(app.command.config_directory, active.source);
             vault::assign_vault_paths(*downloaded_vault, app.command);
             const auto configured = std::find_if(

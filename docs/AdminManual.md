@@ -1397,7 +1397,8 @@ for the other files that CHA makes next to a database.
 
 To select the active vault, use the **Vault** list at the bottom of the
 sidebar. See the User Manual. CHA writes the selection into `app.toml`, and
-starts with that vault the next time.
+starts with that vault the next time. In ChaWeb, use the command `/open`. See
+[Download and open vaults](#download-and-open-vaults).
 
 ### Create a vault
 
@@ -1527,6 +1528,10 @@ back. Use it to:
 
 R2 storage is a manual function. Each upload sends the full database. For the
 automatic transfer of changes, see [D1 synchronization](#20-d1-synchronization).
+
+This chapter describes the desktop application. ChaWeb cannot upload. To
+download in ChaWeb, use the commands `/download` and `/open`. See
+[Download and open vaults](#download-and-open-vaults).
 
 ### What you need in Cloudflare
 
@@ -1733,6 +1738,11 @@ Until step 6, the second computer does not synchronize, and no screen tells
 you so. The log contains **D1 sync stopped: download the vault from R2, or
 save the D1 credentials again.**
 
+For a ChaWeb server, do steps 1 and 2. If the active vault of the server has
+the R2 credentials, type `/open <name>` in ChaWeb in place of steps 3 to 6.
+CHA makes the table of the server and starts the synchronization. See
+[Download and open vaults](#download-and-open-vaults).
+
 ### Stop the synchronization
 
 1. Click **Settings → API Keys → D1 sync**.
@@ -1749,6 +1759,11 @@ stays in D1 and continues to collect records.
 - An R2 upload is possible only when all changes are sent to D1.
 - After **Download** on the active vault, CHA makes the table of this computer
   again, if it is missing, and synchronizes.
+- In ChaWeb, `/download confirm` and `/open` from R2 delete the records that
+  wait in the table of the server for that vault. They keep the table.
+  `/open` of a vault of the server deletes no records. The desktop
+  application deletes no records. See
+  [Download and open vaults](#download-and-open-vaults).
 - **Import** and **Merge** keep the D1 credentials of the target vault. A new
   vault gets the D1 credentials of its source. See
   [Create a vault](#create-a-vault).
@@ -1760,7 +1775,7 @@ them. See [The log](#the-log). Search the log for `D1` and for `Skipped`.
 
 | Log message | Cause and action |
 | --- | --- |
-| `D1 sync stopped: download the vault from R2, or save the D1 credentials again.` | The table of this computer does not exist in D1. Click **Save D1 credentials** again, or use **Download** on the vault. |
+| `D1 sync stopped: download the vault from R2, or save the D1 credentials again.` | The table of this computer does not exist in D1. Click **Save D1 credentials** again, or use **Download** on the vault. In ChaWeb, type `/download confirm`, or open a different vault and then this vault again. |
 | `D1 rejected the API token.` | The token is wrong or has no permission. Save a correct token. |
 | `D1 request was rate limited (HTTP 429).` | CHA tries again in the next cycle. |
 | `D1 daily row read limit exceeded.` / `D1 daily row write limit exceeded.` | A limit of the Cloudflare account. CHA tries again later. |
@@ -1948,6 +1963,10 @@ configuration directory and the log of the server. ChaWeb has no Settings
 screens, so there the Assistant is the tool to change the configuration and to
 read the Events.
 
+The Assistant does not do the vault commands `/open` and `/download`. When you
+ask it to refresh the vault or to open a different vault, it tells you the
+command to type. See [Download and open vaults](#download-and-open-vaults).
+
 ### Its knowledge
 
 The knowledge of the Assistant about CHA is part of the application. You
@@ -2094,7 +2113,8 @@ for D1 at the time of the backup are sent again.
 
 ### Restore from a .bac file
 
-When **Download** replaces a vault, CHA keeps the replaced files:
+When **Download**, or `/download confirm` in ChaWeb, replaces a vault, CHA
+keeps the replaced files:
 `<database file>.bac` and `<definition file>.bac`. CHA has no command to
 restore them. To go back to the replaced vault:
 
@@ -2109,6 +2129,7 @@ restore them. To go back to the replaced vault:
 
 For a vault without a password, use R2. See
 [Get a vault that is not on this computer](#get-a-vault-that-is-not-on-this-computer).
+For a ChaWeb server, see [Download and open vaults](#download-and-open-vaults).
 
 For a protected vault, or without R2:
 
@@ -2160,7 +2181,9 @@ browser  →  nginx (HTTPS, one port for each user)  →  socket  →  cha-daemo
 
 - `cha-daemon` is the CHA program for the server. It has no window.
 - For each user, one `cha-daemon` process operates on one configuration
-  directory with one vault. The key `vault` in `app.toml` selects the vault.
+  directory with one active vault. The key `vault` in `app.toml` selects the
+  vault at the start. The command `/open` changes it. See
+  [Download and open vaults](#download-and-open-vaults).
 - systemd starts the process for a user when the first request comes
   (socket activation). The process then stays in operation.
 - nginx gives the ChaWeb files to the browser, does the HTTPS encryption, and
@@ -2271,6 +2294,12 @@ Then, before you add the user:
 The server does not create a first configuration. The directory must contain
 `app.toml`, a vault definition, and the database before the process starts.
 Each other `.toml` file in the directory must be a correct vault definition.
+
+For the commands `/download` and `/open` from R2, the vault must have R2
+credentials. The example vault has none, and the Assistant cannot save keys.
+Thus, to use R2 on the server, copy a vault with R2 credentials. The user can
+then get the other vaults with `/open`. See
+[Download and open vaults](#download-and-open-vaults).
 
 ### Add a user
 
@@ -2401,6 +2430,9 @@ ChaWeb has no Settings screens. You have these possibilities:
   comes to the server.
 - **A new copy.** Stop the process, replace the vault files with a new copy
   from the desktop, and start again.
+- **R2.** Upload the vault on the desktop. Then type `/download` and
+  `/download confirm` in ChaWeb. See
+  [Download and open vaults](#download-and-open-vaults).
 
 To stop the process of a user for work on its files, stop the socket too. If
 not, the next request starts the process again:
@@ -2411,13 +2443,194 @@ sudo systemctl stop cha@<user>.socket cha@<user>.service
 sudo systemctl start cha@<user>.socket
 ```
 
+### Download and open vaults
+
+ChaWeb has no **Vault** list and no **Download** button. It has two commands
+in their place. Type them in the session **Entrance** of the forum
+**Welcome**:
+
+| Command | Function |
+| --- | --- |
+| `/download` | Shows a warning and the command that continues. It changes nothing. |
+| `/download confirm` | Replaces the active vault with its copy in R2, and opens the vault again. |
+| `/open <name>` | Opens the vault `<name>` of this server. If the server has no vault with this name, CHA gets the vault from R2, adds it to the server, and opens it. |
+
+To refresh a vault that is not active, open it first. Then type `/download`
+and `/download confirm`.
+
+**Rules for the commands.**
+
+- The command must be the full message. Type the command words in small
+  letters. `/download yes` and `/download Confirm` are errors. `/Open` is not
+  a command.
+- `/download confirm` does not need `/download` before it. The warning only
+  gives information. It reserves nothing.
+- CHA does the commands itself. It sends nothing to the model. If you ask
+  the Assistant in normal words, it tells you the command to type. It does
+  not do the command.
+- The commands work only in Welcome. While the Assistant writes an answer
+  there, ChaWeb refuses them. In a different session, the text is not a
+  vault command. The desktop application refuses the commands. There, use
+  **Settings → Vaults**.
+- Only one vault command can run at a time.
+
+**Requirements.**
+
+- `/download`, and `/open` of a vault that is not on the server, need R2
+  credentials in the active vault. The example vault has none, and the
+  Assistant cannot save keys. Thus copy a vault with R2 credentials to the
+  server first. See [Prepare the vault of a user](#prepare-the-vault-of-a-user).
+- The target of a command cannot be a protected vault. `/download` refuses a
+  protected active vault. `/open` refuses a protected vault of the server and
+  a protected vault in R2. CHA does not ask for a password.
+- A protected active vault can be the start point. From it, `/open` can open
+  a vault without a password, also from R2 with the R2 credentials of the
+  protected vault.
+
+**Names for `/open`.**
+
+- The name is all the text after `/open`, with its spaces. CHA ignores the
+  spaces at the start and at the end.
+- CHA first looks for a vault of the server with this name. Capital letters
+  are not important here. This search does not use R2.
+- If no vault of the server has this name, the name is the name of the
+  database file in R2 without `.sqlite3`. Here capital letters are important.
+  For a vault that was renamed, this is not the vault name. See
+  [Get a vault that is not on this computer](#get-a-vault-that-is-not-on-this-computer).
+- The new vault gets the vault name from its definition in R2. If R2 has no
+  definition, the vault gets the file name. The result notice shows the
+  vault name. Use this name with `/open` the next time.
+- CHA writes `<name>.sqlite3` and a new definition file `vault-<N>.toml`
+  into the configuration directory. Before it changes something, it refuses
+  the vault if a vault of the server has the same vault name, or if the file
+  `<name>.sqlite3` already exists.
+- `/open` with the name of the active vault shows **Vault '…' is already
+  open.** and does nothing.
+
+**What the commands do.**
+
+`/download confirm`:
+
+1. CHA stops all work in progress of this ChaWeb process: the answers and
+   the note tasks of all sessions, in all browsers. It sends the changes to
+   D1 one last time.
+2. CHA downloads the database and the definition from R2 into temporary
+   files, and examines them.
+3. If the vault uses D1 synchronization, CHA deletes the records that wait
+   in the D1 table of this server for this vault. It keeps the table.
+4. CHA replaces the database and the definition. It keeps the replaced files
+   as `.bac` files, as **Download** on the desktop does. See
+   [Restore from a .bac file](#restore-from-a-bac-file).
+5. CHA opens the vault again and starts the D1 synchronization. If the D1
+   table of this server is missing, CHA makes it.
+
+`/open` of a vault of the server:
+
+1. CHA stops all work in progress, as in step 1 above.
+2. CHA opens the vault and starts the D1 synchronization. The vault gets the
+   records that wait in its D1 table. If the D1 table of this server is
+   missing, CHA makes it.
+
+`/open` of a vault from R2:
+
+1. CHA downloads the database and the definition into temporary files, and
+   examines them. The work in progress continues.
+2. If the vault uses D1 synchronization, CHA deletes the records that wait
+   in the D1 table of this server for that vault. The D1 credentials in the
+   downloaded vault select the D1 database. CHA keeps the table.
+3. CHA writes the files and adds the vault to the server.
+4. CHA stops all work in progress and opens the vault, as for a vault of the
+   server.
+
+After `/open`, CHA writes the new vault into the key `vault` of `app.toml`.
+The next start of the process opens this vault.
+
+> **WARNING:** `/download confirm` replaces the complete database of the
+> active vault. Changes that are not in the copy in R2 are only in the `.bac`
+> file, and the next download replaces that file. The stored audio of the
+> vault is lost, because the copy in R2 has none. CHA does not compare the
+> two copies. The copy in R2 can be older than the vault on the server.
+
+> **CAUTION:** The D1 records that CHA deletes do not come to the server.
+> They can contain changes that are newer than the copy in R2. To make the
+> copy in R2 as new as possible, upload the vault on the uploading computer
+> immediately before the command. The deletion does not stop the
+> synchronization. The other computers can send records immediately after
+> it, also records of old changes.
+
+> **CAUTION:** `/open` does not ask for a confirmation. It stops all work in
+> progress, in all browsers of this user, as `/download confirm` does. `/open`
+> from R2 can get an old copy of the vault.
+
+**The server during a command.**
+
+- During `/download confirm` and during `/open` from R2, the ChaWeb process
+  of the user answers no request until the command ends. ChaWeb has no
+  progress indicator. The start notice can show only at the end. The
+  processes of other users and the desktop applications continue as usual.
+- nginx waits a maximum of 75 seconds for an answer (`scgi_read_timeout` in
+  the nginx example). A request that waits longer fails in the page. The page
+  recovers after the end of the command. You do not have to start the
+  process again.
+- A second vault command during a command is refused with **A vault command
+  is running. Try again when it finishes.**, or it waits and then fails with
+  `vault_changed`.
+- If you stop the service during the transfer of `/open`, CHA stops the
+  transfer and does not add the vault. At the next start, the process opens
+  the vault that was active before.
+
+**The browsers after a change of the vault.**
+
+After `/open`, after `/download confirm`, and after each start of the
+process, the open pages have an old context. At its next request, each page
+gets the status `409` with the code `vault_changed`, and goes to Welcome. The
+page removes the text that the user did not send, closes the open session or
+note, and stops audio playback and voice input. It does not send a message
+again by itself. This also occurs after `/download confirm` of the same vault,
+and after a `/download confirm` that failed.
+
+**Notices.** In ChaWeb, each vault has its own Welcome conversation until the
+process stops. The warning, the start notice and the result notice are in the
+Welcome conversation of the vault that is active when CHA writes them. Thus
+after `/open`, the start notice is in the Welcome of the old vault, and the
+result notice is in the Welcome of the new vault.
+
+**If a command fails.** The result notice gives the reason. The log has the
+details. See [Messages](#32-messages).
+
+- A failed check changes nothing. Examples: no R2 credentials, a protected
+  vault, a name that is already in use, a database that is not in R2.
+- `/open` from R2: if the transfer, the examination or the D1 deletion
+  fails, CHA adds no vault. The active vault stays open, and the work in
+  progress continues.
+- `/download confirm`: CHA stopped the work in progress before the
+  transfer. If the transfer, the examination or the D1 deletion fails, CHA
+  opens the unchanged database again.
+- If CHA cannot reach D1, it cannot delete the records. Then it does not
+  install the vault. Try again when D1 can be reached.
+- If the last send to D1 before a change of the vault fails, CHA writes this
+  into the log and continues. After `/open`, these changes stay in the old
+  vault. They go to D1 when you open that vault again. After
+  `/download confirm`, they are only in the `.bac` file.
+- CHA does not restore D1 records that it deleted before a later step failed.
+- **Vault '…' was saved but could not be opened.** The vault is on the
+  server and registered, but it is not open. Type `/open <name>` again.
+- A failure after CHA closed or replaced the database can make the process
+  unavailable. ChaWeb then shows **The application is unavailable. Restart
+  the daemon.** Read the log, and start the process again with
+  `sudo systemctl restart cha@<user>.service`. CHA does not always open the
+  old vault again.
+
 ### What does not work on the server
 
 - The generation of note audio.
-- Vault commands: create, select, R2 transfer, import and export.
+- Vault commands other than `/open` and `/download`: create, rename,
+  protect, merge, delete, R2 upload, import and export.
 
-D1 synchronization works on the server. Each time the process starts, it
-makes the D1 table of the server if that table is missing.
+D1 synchronization works on the server. Each time the process starts, and
+each time `/open` or `/download confirm` opens a vault, CHA makes the D1 table
+of the server if that table is missing. `/open` of the active vault does not
+do this.
 
 ### Operate the service
 
@@ -2496,7 +2709,7 @@ steps in the opposite order:
 | `<db>` | The database of a vault. |
 | `<db>-wal`, `<db>-shm` | Work files of the database. They belong to the database. |
 | `<db>.cha-lock`, `<db>.cha-main-lock`, `<db>.cha-sessions/` | Lock files. CHA uses them to coordinate processes. You can ignore them. |
-| `<db>.bac`, `<definition file>.bac` | The vault that the last **Download** replaced. |
+| `<db>.bac`, `<definition file>.bac` | The vault that the last **Download**, or `/download confirm` in ChaWeb, replaced. |
 | `mirror/<vault name>/` | Readable copies of the sessions. |
 | `modify/<vault name>/` | The configuration files of **Export** and **Import**. |
 | `logs/cha.log`, `logs/cha.1.log` … | The log. |
@@ -2512,7 +2725,8 @@ account.
 Not in the configuration directory:
 
 - The Welcome conversation. CHA keeps it in a temporary directory of the
-  system and removes it when it closes.
+  system and removes it when it closes. In ChaWeb, each vault has its own
+  Welcome conversation until the process stops.
 - On Windows, the data of the WebView2 component: `%LOCALAPPDATA%\CHA\webview`.
 
 ## 27. app.toml
@@ -2522,7 +2736,7 @@ desktop application and `cha-daemon` use the same keys.
 
 | Key | Necessary | Value |
 | --- | --- | --- |
-| `vault` | Yes | The name of the vault that CHA opens at the start. It must be the name of an existing vault. CHA changes this key when you select a vault. |
+| `vault` | Yes | The name of the vault that CHA opens at the start. It must be the name of an existing vault. CHA changes this key when you select a vault, and in ChaWeb when `/open` opens a vault. |
 | `machine` | No | The name of this computer for [D1 synchronization](#20-d1-synchronization). Not empty, no `/`. Without it, CHA does not synchronize. |
 | `mirror` | No | The base directory of the [session mirror](#the-session-mirror). Without it, CHA writes no mirror. |
 | `modify` | No | The base directory for [Export and Import](#21-configuration-files-export-edit-import). Without it, these commands are disabled. |
@@ -3094,6 +3308,19 @@ administration.
 | `Only the registered uploader machine can upload this vault to R2.` … | See [The uploading computer](#the-uploading-computer). |
 | **The R2 vault changed since the check. Click Upload again to review it.** | A different upload occurred. Click **Upload** again. |
 | **A vault upload is running. Try again when it finishes.** | Wait for the end of the upload. |
+| **Vault commands are available in ChaWeb Welcome.** | The desktop application has no `/download` and `/open`. Use **Settings → Vaults**. |
+| **Type /download or /download confirm.** | The text after `/download` is not correct. |
+| `Type /open <name>.` | The name after `/open` is missing. |
+| **A vault command is running. Try again when it finishes.** | Wait for the result notice of the first command. |
+| **Vault '…' is already open.** | `/open` with the name of the active vault. No action is necessary. |
+| **Download failed for vault '…'.** … / **Open failed for vault '…'.** … | The reason follows in the message. See the next rows and [Download and open vaults](#download-and-open-vaults). |
+| … **The active vault has no R2 key** | Save the R2 credentials in this vault on a desktop computer. D1 synchronization brings them to the server. Without D1, copy the vault to the server again. |
+| … **R2 database object '…' was not found. Remote lookup requires the R2 file name without .sqlite3, in its exact case.** | Type the name of the database file in R2 without `.sqlite3`, with the correct capital letters. |
+| … **Could not clear the D1 inbox.** … | CHA could not delete the D1 records, and did not install the vault. Examine the connection to D1, then try again. |
+| … **Welcome cannot download a protected vault.** / **Protected vaults cannot be downloaded from R2 without a password** / **Password required to open this vault** | The ChaWeb commands do not work with a protected vault. Copy the files. See [Move a vault to a different computer](#move-a-vault-to-a-different-computer). |
+| … **The vault context changed.** | The vault changed before the command started, for example by a command from a different browser. Type the command again. |
+| **Vault '…' was saved but could not be opened.** … | The vault is on the server now. Type `/open <name>` again. |
+| **The application is unavailable. Restart the daemon.** | For example, a vault command failed after CHA closed or replaced the database. Read the log. Then do `sudo systemctl restart cha@<user>.service`. |
 | **The database path already exists** | A database file with the name of the new vault is in the configuration directory. Use a different name, or move the file. |
 | **This vault is already protected** | You cannot change the password of a vault. |
 | **A store with this name already exists.** | Delete the old store in **Settings → Cloud stores**, or rename the folder. |
@@ -3119,8 +3346,9 @@ administration.
 | Session summaries | A compression provider must be selected. | [Compression provider](#compression-provider) |
 | Library | A cloud store API key is necessary. An administrator selects and manages the stores. | [Prepare a key](#prepare-a-key), [Manage stores](#manage-stores) |
 | Upload a folder to a store | An administrator must delete a store before a new upload. | [Manage stores](#manage-stores) |
-| ChaWeb | An administrator installs ChaWeb and gives the address. ChaWeb uses one vault. | [ChaWeb](#25-chaweb) |
+| ChaWeb | An administrator installs ChaWeb and gives the address. ChaWeb uses one vault at a time. | [ChaWeb](#25-chaweb) |
 | ChaWeb, voice mode | Voice input and voice output must be configured. The microphone needs HTTPS. | [Voices](#16-voices), [Configure nginx](#configure-nginx) |
+| ChaWeb, change and refresh the vault | The commands that use R2 need R2 credentials in the active vault. The commands do not work with protected vaults. | [Download and open vaults](#download-and-open-vaults) |
 | Concepts, Assistant | The Assistant can examine and change the configuration. | [The Assistant as a configuration tool](#22-the-assistant-as-a-configuration-tool) |
 
 ---

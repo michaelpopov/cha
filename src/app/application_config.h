@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -57,6 +58,8 @@ struct ApplicationCommand {
     std::optional<int> test_shutdown_grace_ms;
     // True only for cha-daemon. Desktop stays false. Do not infer this from the OS.
     bool chaweb_host{false};
+    // The host's signal flag, which must outlive the application.
+    const std::atomic_bool* host_stop_requested{};
 };
 
 // An optional in-memory file replacement validates an Assistant edit before
