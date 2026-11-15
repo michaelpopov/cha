@@ -97,10 +97,12 @@ export async function summarizeAndWait(
           count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
           cancelEnabled: true,
         });
+        await step(() => client.summaryLine(target.id, false));
         if (folder && !target.has_compressed) await step(() => compress(target));
         if (!folder || !target.has_l1) await step(() => makeLevel(target, 'l1'));
         if (!folder || !target.has_l2) await step(() => makeLevel(target, 'l2'));
         await step(() => makeSection(target, index));
+        await step(() => client.summaryLine(target.id, true));
       }
     }
     await Promise.allSettled(Array.from({ length: Math.min(3, targets.length) }, line));

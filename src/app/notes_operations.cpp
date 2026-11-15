@@ -30,6 +30,10 @@ nlohmann::json Application::summary_plan(std::int64_t id, std::uint64_t epoch) {
     return impl_->notes->summary_plan(id, epoch);
 }
 
+void Application::summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch) {
+    impl_->notes->summary_line(std::move(connection_id), id, finished, epoch);
+}
+
 std::shared_ptr<OperationReply> Application::generate_summary_part(std::string connection_id,
     std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch) {
     return impl_->notes->generate_summary_part(std::move(connection_id), id, part, std::move(text), epoch);

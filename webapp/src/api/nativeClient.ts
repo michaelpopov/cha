@@ -1052,6 +1052,9 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       await call('sessionSummary.abandon', { run_id: runId, reason }, isEmptyResult);
     },
     summaryPlan: id => call('notes.summaryPlan', { id }, isSummaryPlan),
+    summaryLine: async (id, finished) => {
+      await call('notes.summaryLine', { id, finished }, isEmptyResult);
+    },
     summaryGenerate: async (id, part, text) => (await call('notes.summaryGenerate',
       { id, part, ...(text === undefined ? {} : { text }) }, isSummaryGenerated)).markdown,
     summaryCommit: async (id, part, document) => {

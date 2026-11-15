@@ -61,6 +61,8 @@ private:
     bool refused_{};
     bool describe_response_{true};
     GenerationTokenUsage usage_;
+    std::string service_tier_;
+    std::string model_;
     std::map<int, nlohmann::json> output_items_;
     nlohmann::json output_ = nlohmann::json::array();
 };

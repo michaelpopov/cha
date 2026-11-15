@@ -11,6 +11,8 @@ namespace cha {
 
 struct FolderStoreHttpRequest;
 struct FolderStoreHttpResponse;
+struct ProviderHttpRequest;
+struct ProviderHttpResponse;
 
 // Public fields deliberately make every deadline and bound injectable by tests.
 struct RuntimeSettings {
@@ -32,6 +34,7 @@ struct RuntimeSettings {
         // Wait injection for deterministic retry tests.
         std::function<void(int)> note_audio_wait;
         std::function<void(int)> note_compression_wait;
+        std::function<ProviderHttpResponse(const ProviderHttpRequest&, const std::atomic_bool&)> note_summary_transport;
         // Launch failure and worker-barrier hooks for lifecycle tests.
         std::function<void(std::int64_t)> note_audio_before_launch;
         std::function<void(std::int64_t, std::shared_ptr<std::atomic_bool>)> note_audio_worker_started;

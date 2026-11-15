@@ -3,6 +3,7 @@
 #include "providers/tool_calls.h"
 #include "util/json_serialization.h"
 #include "util/logging.h"
+#include "util/text.h"
 
 #include <stdexcept>
 #include <utility>
@@ -111,8 +112,12 @@ bool GoogleStreamDecoder::process_json(std::string_view data) {
     try {
         const auto value = Json::parse(data);
         if (!value.is_object()) throw std::invalid_argument("Invalid Google response");
+        if (const auto model = value.find("modelVersion"); model != value.end() && model->is_string())
+            model_ = model->get<std::string>();
         if (const auto usage = value.find("usageMetadata"); usage != value.end()) {
             if (!usage->is_object()) throw std::invalid_argument("Invalid Google usage");
+            if (const auto tier = usage->find("serviceTier"); tier != usage->end() && tier->is_string())
+                service_tier_ = fold_ascii(tier->get_ref<const std::string&>());
             update_count(*usage, "promptTokenCount", usage_.input_tokens);
             update_count(*usage, "candidatesTokenCount", candidate_tokens_);
             update_count(*usage, "thoughtsTokenCount", thought_tokens_);
@@ -193,6 +198,8 @@ StreamDecodeResult GoogleStreamDecoder::finish() {
     }
     result.finish_reason = finish_reason_;
     result.refused = refused_;
+    result.model = std::move(model_);
+    result.service_tier = std::move(service_tier_);
     return {std::move(result), false};
 }
 

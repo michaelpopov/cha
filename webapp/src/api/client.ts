@@ -209,6 +209,7 @@ export interface NotesClient {
   compressionStatus: (id: number, epoch: number) => Promise<NoteCompressionStatus>;
   cancelCompression: (id: number, epoch: number) => Promise<void>;
   summaryPlan(id: number): Promise<SummaryPlan>;
+  summaryLine(id: number, finished: boolean): Promise<void>;
   summaryGenerate(id: number, part: SummaryGeneratePart, text?: string): Promise<string>;
   summaryCommit(id: number, part: SummaryCommitPart, document: Record<string, unknown>): Promise<void>;
   summaryAbandon(id: number, part: SummaryCommitPart): Promise<void>;

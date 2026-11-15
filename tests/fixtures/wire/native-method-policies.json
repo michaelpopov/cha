@@ -155,6 +155,7 @@
   "notes.saveScrollPosition": {"requires_context_epoch": true, "changes_context": false},
   "notes.setReadOnly": {"requires_context_epoch": true, "changes_context": false},
   "notes.summaryPlan": {"requires_context_epoch": true, "changes_context": false},
+  "notes.summaryLine": {"requires_context_epoch": true, "changes_context": false},
   "notes.summaryGenerate": {"requires_context_epoch": true, "changes_context": false},
   "notes.summaryCommit": {"requires_context_epoch": true, "changes_context": false},
   "notes.summaryAbandon": {"requires_context_epoch": true, "changes_context": false},

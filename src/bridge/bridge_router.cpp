@@ -1462,6 +1462,14 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 result = app::media_resource_json(resource.resource_id, resource.mime_type, resource.byte_length);
                 break;
             }
+            case Method::notes_summary_line:
+                require_only_keys(params, {"id", "finished"});
+                if (!params.contains("finished") || !params.at("finished").is_boolean())
+                    throw std::invalid_argument("The request was not valid.");
+                application.summary_line(connection_id,
+                    static_cast<std::int64_t>(require_safe_id(params, "id")), params.at("finished").get<bool>(), epoch);
+                result = nlohmann::json::object();
+                break;
             case Method::notes_summary_generate: {
                 const auto name = require_string(params, "part");
                 app::SummaryPart part;

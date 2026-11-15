@@ -966,7 +966,7 @@ GenerationResult ProviderClient::perform_once(
     const ModelBackendConfig& config = definition_->provider.config;
     if (cancellation.load(std::memory_order_acquire)) {
         log_info("HTTP generation skipped because cancellation was already requested");
-        return {GenerationOutcome::cancelled, {}};
+        return {.outcome = GenerationOutcome::cancelled, .request_not_processed = true};
     }
     if (config.mode == Mode::test) {
         on_delta({
@@ -1200,12 +1200,14 @@ GenerationResult ProviderClient::perform_once(
             }, 0, "unknown");
         }
         if (perform_result != CURLE_OK) {
+            const bool not_connected = perform_result == CURLE_COULDNT_RESOLVE_PROXY
+                || perform_result == CURLE_COULDNT_RESOLVE_HOST || perform_result == CURLE_COULDNT_CONNECT;
             return complete({
                 .outcome = GenerationOutcome::transport_error,
                 .message = "HTTP request failed: "
                     + std::string(curl_easy_strerror(perform_result)),
-                .retryable = perform_result == CURLE_COULDNT_RESOLVE_PROXY
-                    || perform_result == CURLE_COULDNT_RESOLVE_HOST || perform_result == CURLE_COULDNT_CONNECT,
+                .retryable = not_connected,
+                .request_not_processed = not_connected,
             }, 0, "unknown");
         }
 
@@ -1224,6 +1226,8 @@ GenerationResult ProviderClient::perform_once(
             .outcome = GenerationOutcome::protocol_error,
             .message = classified_http_error(status, response.body),
             .retryable = status == 429 || status >= 500,
+            .request_not_processed = status == 400 || status == 401 || status == 403
+                || status == 404 || status == 413 || status == 422 || status == 429 || status == 503,
         }, status, content_type);
     }
 

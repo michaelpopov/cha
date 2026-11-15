@@ -52,6 +52,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     abandonSessionSummary: async () => undefined,
     contextEpoch: () => 1,
     summaryPlan: async () => ({ notes: [] }),
+    summaryLine: async () => undefined,
     summaryGenerate: async () => { throw new Error('notes.summaryGenerate'); },
     summaryCommit: async () => undefined,
     summaryAbandon: async () => undefined,

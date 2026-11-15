@@ -257,23 +257,21 @@ StreamDecodeResult ChatCompletionsStreamDecoder::finish() {
         });
     }
 
-    if (!protocol_error_.empty()) {
-        return {{GenerationOutcome::protocol_error, protocol_error_, usage_}, true};
-    }
-    if (!done_) {
-        return {{
-            GenerationOutcome::protocol_error,
-            received_output()
-                ? "Streaming response ended before [DONE]"
-                : "Streaming response was not valid SSE",
-            usage_,
-        }, true};
+    if (!protocol_error_.empty() || !done_) {
+        if (protocol_error_.empty()) {
+            protocol_error_ = received_output()
+                ? "Streaming response ended before [DONE]" : "Streaming response was not valid SSE";
+        }
+        return {{.outcome = GenerationOutcome::protocol_error, .message = protocol_error_,
+            .usage = usage_, .service_tier = service_tier_, .model = model_}, true};
     }
     auto result = tool_call_result(message_, ProviderApi::chat_completions,
         received_answer_, usage_, collect_tool_calls_,
         "Streaming response completed without answer content", finish_reason_,
         argument_limit_, maintenance_);
     result.refused = refused_;
+    result.service_tier = std::move(service_tier_);
+    result.model = std::move(model_);
     return {std::move(result), false};
 }
 
@@ -346,7 +344,12 @@ bool ChatCompletionsStreamDecoder::handle_event_data(std::string_view data) {
     const Json::json_pointer delta_pointer("/choices/0/delta");
     try {
         value = Json::parse(data);
-        if (value.contains("usage")) usage_ = chat_token_usage(value);
+        if (const auto usage = value.find("usage"); usage != value.end() && usage->is_object())
+            usage_ = chat_token_usage(value);
+        if (const auto tier = value.find("service_tier"); tier != value.end() && tier->is_string())
+            service_tier_ = tier->get<std::string>();
+        if (const auto model = value.find("model"); model != value.end() && model->is_string())
+            model_ = model->get<std::string>();
         if (!value.contains("choices") || !value["choices"].is_array()) {
             if (protocol_error_.empty()) protocol_error_ = "Streaming event did not contain a choices array";
             return true;
@@ -400,17 +403,22 @@ GenerationResult decode_chat_completions_response(
         };
     }
 
+    const GenerationTokenUsage usage = chat_token_usage(value);
+    const auto string_field = [&](std::string_view field) {
+        const auto found = value.find(field);
+        return found != value.end() && found->is_string() ? found->get<std::string>() : std::string{};
+    };
+    const auto failure = [&](std::string message) {
+        return GenerationResult{.outcome = GenerationOutcome::protocol_error, .message = std::move(message),
+            .usage = usage, .service_tier = string_field("service_tier"), .model = string_field("model")};
+    };
     const Json::json_pointer message_pointer("/choices/0/message");
     if (!value.contains(message_pointer)
         || !value.at(message_pointer).is_object()) {
-        return {
-            GenerationOutcome::protocol_error,
-            "Response did not contain choices[0].message",
-        };
+        return failure("Response did not contain choices[0].message");
     }
 
     bool received_answer = false;
-    const GenerationTokenUsage usage = chat_token_usage(value);
     const std::string protocol_error = process_response_object(
         value.at(message_pointer),
         format,
@@ -424,7 +432,7 @@ GenerationResult decode_chat_completions_response(
         });
 
     if (!protocol_error.empty()) {
-        return {GenerationOutcome::protocol_error, protocol_error};
+        return failure(protocol_error);
     }
     const Json::json_pointer reason_pointer("/choices/0/finish_reason");
     const std::string finish_reason = value.contains(reason_pointer)
@@ -435,8 +443,8 @@ GenerationResult decode_chat_completions_response(
         "Response completed without answer content", finish_reason,
         argument_limit, maintenance);
     result.refused = has_refusal(value.at(message_pointer));
-    if (const auto tier = value.find("service_tier"); tier != value.end() && tier->is_string())
-        result.service_tier = tier->get<std::string>();
+    result.service_tier = string_field("service_tier");
+    result.model = string_field("model");
     return result;
 }
 

@@ -44,6 +44,8 @@ private:
     SseFramer framer_;
     std::string protocol_error_;
     std::string finish_reason_;
+    std::string model_;
+    std::string service_tier_;
     bool received_answer_{};
     bool refused_{};
     bool prompt_blocked_{};

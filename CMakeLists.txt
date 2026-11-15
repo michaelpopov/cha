@@ -313,6 +313,8 @@ add_library(cha_lib STATIC
     src/providers/web_search.cpp
     src/providers/providers.cpp
     src/providers/provider_client.cpp
+    src/providers/openai_token_cost.cpp
+    src/providers/gemini_token_cost.cpp
     src/providers/openai_oauth.cpp
     src/providers/chat_completions_api.cpp
     src/providers/responses_api.cpp

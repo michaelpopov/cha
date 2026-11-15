@@ -159,11 +159,14 @@ TEST(GoogleApi, FullJsonAndEverySseSplitPreservePartsAndLatestUsage) {
         {{"thoughtSignature", "tail-signature"}},
     });
     auto full = response(parts);
+    full["modelVersion"] = "gemini-3.1-flash-lite";
     full["usageMetadata"] = {{"promptTokenCount", 10}, {"candidatesTokenCount", 5},
-        {"thoughtsTokenCount", 3}, {"cachedContentTokenCount", 4}, {"totalTokenCount", 999}};
+        {"thoughtsTokenCount", 3}, {"cachedContentTokenCount", 4}, {"totalTokenCount", 999}, {"serviceTier", "flex"}};
     Output complete;
     const auto expected = decode_google_response(full.dump(), complete.sink, true);
     ASSERT_EQ(expected.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(expected.model, "gemini-3.1-flash-lite");
+    EXPECT_EQ(expected.service_tier, "flex");
     ASSERT_EQ(expected.tool_calls.size(), 2u);
     EXPECT_EQ(expected.tool_calls[0].id, "supplied");
     EXPECT_EQ(expected.tool_calls[1].id, "google_call_1");
@@ -177,7 +180,8 @@ TEST(GoogleApi, FullJsonAndEverySseSplitPreservePartsAndLatestUsage) {
         if (part.contains("functionCall")) chunk["candidates"][0]["finishReason"] = "STOP";
         stream += "data: " + chunk.dump() + "\n\n";
     }
-    stream += "data: {\"usageMetadata\":{\"promptTokenCount\":9,\"candidatesTokenCount\":2,\"thoughtsTokenCount\":3}}\n\n";
+    stream += "data: {\"modelVersion\":\"gemini-3.1-flash-lite\",\"usageMetadata\":{\"promptTokenCount\":9,"
+        "\"candidatesTokenCount\":2,\"thoughtsTokenCount\":3,\"serviceTier\":\"FLEX\"}}\n\n";
     stream += "data: " + Json{{"usageMetadata", {{"promptTokenCount", 10}, {"candidatesTokenCount", 5}, {"cachedContentTokenCount", 4}}}}.dump();
     for (std::size_t split = 0; split <= stream.size(); ++split) {
         Output output;
@@ -190,6 +194,8 @@ TEST(GoogleApi, FullJsonAndEverySseSplitPreservePartsAndLatestUsage) {
         EXPECT_EQ(result.usage.input_tokens, 10u);
         EXPECT_EQ(result.usage.output_tokens, 8u);
         EXPECT_EQ(result.usage.cache_read_tokens, 4u);
+        EXPECT_EQ(result.model, expected.model);
+        EXPECT_EQ(result.service_tier, expected.service_tier);
         EXPECT_FALSE(result.usage.cache_write_tokens);
         EXPECT_EQ(output.answer, complete.answer);
         EXPECT_EQ(output.reasoning, complete.reasoning);

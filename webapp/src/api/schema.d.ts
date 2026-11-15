@@ -874,6 +874,10 @@ export interface components {
             has_l1: boolean;
             has_l2: boolean;
         };
+        SummaryLineRequest: {
+            id: components["schemas"]["NoteId"];
+            finished: boolean;
+        };
         SummaryGenerateRequest: {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */

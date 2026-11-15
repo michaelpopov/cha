@@ -174,6 +174,7 @@ enum class Method {
     notes_save_scroll_position,
     notes_set_read_only,
     notes_summary_plan,
+    notes_summary_line,
     notes_summary_generate,
     notes_summary_commit,
     notes_summary_abandon,

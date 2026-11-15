@@ -2,6 +2,7 @@
 #include "app/current_vault.h"
 #include "bridge/bridge_router.h"
 #include "providers/api_key_store.h"
+#include "providers/provider_client.h"
 #include "storage/note_storage.h"
 #include "storage/session_lease.h"
 #include "storage/session_database.h"
@@ -143,10 +144,13 @@ protected:
         database_ = test::import_test_database(workspace_.root());
         RuntimeSettings settings;
         settings.test_hooks.note_compression_wait = [this](int seconds) { if (compression_wait_) compression_wait_(seconds); };
+        settings.test_hooks.note_summary_transport = note_summary_transport();
         application_ = app::Application::open(make_command(workspace_, database_), {}, settings);
         router_ = std::make_unique<BridgeRouter>(*application_);
         connection_ = router_->open_connection();
     }
+
+    virtual ProviderHttpTransport note_summary_transport() { return {}; }
 
     void TearDown() override {
         if (router_) router_->shutdown();
@@ -4111,6 +4115,158 @@ TEST_F(BridgeRouterTest, NoteSummaryGenerateSendsLargeNotesAndRecordsInputErrors
     EXPECT_EQ(overview_event["severity"], "error");
     EXPECT_EQ(overview_event["message"], "Could not make the L3 overview for “Book” (folder "
         + std::to_string(folder.id) + "): The overview text exceeds 12 MiB. The Summary note was not changed.");
+}
+
+class NoteSummaryCostTest : public BridgeRouterTest {
+protected:
+    ProviderHttpTransport note_summary_transport() override {
+        return [this](const ProviderHttpRequest& request, const std::atomic_bool&) {
+            EXPECT_EQ(nlohmann::json::parse(request.body)["service_tier"], "flex");
+            const auto index = attempts_++;
+            if (index == 0 || index == 5) return ProviderHttpResponse{429, "application/json", "{}"};
+            const bool incomplete = index == 3;
+            nlohmann::json response{
+                {"model", "gpt-6.1-sol"}, {"service_tier", index == 1 ? "default" : "flex"},
+                {"status", incomplete ? "incomplete" : "completed"},
+                {"output", nlohmann::json::parse(R"([{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Result"}]}])")},
+            };
+            if (index != 4) response["usage"] = {
+                {"input_tokens", 2000}, {"output_tokens", 100},
+                {"input_tokens_details", {{"cached_tokens", 1000}, {"cache_write_tokens", 500}}},
+            };
+            const auto event = nlohmann::json{
+                {"type", incomplete ? "response.incomplete" : "response.completed"}, {"response", response}};
+            return ProviderHttpResponse{200, "text/event-stream",
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Result\"}\n\n"
+                "data: " + event.dump() + "\n\n"};
+        };
+    }
+
+    std::atomic_int attempts_{0};
+};
+
+TEST_F(NoteSummaryCostTest, RecordsOneEstimatePerNoteWithCacheUsageAndServedTier) {
+    bootstrap_epoch();
+    const auto key = application_->create_api_key({.display_name = "OpenAI", .value = "fake-key"}, epoch_);
+    auto config = application_->store().snapshot()->find_provider("test")->config;
+    config.host = "api.openai.com";
+    config.mode = Mode::net;
+    config.api = ProviderApi::responses;
+    config.model = "gpt-6.1-sol";
+    config.api_key_id = key.id;
+    config.stream = true;
+    config.https = true;
+    application_->store().apply_provider_update("test", "Test", config);
+    (void)application_->save_notes_settings({"test"}, epoch_);
+
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Folder", epoch_);
+    const auto first = compression_source(*application_, epoch_);
+    const auto second = application_->create_note_item(folder.id, NoteItemKind::note, "Second", epoch_);
+    application_->save_note(second.id, text_document(std::string(4096, 'a')), epoch_);
+
+    const auto line = [&](std::int64_t id, bool finished) {
+        return call("notes.summaryLine", {{"id", id}, {"finished", finished}});
+    };
+    const auto generate = [&](std::int64_t id, std::string_view part) {
+        return call("notes.summaryGenerate", {{"id", id}, {"part", part}});
+    };
+    ASSERT_EQ(line(first.id, false)["ok"], true);
+    ASSERT_EQ(line(second.id, false)["ok"], true);
+    ASSERT_EQ(call("notes.summaryCompress", {{"id", first.id}})["ok"], true);
+    ASSERT_EQ(generate(first.id, "l1")["ok"], true);
+    ASSERT_EQ(generate(first.id, "l2")["ok"], false); // The incomplete response still reports usage.
+    ASSERT_EQ(generate(first.id, "l3_section")["ok"], true); // Missing usage makes the sum incomplete.
+    ASSERT_EQ(generate(second.id, "l3_section")["ok"], true);
+    ASSERT_EQ(line(first.id, true)["ok"], true);
+    ASSERT_EQ(line(second.id, true)["ok"], true);
+    ASSERT_EQ(line(second.id, true)["ok"], true);
+    ASSERT_EQ(call("notes.summaryGenerate",
+        {{"id", folder.id}, {"part", "l3_overview"}, {"text", "Sections"}})["ok"], true);
+
+    // A cancelled line has no completion event.
+    ASSERT_EQ(line(second.id, false)["ok"], true);
+    ASSERT_EQ(call("notes.summaryCancel")["ok"], true);
+    ASSERT_EQ(line(second.id, true)["ok"], true);
+
+    EXPECT_EQ(attempts_, 8);
+    EXPECT_EQ(summary_events("Summary line completed for"), 2U);
+    EXPECT_EQ(summary_events("Summary line completed for “Source” (note " + std::to_string(first.id)
+        + "). Estimated OpenAI token cost: $0.0067 USD (incomplete). Elapsed time: "), 1U);
+    EXPECT_EQ(summary_events("Summary line completed for “Second” (note " + std::to_string(second.id)
+        + "). Estimated OpenAI Flex token cost: $0.001675 USD. Elapsed time: "), 1U);
+}
+
+class GeminiSummaryCostTest : public BridgeRouterTest {
+protected:
+    ProviderHttpTransport note_summary_transport() override {
+        return [this](const ProviderHttpRequest& request, const std::atomic_bool&) {
+            const auto body = nlohmann::json::parse(request.body);
+            EXPECT_EQ(body["serviceTier"], "flex");
+            const auto index = attempts_++;
+            // Gemini Flex answers 503 when it is at capacity.
+            if (index == 0) return ProviderHttpResponse{503, "application/json", "{}"};
+            auto response = nlohmann::json::parse(R"({
+                "modelVersion":"gemini-3.5-flash-lite",
+                "candidates":[{"content":{"role":"model","parts":[{"text":"Result"}]},"finishReason":"STOP"}],
+                "usageMetadata":{"promptTokenCount":2000,"candidatesTokenCount":60,"thoughtsTokenCount":40}
+            })");
+            auto& usage = response["usageMetadata"];
+            if (index != 1) usage["cachedContentTokenCount"] = 1000;
+            if (index != 2) usage["serviceTier"] = index == 5 ? "standard" : "flex";
+            return ProviderHttpResponse{200, "text/event-stream", "data: " + response.dump() + "\n\n"};
+        };
+    }
+
+    std::atomic_int attempts_{0};
+};
+
+TEST_F(GeminiSummaryCostTest, RecordsEachFlexLineWithCacheThinkingAndElapsedTime) {
+    bootstrap_epoch();
+    const auto key = application_->create_api_key({.display_name = "Gemini", .value = "fake-key"}, epoch_);
+    auto config = application_->store().snapshot()->find_provider("test")->config;
+    config.host = "generativelanguage.googleapis.com";
+    config.mode = Mode::net;
+    config.api = ProviderApi::google;
+    config.model = "gemini-2.5-flash";
+    config.api_key_id = key.id;
+    config.stream = true;
+    config.https = true;
+    application_->store().apply_provider_update("test", "Test", config);
+    (void)application_->save_notes_settings({"test"}, epoch_);
+    compression_wait_ = [](int seconds) {
+        EXPECT_EQ(seconds, 10);
+        std::this_thread::sleep_for(30ms);
+    };
+
+    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Folder", epoch_);
+    const auto first = compression_source(*application_, epoch_);
+    const auto second = application_->create_note_item(folder.id, NoteItemKind::note, "Second", epoch_);
+    application_->save_note(second.id, text_document(std::string(4096, 'a')), epoch_);
+    const auto line = [&](std::int64_t id, bool finished) {
+        return call("notes.summaryLine", {{"id", id}, {"finished", finished}});
+    };
+    ASSERT_EQ(line(first.id, false)["ok"], true);
+    ASSERT_EQ(line(second.id, false)["ok"], true);
+    ASSERT_EQ(call("notes.summaryCompress", {{"id", first.id}})["ok"], true);
+    for (const auto* part : {"l1", "l2", "l3_section"})
+        ASSERT_EQ(call("notes.summaryGenerate", {{"id", first.id}, {"part", part}})["ok"], true);
+    ASSERT_EQ(call("notes.summaryGenerate", {{"id", second.id}, {"part", "l3_section"}})["ok"], true);
+    ASSERT_EQ(line(first.id, true)["ok"], true);
+    ASSERT_EQ(line(second.id, true)["ok"], true);
+    ASSERT_EQ(call("notes.summaryGenerate",
+        {{"id", folder.id}, {"part", "l3_overview"}, {"text", "Sections"}})["ok"], true);
+
+    EXPECT_EQ(attempts_, 7);
+    EXPECT_EQ(summary_events("Summary line completed for"), 2U);
+    EXPECT_EQ(summary_events("Summary line completed for “Second” (note " + std::to_string(second.id)
+        + "). Estimated Gemini Flex token cost: unavailable (incomplete). Elapsed time: "), 1U);
+    const auto prefix = "Summary line completed for “Source” (note " + std::to_string(first.id)
+        + "). Estimated Gemini Flex token cost: $0.00131 USD. Elapsed time: ";
+    const auto events = application_->list_events(epoch_);
+    const auto event = std::ranges::find_if(events, [&](const auto& item) { return item.message.starts_with(prefix); });
+    ASSERT_NE(event, events.end());
+    EXPECT_GE(std::stod(event->message.substr(prefix.size())), 0.030);
 }
 
 TEST_F(BridgeRouterTest, NoteSummaryRetriesAndReportsSafeProviderErrors) {

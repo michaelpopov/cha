@@ -1,5 +1,7 @@
 #include "notes/notes_service_internal.h"
 
+#include "providers/gemini_token_cost.h"
+#include "providers/openai_token_cost.h"
 #include "providers/web_search.h"
 #include "session/session_markdown.h"
 #include "storage/not_found_error.h"
@@ -11,10 +13,33 @@
 #include "workspace/builtins.h"
 
 #include <algorithm>
+#include <iomanip>
 #include <initializer_list>
+#include <locale>
+#include <sstream>
 #include <thread>
 
 namespace cha::app {
+
+void NoteSummaryCost::add(std::optional<double> estimate) {
+    if (estimate) {
+        usd += *estimate;
+        has_estimate = true;
+    } else {
+        incomplete = true;
+    }
+}
+
+void NoteSummaryCost::merge(const NoteSummaryCost& other) {
+    usd += other.usd;
+    openai |= other.openai;
+    openai_flex |= other.openai_flex;
+    openai_other_or_unknown_tier |= other.openai_other_or_unknown_tier;
+    gemini_flex |= other.gemini_flex;
+    incomplete |= other.incomplete;
+    has_estimate |= other.has_estimate;
+}
+
 namespace {
 constexpr std::size_t note_compression_min_bytes = 4 * 1024;
 
@@ -94,7 +119,7 @@ struct NotePromptAnswer {
 };
 
 NotePromptAnswer collect_note_prompt(ProviderClient& client, const SharedCharacterDefinition& definition,
-    std::string text, const std::atomic_bool& cancel, std::string instruction = {}) {
+    std::string text, const std::atomic_bool& cancel, std::string instruction = {}, NoteSummaryCost* cost = nullptr) {
     GenerationRequest request{
         .history = std::make_shared<const ModelHistory>(),
         .run = {.target = definition->character, .author = {"", "User"}, .prompt_text = std::move(text)},
@@ -102,9 +127,31 @@ NotePromptAnswer collect_note_prompt(ProviderClient& client, const SharedCharact
         .step_instruction = std::move(instruction),
     };
     NotePromptAnswer answer;
-    answer.result = client.perform(client.prepare(request), [&answer](GenerationDelta delta) {
-        if (delta.kind == GenerationDeltaKind::answer) answer.text += delta.text;
-    }, cancel);
+    const auto& config = definition->provider.config;
+    const bool openai = cost && uses_openai_api_key(config);
+    const bool gemini_flex = cost && config.api == ProviderApi::google && config.flex_processing;
+    auto payload = client.prepare(request);
+    if (cost) {
+        cost->openai |= openai;
+        cost->gemini_flex |= gemini_flex;
+    }
+    try {
+        answer.result = client.perform(std::move(payload), [&answer](GenerationDelta delta) {
+            if (delta.kind == GenerationDeltaKind::answer) answer.text += delta.text;
+        }, cancel);
+    } catch (...) {
+        if (openai) cost->openai_other_or_unknown_tier = true;
+        if (openai || gemini_flex) cost->add(std::nullopt);
+        throw;
+    }
+    if (openai) {
+        if (!answer.result.request_not_processed) {
+            if (answer.result.service_tier == "flex") cost->openai_flex = true;
+            else cost->openai_other_or_unknown_tier = true;
+        }
+        cost->add(estimate_openai_token_cost(config, answer.result));
+    }
+    if (gemini_flex) cost->add(estimate_gemini_flex_token_cost(config, answer.result));
     return answer;
 }
 
@@ -415,7 +462,7 @@ std::optional<NoteText> NotesService::Impl::compression_source_locked(std::int64
 NotesService::Impl::CompressionResult NotesService::Impl::run_compression(
     const std::shared_ptr<CompressionControl>& control, const SharedCharacterDefinition& definition,
     const std::string& instruction, const NoteText& note, std::uint64_t epoch, std::atomic_bool& cancel,
-    bool serialized) {
+    bool serialized, NoteSummaryCost* cost) {
     using Kind = CompressionResult::Kind;
     const auto target = compression_target(note.id, control->name);
     const auto discarded = "Compression discarded for " + target
@@ -439,9 +486,10 @@ NotesService::Impl::CompressionResult NotesService::Impl::run_compression(
                     retire_compression(note.id, control, epoch, EventSeverity::warning, discarded);
                     return {Kind::discarded};
                 }
-                client = std::make_unique<ProviderClient>(definition, openai_auth, api_keys);
+                client = std::make_unique<ProviderClient>(definition, openai_auth, api_keys,
+                    settings.test_hooks.note_summary_transport);
             }
-            answer = collect_note_prompt(*client, definition, note.text, cancel, instruction);
+            answer = collect_note_prompt(*client, definition, note.text, cancel, instruction, cost);
             if (!answer.result.retryable || cancel.load() || retries == 3) break;
             const auto seconds = 10 << retries;
             if (settings.test_hooks.note_compression_wait) settings.test_hooks.note_compression_wait(seconds);
@@ -553,18 +601,21 @@ std::shared_ptr<OperationReply> NotesService::compress_summary_note(std::string 
     control->name = note.name;
     // One flag: summary Cancel, connection close, and a vault change all stop this request.
     auto call = std::make_shared<Impl::SummaryCall>();
+    const auto line = impl_->find_note_summary_line(connection_id, id);
     call->connection_id = std::move(connection_id);
     call->cancel = control->cancel;
     impl_->compressions[id] = control;
     impl_->summary_calls.push_back(call);
     try {
         if (!impl_->background_jobs.launch(
-            [owner = impl_.get(), control, call, reply, definition, instruction = prompt.text, note, epoch](
+            [owner = impl_.get(), control, call, reply, definition, instruction = prompt.text, note, epoch, line](
                 std::atomic_bool& cancel) {
+                NoteSummaryCost cost;
                 const auto result = owner->run_compression(
-                    control, definition, instruction, note, epoch, cancel, /*serialized=*/false);
+                    control, definition, instruction, note, epoch, cancel, /*serialized=*/false, line ? &cost : nullptr);
                 {
                     const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                    if (line) line->cost.merge(cost);
                     owner->remove_summary_call(call);
                 }
                 switch (result.kind) {
@@ -755,6 +806,66 @@ nlohmann::json NotesService::summary_plan(std::int64_t id, std::uint64_t epoch) 
     } catch (const NoteError& error) { rethrow_note(error); }
 }
 
+std::shared_ptr<NoteSummaryLine> NotesService::Impl::find_note_summary_line(
+    const std::string& connection_id, std::int64_t id) {
+    const auto it = note_summary_lines.find({connection_id, id});
+    return it == note_summary_lines.end() ? nullptr : it->second;
+}
+
+void NotesService::summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    const auto key = std::pair{std::move(connection_id), id};
+    if (!finished) {
+        const auto note = impl_->store->get_note_item(id);
+        if (!note || note->kind != NoteItemKind::note) return;
+        const auto workspace = impl_->store->snapshot();
+        const auto* provider = workspace->find_provider(workspace->notes().compression_provider_id);
+        auto line = std::make_shared<NoteSummaryLine>();
+        if (provider) {
+            const auto& config = provider->config;
+            line->cost.openai = uses_openai_api_key(config);
+            line->cost.gemini_flex = config.api == ProviderApi::google && eligible_for_flex_processing(config);
+        }
+        impl_->note_summary_lines.insert_or_assign(key, std::move(line));
+        return;
+    }
+
+    const auto entry = impl_->note_summary_lines.extract(key);
+    if (entry.empty()) return;
+    const auto& line = *entry.mapped();
+    const auto& cost = line.cost;
+    if (!cost.openai && !cost.gemini_flex) return;
+    const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - line.started_at;
+    try {
+        const auto note = impl_->store->get_note_item(id);
+        const auto target = note_summary_target(id, note ? note->name : "", false);
+        std::string amount = "unavailable";
+        if (!cost.incomplete || cost.has_estimate) {
+            std::ostringstream formatted;
+            formatted.imbue(std::locale::classic());
+            formatted << std::fixed << std::setprecision(10) << cost.usd;
+            amount = formatted.str();
+            amount.erase(amount.find_last_not_of('0') + 1);
+            if (amount.ends_with('.')) amount.pop_back();
+            amount = "$" + amount + " USD";
+        }
+        std::string providers;
+        if (cost.openai)
+            providers = cost.openai_flex && !cost.openai_other_or_unknown_tier ? "OpenAI Flex" : "OpenAI";
+        if (cost.gemini_flex) {
+            if (!providers.empty()) providers += " and ";
+            providers += "Gemini Flex";
+        }
+        std::ostringstream event;
+        event.imbue(std::locale::classic());
+        event << "Summary line completed for " << target << ". Estimated " << providers
+            << " token cost: " << amount << (cost.incomplete ? " (incomplete)." : ".")
+            << " Elapsed time: " << std::fixed << std::setprecision(3) << elapsed.count() << " s.";
+        impl_->store->append_event(EventSeverity::info, event.str());
+    } catch (...) { log_warn("Could not record summary line cost."); }
+}
+
 std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string connection_id,
     std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
@@ -794,14 +905,16 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
 
     auto reply = std::make_shared<OperationReply>();
     auto call = std::make_shared<Impl::SummaryCall>();
+    const auto line = folder ? nullptr : impl_->find_note_summary_line(connection_id, id);
     call->connection_id = std::move(connection_id);
     impl_->summary_calls.push_back(call);
     try {
         if (impl_->background_jobs.launch(
-            [owner = impl_.get(), call, reply, epoch, part, target,
+            [owner = impl_.get(), call, reply, epoch, part, target, line,
              definition = std::move(definition), text = std::move(text),
              instruction = std::move(instruction)](std::atomic_bool& cancel) {
                 NotePromptAnswer answer;
+                NoteSummaryCost cost;
                 ErrorCode code = ErrorCode::internal_error;
                 std::string failure;
                 try {
@@ -812,9 +925,11 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
                             if (cancel.load())
                                 throw ApplicationError(ErrorCode::operation_cancelled, std::string(summary_cancelled));
                             owner->require_admitted(epoch);
-                            client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys);
+                            client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys,
+                                owner->settings.test_hooks.note_summary_transport);
                         }
-                        answer = collect_note_prompt(*client, definition, text, cancel, instruction);
+                        answer = collect_note_prompt(*client, definition, text, cancel, instruction,
+                            line ? &cost : nullptr);
                         if (!answer.result.retryable || cancel.load() || retries == 3) break;
                         const auto seconds = 10 << retries;
                         if (owner->settings.test_hooks.note_compression_wait) owner->settings.test_hooks.note_compression_wait(seconds);
@@ -833,6 +948,7 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
 
                 {
                     const std::lock_guard lifecycle(owner->lifecycle_mutex);
+                    if (line) line->cost.merge(cost);
                     owner->remove_summary_call(call);
                     if (owner->published_epoch.load() != epoch) {
                         code = ErrorCode::vault_changed;
@@ -910,6 +1026,9 @@ void NotesService::Impl::remove_summary_call(const std::shared_ptr<SummaryCall>&
 void NotesService::Impl::cancel_summary_calls(std::optional<std::string_view> connection_id) {
     for (const auto& call : summary_calls)
         if (!connection_id || call->connection_id == *connection_id) call->cancel->store(true);
+    std::erase_if(note_summary_lines, [&](const auto& line) {
+        return !connection_id || line.first.first == *connection_id;
+    });
 }
 
 void NotesService::cancel_summary_parts(std::string_view connection_id, std::uint64_t epoch) {

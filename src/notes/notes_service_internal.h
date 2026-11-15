@@ -10,6 +10,7 @@
 #include "storage/session_repository.h"
 #include "workspace/workspace_config_store.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <map>
 #include <set>
@@ -17,6 +18,24 @@
 namespace cha::app {
 
 [[noreturn]] void rethrow_note(const NoteError& error);
+
+struct NoteSummaryCost {
+    double usd{};
+    bool openai{};
+    bool openai_flex{};
+    bool openai_other_or_unknown_tier{};
+    bool gemini_flex{};
+    bool incomplete{};
+    bool has_estimate{};
+
+    void add(std::optional<double> estimate);
+    void merge(const NoteSummaryCost& other);
+};
+
+struct NoteSummaryLine {
+    std::chrono::steady_clock::time_point started_at = std::chrono::steady_clock::now();
+    NoteSummaryCost cost;
+};
 
 struct NotesService::Impl {
     Impl(WorkspaceConfigStore& store, ApiKeyStore& api_keys, OpenAiOAuth& oauth,
@@ -79,8 +98,12 @@ struct NotesService::Impl {
     // in Events and retires the reservation.
     CompressionResult run_compression(const std::shared_ptr<CompressionControl>& control,
         const SharedCharacterDefinition& definition, const std::string& instruction, const NoteText& note,
-        std::uint64_t epoch, std::atomic_bool& cancel, bool serialized);
+        std::uint64_t epoch, std::atomic_bool& cancel, bool serialized, NoteSummaryCost* cost = nullptr);
 
+    // One record for each active note line. Workers hold the original record so a
+    // late reply after cancellation cannot add costs to a new run of the note.
+    std::map<std::pair<std::string, std::int64_t>, std::shared_ptr<NoteSummaryLine>> note_summary_lines;
+    std::shared_ptr<NoteSummaryLine> find_note_summary_line(const std::string& connection_id, std::int64_t id);
     struct SummaryCall {
         std::string connection_id;
         std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);

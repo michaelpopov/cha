@@ -15,6 +15,7 @@ retain the knowledge and reasoning of the source chapter, not
 merely its main ideas.
 
 The intended reader is an advanced LLM with broad general knowledge.
+People rarely read the result. Readability for people is not a goal.
 Adapt to the chapter's subject and purpose. Do not assume that every book
 is a technical manual, or omit the author's definitions, reasoning, or
 evidence merely because the topic is familiar.
@@ -98,8 +99,8 @@ names for the parts. Do not invent new labels for list items.
   and preserve every distinct condition, consequence, and exception.
 - Remove prose that merely restates retained code. Keep explanations
   of intent, rationale, constraints, and behavior not explicit in the code.
-- Use compact lists or tables for repeated structures only when they
-  are shorter and equally clear. Preserve labels, units, and conditions.
+- Use compact lists or tables for repeated structures when they
+  are shorter. Preserve labels, units, and conditions.
 - When removing surrounding text, replace ambiguous references such
   as "this" or "the former" with the precise term they refer to.
 - Keep the author's terms.
@@ -110,11 +111,17 @@ names for the parts. Do not invent new labels for list items.
 - Use equations, pseudocode, type signatures, and standard
   technical notation when they improve density.
 - Use plain-text math such as R = N(N − 1)/2 unless the source uses LaTeX.
-- Remove redundant words without introducing ambiguity.
+- Write in a terse, telegraphic style. Sentence fragments are acceptable.
+  Omit articles, linking verbs, and filler words when the meaning stays
+  unambiguous.
+- Use standard symbols such as =, ≈, <, >, %, and × when their meaning is
+  exact. Write causal and evidential links in words, such as because,
+  correlates with, or suggests, so that their strength stays exact.
+- Use standard abbreviations such as e.g., i.e., and vs.
 - Preserve explicit causal and logical relationships.
 - Preserve conditions, exceptions, and scope limitations.
 - Do not invent abbreviations or private shorthand.
-- Do not sacrifice clarity merely to save tokens.
+- Save tokens only where the result stays unambiguous to an advanced LLM.
 
 Use space according to what is needed to preserve meaning. Group incidental
 details tightly; give definitions, evidence, and relationships enough space
@@ -129,10 +136,10 @@ in a windowless room, where six engineers were discussing a pump that had
 failed. I had worked with that pump before. But because I was new, I kept
 quiet. Then the team leader asked me about my experience. I described a seal
 problem I had seen before, and the team agreed that they would inspect the seal."
-Compressed: "First day at the laboratory: six engineers discussed a failed
-pump in a windowless meeting room. I stayed silent because I was new, despite
-experience with that pump. The team leader asked about my experience; I
-described a past seal problem, and the team agreed to inspect the seal."
+Compressed: "First day at lab: meeting, windowless room, six engineers
+discussing failed pump. I stayed silent because new, despite prior work with
+that pump. Team leader asked about my experience; I described past seal
+problem; team agreed to inspect seal."
 
 4. HANDLE CODE CAREFULLY
 
@@ -148,13 +155,13 @@ described a past seal problem, and the team agreed to inspect the seal."
 
 5. MAINTAIN STRUCTURE AND HANDLE REFERENCES
 
-- Keep the source headings, their order, and their levels.
-  The only additional heading allowed is the optional final
-  "Chapter overview" described below.
+- Keep the headings of retained sections, their order, and their levels.
+  Do not add headings.
 - If the source has no heading markup, infer the heading levels. Put the
-  chapter number and title in one top-level heading. Keep end-of-chapter
+  chapter number and title in one top-level heading. Treat end-of-chapter
   sections, such as key takeaways, as headings.
-- Give parallel sections the same format.
+- Omit a section, such as a summary or key takeaways, when all of its
+  content is already in the body. Otherwise keep only its unique content.
 - Preserve references to other chapters, sections, figures, and listings,
   including their identifiers when supplied. Replace layout-dependent wording
   such as "on this page" with a reference that remains meaningful in the output.
@@ -219,26 +226,13 @@ Optimize in this order:
 1. Faithfulness to the source's claims, qualifications, and uncertainty.
 2. Preservation of independently useful information.
 3. Preservation of relationships and dependencies.
-4. Clarity for an advanced LLM.
-5. Minimum token count.
+4. Minimum token count, without ambiguity for an advanced LLM.
 
-Compress aggressively where information is redundant.
-Compress conservatively where information is unique.
+Remove redundant information aggressively. Keep all unique information,
+but state it in the fewest tokens.
 
 Do not target a fixed compression ratio. The achievable
 compression depends on the source chapter.
-
-8. OPTIONAL CHAPTER OVERVIEW
-
-If the chapter's overall argument or relationships between sections
-are difficult to see after compression, append one short paragraph
-under the heading "## Chapter overview", translated into the source language.
-
-State the central problem, approach, and relationships explicitly
-supported by the source. Preserve qualifications needed for accuracy.
-Do not introduce new conclusions or repeat a catalogue of details.
-The compressed body must remain complete without this overview.
-Omit the overview if an existing concluding section serves this purpose.
 
 FINAL VERIFICATION
 
@@ -269,6 +263,7 @@ Check these items one by one:
 - Each example or anecdote keeps the lesson that the author draws from it.
 - The output contains no inference, category, label, or attribution that
   the source does not contain.
+- No statement can be shorter without loss of meaning.
 
 Restore lost substantive information to the compressed body, repair altered
 meanings, and remove remaining redundancy before producing the result.
@@ -277,7 +272,9 @@ OUTPUT
 
 Produce the complete compressed chapter as text in the response.
 
-Use Markdown-compatible plain-text formatting for readability.
+Use minimal Markdown: headings, list markers, tables, and code fences, only
+where they carry structure. Do not use bold, italics, horizontal rules, or
+other decorative formatting.
 Do not include commentary about the compression process.
 Write in the language of the source.
 

@@ -549,6 +549,7 @@ public:
     [[nodiscard]] nlohmann::json summary_plan(std::int64_t id, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> generate_summary_part(std::string connection_id,
         std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch);
+    void summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch);
     void commit_summary_part(std::int64_t id, SummaryPart part,
         const nlohmann::json& document, std::uint64_t epoch);
     void abandon_summary_part(std::int64_t id, SummaryPart part, std::uint64_t epoch);

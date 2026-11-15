@@ -143,12 +143,14 @@ TEST(ChatCompletionsApi, ReadsUsageFromTheFinalStreamingChunk) {
     ChatCompletionsStreamDecoder decoder(ReasoningFormat::automatic, output.sink());
 
     decoder.consume(
-        "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
+        "data: {\"model\":\"gpt-5.4-mini\",\"service_tier\":\"flex\",\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\n"
         "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5,\"prompt_tokens_details\":{\"cached_tokens\":9,\"cache_write_tokens\":7}}}\n\n"
         "data: [DONE]\n\n");
     const StreamDecodeResult result = decoder.finish();
 
     EXPECT_EQ(result.result.outcome, GenerationOutcome::completed);
+    EXPECT_EQ(result.result.model, "gpt-5.4-mini");
+    EXPECT_EQ(result.result.service_tier, "flex");
     ASSERT_TRUE(result.result.usage.input_tokens);
     ASSERT_TRUE(result.result.usage.output_tokens);
     EXPECT_EQ(*result.result.usage.input_tokens, 12U);

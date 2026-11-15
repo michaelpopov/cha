@@ -263,23 +263,24 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
         });
     }
 
-    if (!protocol_error_.empty()) {
-        return {{GenerationOutcome::protocol_error, protocol_error_, usage_}, describe_response_};
-    }
     if (!completed_successfully_) {
-        return {{
-            GenerationOutcome::protocol_error,
-            received_answer_
+        if (protocol_error_.empty()) {
+            protocol_error_ = received_answer_
                 ? "Streaming response ended before response.completed"
-                : "Streaming response was not valid Responses SSE",
-            usage_,
-        }, true};
+                : "Streaming response was not valid Responses SSE";
+            describe_response_ = true;
+        }
     }
+    if (!protocol_error_.empty())
+        return {{.outcome = GenerationOutcome::protocol_error, .message = protocol_error_,
+            .usage = usage_, .service_tier = service_tier_, .model = model_}, describe_response_};
     auto result = tool_call_result(output_, ProviderApi::responses,
         received_answer_, usage_, collect_tool_calls_,
         "Streaming response completed without answer content", {},
         argument_limit_, maintenance_);
     result.refused = refused_;
+    result.service_tier = std::move(service_tier_);
+    result.model = std::move(model_);
     return {std::move(result), false};
 }
 
@@ -358,11 +359,16 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         return true;
     }
 
+    const auto response = value.find("response");
+    if ((type == "response.completed" || type == "response.failed" || type == "response.incomplete")
+        && response != value.end() && response->is_object()) {
+        usage_ = responses_token_usage(*response);
+        service_tier_ = first_string_field(*response, "service_tier");
+        model_ = first_string_field(*response, "model");
+    }
     if (type == "response.completed") {
         done_ = true;
-        const auto response = value.find("response");
         if (response != value.end() && response->is_object()) {
-            usage_ = responses_token_usage(*response);
             const auto output = response->find("output");
             if (output != response->end() && output->is_array()) {
                 refused_ = refused_ || has_refusal(*output);
@@ -402,7 +408,6 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         done_ = true;
         if (protocol_error_.empty()) {
             std::string error;
-            const auto response = value.find("response");
             if (response != value.end() && response->is_object()) {
                 error = nested_string_field(*response, "error", "message");
             }
@@ -424,7 +429,6 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
         done_ = true;
         if (protocol_error_.empty()) {
             std::string reason;
-            const auto response = value.find("response");
             if (response != value.end() && response->is_object()) {
                 const auto details = response->find("incomplete_details");
                 if (details != response->end() && details->is_object()) {
@@ -494,6 +498,12 @@ GenerationResult decode_responses_response(
         };
     }
 
+    const GenerationTokenUsage usage = responses_token_usage(value);
+    const auto failure = [&](std::string message) {
+        return GenerationResult{.outcome = GenerationOutcome::protocol_error, .message = std::move(message),
+            .usage = usage, .service_tier = first_string_field(value, "service_tier"),
+            .model = first_string_field(value, "model")};
+    };
     const auto top_error = value.find("error");
     if (top_error != value.end() && !top_error->is_null()) {
         std::string message;
@@ -502,16 +512,12 @@ GenerationResult decode_responses_response(
         } else if (top_error->is_string()) {
             message = top_error->get<std::string>();
         }
-        return {
-            GenerationOutcome::protocol_error,
-            message.empty()
+        return failure(message.empty()
                 ? "Responses body contained an error"
-                : "Responses body contained an error: " + message,
-        };
+                : "Responses body contained an error: " + message);
     }
 
     const std::string status = first_string_field(value, "status");
-    const GenerationTokenUsage usage = responses_token_usage(value);
     if (!status.empty() && status != "completed") {
         if (status == "incomplete") {
             std::string reason;
@@ -536,40 +542,27 @@ GenerationResult decode_responses_response(
                 }
             }
             if (maintenance && saw_call && reason == "max_output_tokens") {
-                return {GenerationOutcome::protocol_error,
-                    std::string(maintenance_output_limit_message), usage};
+                return failure(std::string(maintenance_output_limit_message));
             }
             if (oversized && saw_call) {
-                return {GenerationOutcome::protocol_error, "Tool arguments too large", usage};
+                return failure("Tool arguments too large");
             }
-            return {
-                GenerationOutcome::protocol_error,
-                reason.empty()
+            return failure(reason.empty()
                     ? "Responses body status was incomplete"
-                    : "Responses body status was incomplete: " + reason,
-            };
+                    : "Responses body status was incomplete: " + reason);
         }
         if (status == "failed") {
             const std::string message = nested_string_field(value, "error", "message");
-            return {
-                GenerationOutcome::protocol_error,
-                message.empty()
+            return failure(message.empty()
                     ? "Responses body status was failed"
-                    : "Responses body status was failed: " + message,
-            };
+                    : "Responses body status was failed: " + message);
         }
-        return {
-            GenerationOutcome::protocol_error,
-            "Responses body status was '" + status + "'",
-        };
+        return failure("Responses body status was '" + status + "'");
     }
 
     const auto output = value.find("output");
     if (output == value.end() || !output->is_array()) {
-        return {
-            GenerationOutcome::protocol_error,
-            "Responses body did not contain an output array",
-        };
+        return failure("Responses body did not contain an output array");
     }
 
     bool received_answer = false;
@@ -597,10 +590,7 @@ GenerationResult decode_responses_response(
             if (part_type == "output_text") {
                 const auto text = part.find("text");
                 if (text == part.end() || !text->is_string()) {
-                    return {
-                        GenerationOutcome::protocol_error,
-                        "Responses output_text part did not contain string text",
-                    };
+                    return failure("Responses output_text part did not contain string text");
                 }
                 std::string answer = text->get<std::string>();
                 if (!answer.empty()) {
@@ -632,6 +622,7 @@ GenerationResult decode_responses_response(
         argument_limit, maintenance);
     result.refused = has_refusal(*output);
     result.service_tier = first_string_field(value, "service_tier");
+    result.model = first_string_field(value, "model");
     return result;
 }
 

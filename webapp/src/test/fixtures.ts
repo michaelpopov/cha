@@ -430,6 +430,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     compressionStatus: async () => ({ pending: false }),
     cancelCompression: async () => undefined,
     summaryPlan: unavailable('notes.summaryPlan'),
+    summaryLine: async () => {},
     summaryGenerate: unavailable('notes.summaryGenerate'),
     summaryCommit: unavailable('notes.summaryCommit'),
     summaryAbandon: unavailable('notes.summaryAbandon'),

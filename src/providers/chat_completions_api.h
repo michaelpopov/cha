@@ -76,6 +76,8 @@ private:
     bool received_answer_{};
     bool refused_{};
     GenerationTokenUsage usage_;
+    std::string service_tier_;
+    std::string model_;
     nlohmann::json message_{{"role", "assistant"}};
 };
 

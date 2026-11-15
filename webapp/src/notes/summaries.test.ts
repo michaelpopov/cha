@@ -26,6 +26,7 @@ const complete = (ids: number[]) => ids.map(id => ({
 function setup(targets: SummaryTarget[] = [beta, alpha]) {
   const calls = {
     summaryPlan: vi.fn<NotesClient['summaryPlan']>(async () => ({ notes: targets })),
+    summaryLine: vi.fn<NotesClient['summaryLine']>(async () => {}),
     summaryCompress: vi.fn<NotesClient['summaryCompress']>(async () => true),
     summaryGenerate: vi.fn<NotesClient['summaryGenerate']>(async (id, part) =>
       part === 'l3_overview' ? 'Overview' : part === 'l3_section' ? `Section ${id}` : 'Summary'),
@@ -74,6 +75,9 @@ describe('summarizeAndWait', () => {
     ]);
     expect(test.summaryGenerate).toHaveBeenLastCalledWith(
       9, 'l3_overview', '# Alpha * #\n\nSection 1\n\n# Beta\n\nSection 2');
+    expect(test.summaryLine.mock.calls).toEqual([[1, false], [2, false], [2, true], [1, true]]);
+    expect(test.summaryLine.mock.invocationCallOrder.at(-1))
+      .toBeLessThan(test.summaryGenerate.mock.invocationCallOrder.at(-1)!);
     expect(test.summaryCommit).toHaveBeenCalledWith(1, 'l2', noteDocument(heading(alpha.name), paragraph('Summary')));
     expect(test.summaryCommit).toHaveBeenLastCalledWith(9, 'l3', noteDocument(
       heading(folder.name), paragraph('Overview'),
@@ -175,6 +179,7 @@ describe('summarizeAndWait', () => {
     expect(await done).toEqual({ targetIds: [1], compressedIds: [1], folderSummaryCommitted: false });
     expect(test.summaryGenerate).toHaveBeenCalledOnce();
     expect(test.summaryCommit).not.toHaveBeenCalled();
+    expect(test.summaryLine).toHaveBeenCalledExactlyOnceWith(1, false);
     expect(test.run.cancelJob).toBeUndefined();
   });
 

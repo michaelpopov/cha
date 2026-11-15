@@ -36,7 +36,7 @@ bool is_openrouter_host(std::string_view host) {
 
 bool eligible_for_flex_processing(const ModelBackendConfig& config) {
     if (config.mode != Mode::net || config.auth != ProviderAuth::none
-        || config.api_key_id.empty()) return false;
+        || (config.api_key_id.empty() && config.api_key_env.empty())) return false;
 
     switch (config.api) {
     case ProviderApi::responses:

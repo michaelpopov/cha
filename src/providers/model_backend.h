@@ -55,9 +55,11 @@ struct GenerationResult {
     // A definite temporary rejection or connection failure before sending.
     // Partial responses and ambiguous transfer failures are not retried.
     bool retryable{};
-    // The tier that a non-streaming response reports. Empty when the response
-    // does not report one.
+    // Billing metadata reported by the response, when available.
     std::string service_tier;
+    std::string model;
+    // Set for requests that did not reach inference, including quota rejections.
+    bool request_not_processed{};
 };
 
 // How one streaming response ended. Failures the stream itself does not explain

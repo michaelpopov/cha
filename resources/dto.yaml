@@ -2011,6 +2011,14 @@ components:
         has_l1: {type: boolean}
         has_l2: {type: boolean}
 
+    SummaryLineRequest:
+      type: object
+      additionalProperties: false
+      required: [id, finished]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+        finished: {type: boolean}
+
     SummaryGenerateRequest:
       type: object
       additionalProperties: false
