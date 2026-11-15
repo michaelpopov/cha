@@ -537,8 +537,18 @@ std::shared_ptr<OperationReply> NotesService::compress_summary_note(std::string 
     const auto& note = *source;
     const auto workspace = impl_->store->snapshot();
     const auto& prompt = *workspace->find_prompt("note-compression");
-    const auto definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
-        prompt, NoteRequestKind::source_step);
+    SharedCharacterDefinition definition;
+    try {
+        definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+            prompt, NoteRequestKind::source_step);
+    } catch (const ApplicationError& error) {
+        // The summary line goes on to its next step, so Events keeps the reason.
+        try {
+            impl_->store->append_event(EventSeverity::error,
+                "Could not compress " + compression_target(id, note.name) + ": " + error.what());
+        } catch (...) { log_warn("Could not record compression outcome."); }
+        throw;
+    }
     const auto control = std::make_shared<Impl::CompressionControl>();
     control->name = note.name;
     // One flag: summary Cancel, connection close, and a vault change all stop this request.
@@ -602,7 +612,8 @@ std::shared_ptr<OperationReply> NotesService::test_flex(std::string provider_id,
     config.stream = false;
     config.timeout_s = 900; // Flex can queue a request for minutes.
     config.web_search = WebSearchMode::off;
-    config.max_tokens = 1024;
+    // Chat Completions sends max_tokens, which the OpenAI Flex models refuse.
+    if (config.api != ProviderApi::chat_completions) config.max_tokens = 1024;
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
         .character = {"flex-test", "Flex Test"}, .provider = {provider->id, std::move(config)},
     });

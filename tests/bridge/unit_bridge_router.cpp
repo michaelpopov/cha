@@ -4354,6 +4354,17 @@ TEST_F(BridgeRouterTest, NoteSummaryConnectionCloseAndVaultChangeCancelHeldCalls
     EXPECT_EQ(summary_events(cancelled), 1U);
 }
 
+TEST_F(BridgeRouterTest, NoteSummaryCompressRecordsProviderErrors) {
+    bootstrap_epoch();
+    const auto note = compression_source(*application_, epoch_);
+    // The summary line continues after this step, so the reason must be in Events.
+    expect_note_error(call("notes.summaryCompress", {{"id", note.id}}), "invalid_argument",
+        "Select a compression provider in Notes settings.");
+    EXPECT_EQ(summary_events("Could not compress “Source” (note " + std::to_string(note.id)
+        + "): Select a compression provider in Notes settings."), 1U);
+    EXPECT_FALSE(call("notes.compressionStatus", {{"id", note.id}})["result"]["pending"].get<bool>());
+}
+
 TEST_F(BridgeRouterTest, NoteSummaryCompressSavesSkipsAndUsesCompressionEvents) {
     bootstrap_epoch();
     MockHttpServer server({compression_response("chat_completions", false, "Compressed text")});
