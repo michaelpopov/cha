@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <charconv>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <thread>
 
@@ -136,6 +137,20 @@ std::string resource(const Json& value, const char* field, std::string_view pref
     return name;
 }
 
+std::optional<std::uint32_t> audio_token_count(const Json& metadata, const char* field) {
+    const auto count = metadata.find(field);
+    if (count == metadata.end() || !count->is_number_integer()
+        || *count < 0 || *count > std::numeric_limits<std::int32_t>::max())
+        return std::nullopt;
+    return count->get<std::uint32_t>();
+}
+
+}
+
+bool google_note_audio_service(std::string_view origin) {
+    const auto folded = fold_ascii(origin);
+    return folded == "https://generativelanguage.googleapis.com"
+        || folded == "https://generativelanguage.googleapis.com:443";
 }
 
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks) {
@@ -143,9 +158,7 @@ std::string prepare_note_audio(NoteAudioService& service, const std::vector<std:
     if (trim_view(service.voice).empty()) throw std::runtime_error("Select an audio voice.");
     if (blocks.empty()) throw std::runtime_error("No text to narrate");
     if (blocks.size() > 1000) throw NoteAudioSizeError("The note exceeds the 1,000-request batch limit.");
-    const auto service_origin = fold_ascii(service.url);
-    const bool google = service_origin == "https://generativelanguage.googleapis.com"
-        || service_origin == "https://generativelanguage.googleapis.com:443";
+    const bool google = google_note_audio_service(service.url);
     std::string jsonl;
     for (std::size_t i = 0; i < blocks.size(); ++i) {
         const auto chars = std::count_if(blocks[i].begin(), blocks[i].end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
@@ -283,10 +296,12 @@ void download_note_audio(const NoteAudioCredentials& credentials, const Json& op
 }
 
 std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
-    const std::filesystem::path& temporary, const std::atomic_bool& cancel) {
+    const std::filesystem::path& temporary, const std::atomic_bool& cancel, NoteAudioUsage& usage) {
+    usage = {}; // A processing retry reads the same results from the beginning.
     std::ifstream input_file(temporary / "results.jsonl", std::ios::binary);
     if (!input_file) throw NoteAudioError(NoteAudioFailure::storage, "Could not open the audio results. Check available disk space.");
     std::vector<std::filesystem::path> clips(block_count);
+    std::string failed_block;
     std::size_t converted = 0;
     for (;;) {
         if (cancel.load()) throw NoteAudioError(NoteAudioFailure::interrupted, "Audio generation was interrupted.");
@@ -306,8 +321,26 @@ std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
             || key != std::to_string(index) || !clips[index].empty())
             throw NoteAudioError(NoteAudioFailure::invalid, "The service returned duplicate or unexpected audio results. Check the service.");
         const auto block = "text block " + std::to_string(index + 1);
-        if (item.contains("error")) throw NoteAudioError(NoteAudioFailure::invalid, "Audio generation failed for " + block + ". Check the service.");
-        const auto& data = item.at("response").at("candidates").at(0).at("content").at("parts").at(0).at("inlineData");
+        clips[index] = temporary / (key + ".m4a");
+        if (item.contains("error")) {
+            if (failed_block.empty()) failed_block = block;
+            continue;
+        }
+        const auto& response = item.at("response");
+        const auto metadata = response.find("usageMetadata");
+        if (metadata != response.end() && metadata->is_object()) {
+            // This request contains only text input and asks for audio output.
+            const auto input_tokens = audio_token_count(*metadata, "promptTokenCount");
+            const auto output_tokens = audio_token_count(*metadata, "candidatesTokenCount");
+            if (input_tokens && output_tokens) {
+                usage.input_tokens += *input_tokens;
+                usage.output_tokens += *output_tokens;
+                ++usage.reported_requests;
+            }
+        }
+        // Keep collecting reported usage if a request failed within the batch.
+        if (!failed_block.empty()) continue;
+        const auto& data = response.at("candidates").at(0).at("content").at("parts").at(0).at("inlineData");
         if (data.at("mimeType") != "audio/wav") throw NoteAudioError(NoteAudioFailure::invalid, "Expected WAV audio for " + block + ". Check the service.");
         std::string wav;
         try { wav = decode_base64(data.at("data").get_ref<const std::string&>()); }
@@ -317,7 +350,6 @@ std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
         const auto source = temporary / "clip.wav";
         { std::ofstream file(source, std::ios::binary); file.write(wav.data(), static_cast<std::streamsize>(wav.size()));
           file.close(); if (!file) throw NoteAudioError(NoteAudioFailure::storage, "Could not save WAV audio. Check available disk space."); }
-        clips[index] = temporary / (key + ".m4a");
         std::filesystem::remove(clips[index]); // A processing retry replaces partial output.
         try { encode_note_audio(source, clips[index]); }
         catch (const NoteAudioError& error) {
@@ -326,6 +358,8 @@ std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
         std::filesystem::remove(source);
         ++converted;
     }
+    if (!failed_block.empty())
+        throw NoteAudioError(NoteAudioFailure::invalid, "Audio generation failed for " + failed_block + ". Check the service.");
     if (converted != block_count) throw NoteAudioError(NoteAudioFailure::invalid, "The service returned an incomplete audio batch. Check the service.");
     return clips;
 }

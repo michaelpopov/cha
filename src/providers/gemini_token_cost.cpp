@@ -75,4 +75,11 @@ std::optional<double> estimate_gemini_flex_token_cost(
         + static_cast<double>(*usage.output_tokens) * rates.output) * multiplier / 1'000'000;
 }
 
+double estimate_gemini_batch_audio_cost(
+    std::uint64_t text_tokens, std::uint64_t audio_tokens, sys_days batch_date) {
+    // https://aistudio.google.com/docs/pricing#gemini-3.8-flash-tts
+    const double multiplier = batch_date >= january_2027 ? 2.0 : 1.0;
+    return (text_tokens * 0.25 + audio_tokens * 4.50) * multiplier / 1'000'000;
+}
+
 } // namespace cha

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -20,6 +21,8 @@ struct NoteAudioError : std::runtime_error {
     long code;
 };
 struct NoteAudioService { std::string url, key, voice; };
+// True for Google's own Gemini API origin, as prepare_note_audio() saves it.
+bool google_note_audio_service(std::string_view origin);
 // Validates settings and limits before the worker or any service request starts.
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks);
 using NoteAudioCredentials = std::function<NoteAudioService()>;
@@ -34,8 +37,12 @@ nlohmann::json read_note_audio_batch(const NoteAudioCredentials& credentials, co
     const std::atomic_bool& cancel);
 void download_note_audio(const NoteAudioCredentials& credentials, const nlohmann::json& operation,
     std::size_t block_count, const std::filesystem::path& temporary, const std::atomic_bool& cancel);
+struct NoteAudioUsage {
+    std::uint64_t input_tokens{}, output_tokens{};
+    std::size_t reported_requests{};
+};
 std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
-    const std::filesystem::path& temporary, const std::atomic_bool& cancel);
+    const std::filesystem::path& temporary, const std::atomic_bool& cancel, NoteAudioUsage& usage);
 void wait_note_audio(int seconds, const std::atomic_bool& cancel, const std::function<void(int)>& wait = {});
 NoteAudioError note_audio_codec_error(std::string_view operation, long code);
 void encode_note_audio(const std::filesystem::path& wav, const std::filesystem::path& m4a);

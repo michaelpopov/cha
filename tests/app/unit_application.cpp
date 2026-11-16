@@ -82,7 +82,7 @@ nlohmann::json audio_operation(bool done = true) {
     if (done) result["response"] = {{"responsesFile", audio_file}};
     return result;
 }
-std::string audio_results() {
+std::string audio_results(std::string key = "0", nlohmann::json usage = nullptr) {
     std::string wav;
     const auto number = [&](unsigned value, int bytes) {
         for (int i = 0; i < bytes; ++i) wav += static_cast<char>((value >> (8 * i)) & 255);
@@ -90,9 +90,11 @@ std::string audio_results() {
     wav += "RIFF"; number(4836, 4); wav += "WAVEfmt "; number(16, 4);
     number(1, 2); number(1, 2); number(24000, 4); number(48000, 4); number(2, 2); number(16, 2);
     wav += "data"; number(4800, 4); wav.append(4800, '\0');
-    return nlohmann::json{{"key", "0"}, {"response", {{"candidates", nlohmann::json::array({
+    nlohmann::json result{{"key", key}, {"response", {{"candidates", nlohmann::json::array({
         {{"content", {{"parts", nlohmann::json::array({{{"inlineData", {{"mimeType", "audio/wav"},
-            {"data", encode_base64(wav)}}}}})}}}}})}}}}.dump() + '\n';
+            {"data", encode_base64(wav)}}}}})}}}}})}}}};
+    if (!usage.is_null()) result["response"]["usageMetadata"] = std::move(usage);
+    return result.dump() + '\n';
 }
 std::string audio_json(const nlohmann::json& value) { return http_response("application/json", value.dump()); }
 std::string audio_http_error(int status) {
@@ -781,9 +783,15 @@ TEST_F(NoteAudioBackground, AbandonmentSignalsOnlyTheRemovedNotesAndContextChang
 
 TEST_F(NoteAudioBackground, RegistrationAndFinalEventFailuresRetryOnlyTheLocalTransaction) {
     MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
+    auto operation = audio_operation();
+    operation["metadata"]["createTime"] = "2026-11-15T22:49:39.246223661Z";
+    operation["metadata"]["endTime"] = "2026-11-15T22:51:16.559057126Z";
+    const auto results = audio_results("1", {{"promptTokenCount", 5}, {"candidatesTokenCount", 7}})
+        + audio_results("0", {{"promptTokenCount", 11}, {"candidatesTokenCount", 93},
+            {"serviceTier", "SERVICE_TIER_STANDARD"}});
     MockHttpServer server({"HTTP/1.1 200 OK\r\nx-goog-upload-url: http://127.0.0.1:"
         + std::to_string(upload.port()) + "/secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
+        audio_json(operation), http_response("application/jsonl", results)});
     configure(server.port()); activate();
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
     database.execute("CREATE TRIGGER fail_start BEFORE INSERT ON event_history WHEN NEW.severity='info' BEGIN SELECT RAISE(ABORT,'full'); END");
@@ -793,13 +801,41 @@ TEST_F(NoteAudioBackground, RegistrationAndFinalEventFailuresRetryOnlyTheLocalTr
         database.execute(index == 1 ? "DROP TRIGGER fail_start" : "DROP TRIGGER fail_finish");
     };
     upload.start(); server.start();
-    (void)application->start_background_note_audio(note.id, "Kore", {"Paragraph"}, epoch);
+    (void)application->start_background_note_audio(note.id, "Kore", {"First", "Second"}, epoch);
     ASSERT_TRUE(finished());
     upload.join(); server.join();
     EXPECT_EQ(waits_snapshot(), (std::vector<int>{10, 10}));
     EXPECT_EQ(server.requests().size(), 3u);
-    EXPECT_EQ(application->list_events(epoch).size(), 2u);
+    const auto events = application->list_events(epoch);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events.front().severity, EventSeverity::success);
+    EXPECT_NE(events.front().message.find("Batch processing time: 97.313 s. Input: 16 text tokens. "
+        "Output: 100 audio tokens. Estimated Gemini Batch cost: unavailable."), std::string::npos);
     EXPECT_EQ(completions.load(), 1);
+}
+
+TEST_F(NoteAudioBackground, RecoveredBatchReportsPartialUsageAfterARequestFails) {
+    auto operation = audio_operation();
+    operation["metadata"]["createTime"] = "2027-01-01T00:00:00Z";
+    operation["metadata"]["endTime"] = "2027-01-01T00:00:15Z";
+    const auto failed = nlohmann::json{{"key", "0"}, {"error", {{"message", "Request failed"}}}};
+    const auto results = failed.dump() + '\n'
+        + audio_results("1", {{"promptTokenCount", 11}, {"candidatesTokenCount", 93}})
+        + audio_results("2", {{"promptTokenCount", -10}, {"candidatesTokenCount", 500}});
+    MockHttpServer server({audio_json(operation), http_response("application/jsonl", results)});
+    const auto attempt = application->store().accept_note_audio(note.id, 3,
+        "http://127.0.0.1:" + std::to_string(server.port()), key_id, [](const auto&) {});
+    ASSERT_TRUE(attempt);
+    ASSERT_TRUE(application->store().register_note_audio(attempt->id, audio_batch, "Kore"));
+    server.start(); activate();
+    ASSERT_TRUE(finished()); server.join();
+    const auto events = application->list_events(epoch);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events.front().severity, EventSeverity::error);
+    EXPECT_NE(events.front().message.find("Batch processing time: 15.000 s. Input: 11 text tokens. "
+        "Output: 93 audio tokens. Estimated Gemini Batch cost: unavailable. "
+        "Incomplete usage (1 of 3 requests reported)."), std::string::npos);
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
 }
 
 TEST_F(NoteAudioBackground, NativeRecoveryReadsSavedBatchImmediatelyWithoutSubmitting) {
@@ -856,7 +892,9 @@ TEST_F(NoteAudioBackground, RecoversL1AudioAndReportsTheOriginalNote) {
     EXPECT_EQ(application->get_note_audio_info(l1, epoch)["count"], 1);
     EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
     EXPECT_EQ(completed_id.load(), l1);
-    EXPECT_EQ(application->list_events(epoch).front().message, "Audio ready for " + target + ": 1 clips saved.");
+    EXPECT_EQ(application->list_events(epoch).front().message, "Audio ready for " + target
+        + ": 1 clips saved. Batch processing time: unavailable. Input and output token counts unavailable."
+          " Estimated Gemini Batch cost: unavailable.");
 
     application->commit_summary_part(note.id, SummaryPart::l1, note_document_from_text("Replacement"), epoch);
     EXPECT_EQ(application->get_note_audio_info(l1, epoch)["count"], 0);

@@ -1,4 +1,5 @@
 #include "providers/google_api.h"
+#include "providers/gemini_token_cost.h"
 #include "providers/tool_calls.h"
 #include "chat/transcript.h"
 #include "support/test_transcript.h"
@@ -378,6 +379,12 @@ TEST(GoogleApi, EmptyLibraryDoesNotAdvertiseOrSerializeFileSearch) {
     const auto body = Json::parse(build_google_request_body(input, {}, "System"));
     EXPECT_FALSE(body.contains("tools"));
     EXPECT_EQ(body.dump().find("Forum Library search is available"), std::string::npos);
+}
+
+TEST(GoogleApi, BatchAudioCostDoublesForBatchesCreatedFromJanuary2027) {
+    using namespace std::chrono;
+    EXPECT_DOUBLE_EQ(estimate_gemini_batch_audio_cost(16, 100, sys_days{year{2026}/December/31}), 0.000454);
+    EXPECT_DOUBLE_EQ(estimate_gemini_batch_audio_cost(11, 93, sys_days{year{2027}/January/1}), 0.0008425);
 }
 
 } // namespace

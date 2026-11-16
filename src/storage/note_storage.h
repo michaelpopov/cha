@@ -206,7 +206,7 @@ std::optional<NoteAudioAttempt> note_audio_accept(storage::SqliteDatabase& datab
 bool note_audio_register(storage::SqliteDatabase& database, std::int64_t attempt_id,
     std::string_view batch_id, std::string_view voice);
 bool note_audio_finish(storage::SqliteDatabase& database, std::int64_t attempt_id,
-    const std::vector<std::filesystem::path>& clips);
+    const std::vector<std::filesystem::path>& clips, std::string_view event_details = {});
 bool note_audio_retire(storage::SqliteDatabase& database, std::int64_t attempt_id,
     EventSeverity severity, std::string_view message);
 struct NoteAudioClip { std::string mime_type, bytes; };

@@ -64,7 +64,8 @@ protected:
                 batch = read_note_audio_batch(credentials, id, cancel);
             }
             download_note_audio(credentials, batch, count, workspace.root(), cancel);
-            clips = process_note_audio(count, workspace.root(), cancel);
+            NoteAudioUsage usage;
+            clips = process_note_audio(count, workspace.root(), cancel, usage);
         } catch (...) { error = std::current_exception(); }
         upload.join(); server.join();
         requests = server.requests(); upload_requests = upload.requests();
@@ -296,7 +297,8 @@ TEST_F(NoteAudioServiceTest, RestartsPartialDownloadsAndAcceptsOutOfOrderResults
     server.start();
     EXPECT_THROW(download_note_audio(credentials, operation(true), 2, workspace.root(), cancel), NoteAudioError);
     download_note_audio(credentials, operation(true), 2, workspace.root(), cancel);
-    const auto clips = process_note_audio(2, workspace.root(), cancel);
+    NoteAudioUsage usage;
+    const auto clips = process_note_audio(2, workspace.root(), cancel, usage);
     server.join();
     ASSERT_EQ(clips.size(), 2u);
     EXPECT_EQ(clips[0].filename(), "0.m4a");

@@ -1,9 +1,13 @@
 #include "notes/notes_service_internal.h"
 #include "media/note_audio.h"
+#include "providers/gemini_token_cost.h"
 #include "util/private_filesystem.h"
-#include <random>
 #include "storage/session_lease.h"
 #include "util/logging.h"
+
+#include <iomanip>
+#include <random>
+#include <sstream>
 
 namespace cha::app {
 namespace {
@@ -21,6 +25,63 @@ NoteAudioService configured_note_audio(const WorkspaceNotes& settings, const Api
     if (!keys.find(settings.audio_api_key_id))
         throw ApplicationError(ErrorCode::invalid_argument, "Configure the audio service URL and API key in Notes settings.");
     return {settings.audio_url, keys.value(settings.audio_api_key_id), std::move(voice)};
+}
+
+std::optional<std::chrono::sys_time<std::chrono::microseconds>> batch_time(
+    const nlohmann::json& metadata, const char* field) {
+    using namespace std::chrono;
+    const auto value = metadata.find(field);
+    if (value == metadata.end() || !value->is_string()) return {};
+    const auto& timestamp = value->get_ref<const std::string&>();
+    if (timestamp.size() < 20 || timestamp.back() != 'Z') return {};
+    std::string_view fraction(timestamp.data() + 19, timestamp.size() - 20);
+    if (!fraction.empty()) {
+        if (fraction.front() != '.') return {};
+        fraction.remove_prefix(1);
+        if (fraction.empty() || fraction.size() > 9 || fraction.find_first_not_of("0123456789") != fraction.npos)
+            return {};
+    }
+    std::istringstream input(timestamp.substr(0, 19));
+    input.imbue(std::locale::classic());
+    std::tm tm{};
+    if (!(input >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%S")) || !input.eof()) return {};
+    const auto date = year{tm.tm_year + 1900}/(tm.tm_mon + 1)/tm.tm_mday;
+    if (!date.ok()) return {};
+    int micros = 0;
+    for (std::size_t i = 0; i < 6; ++i)
+        micros = micros * 10 + (i < fraction.size() ? fraction[i] - '0' : 0);
+    return sys_days{date} + hours{tm.tm_hour} + minutes{tm.tm_min}
+        + seconds{tm.tm_sec} + microseconds{micros};
+}
+
+std::string batch_event_details(const nlohmann::json& operation, const NoteAudioUsage& usage,
+    std::size_t requests, bool google) {
+    using namespace std::chrono;
+    const auto metadata = operation.find("metadata");
+    const auto created = metadata == operation.end() ? std::nullopt : batch_time(*metadata, "createTime");
+    const auto ended = metadata == operation.end() ? std::nullopt : batch_time(*metadata, "endTime");
+    std::ostringstream details;
+    details.imbue(std::locale::classic());
+    details << " Batch processing time: ";
+    if (created && ended && *ended >= *created)
+        details << std::fixed << std::setprecision(3) << duration<double>(*ended - *created).count() << " s.";
+    else
+        details << "unavailable.";
+    if (usage.reported_requests == 0)
+        return details.str() + " Input and output token counts unavailable. Estimated Gemini Batch cost: unavailable.";
+
+    details << " Input: " << usage.input_tokens << " text tokens. Output: " << usage.output_tokens
+        << " audio tokens. Estimated Gemini Batch cost: ";
+    // Google's rates do not apply to other services with the same interface.
+    if (google) {
+        const auto date = created ? floor<days>(*created) : floor<days>(system_clock::now());
+        const auto cost = estimate_gemini_batch_audio_cost(usage.input_tokens, usage.output_tokens, date);
+        details << '$' << std::fixed << std::setprecision(8) << cost << " USD.";
+    } else
+        details << "unavailable.";
+    if (usage.reported_requests < requests)
+        details << " Incomplete usage (" << usage.reported_requests << " of " << requests << " requests reported).";
+    return details.str();
 }
 }
 
@@ -299,11 +360,16 @@ void NotesService::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t 
             if (failures < 3) ++failures;
         }
     };
+    nlohmann::json operation;
+    NoteAudioUsage usage;
+    const auto block_count = static_cast<std::size_t>(attempt.clip_count);
+    const bool google = google_note_audio_service(attempt.service_origin);
     const auto retire = [&](EventSeverity severity, const std::string& message) {
+        const auto details = attempt.batch_id ? batch_event_details(operation, usage, block_count, google) : std::string{};
         retry([&] {
             const std::lock_guard lock(lifecycle_mutex);
             check();
-            return store->retire_note_audio(attempt.id, severity, message);
+            return store->retire_note_audio(attempt.id, severity, message + details);
         }, true);
     };
     try {
@@ -312,7 +378,6 @@ void NotesService::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t 
             retire(EventSeverity::warning, "Audio submission status unknown for " + note_audio_target(attempt)
                 + ". The job stopped before its batch ID was saved, possibly before submission started. If it was submitted, starting again may generate audio twice. Check the service before starting again.");
         } else {
-            nlohmann::json operation;
             if (!attempt.batch_id) {
                 std::unique_lock submission(audio_submission_mutex, std::defer_lock);
                 while (!cancel->load() && !submission.try_lock_for(std::chrono::milliseconds(100))) {}
@@ -350,14 +415,15 @@ void NotesService::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t 
             step = "result download";
             // Temporary files have no persistent cache or lifecycle of their own.
             auto temporary = retry([&] { return std::make_unique<TemporaryAudio>(); }, true);
-            retry([&] { download_note_audio(credentials, operation, static_cast<std::size_t>(attempt.clip_count), temporary->path, *cancel); }, false);
+            retry([&] { download_note_audio(credentials, operation, block_count, temporary->path, *cancel); }, false);
             step = "conversion";
-            auto clips = retry([&] { return process_note_audio(static_cast<std::size_t>(attempt.clip_count), temporary->path, *cancel); }, false);
+            auto clips = retry([&] { return process_note_audio(block_count, temporary->path, *cancel, usage); }, false);
+            const auto details = batch_event_details(operation, usage, block_count, google);
             step = "save";
             retry([&] {
                 const std::lock_guard lock(lifecycle_mutex);
                 check();
-                if (store->finish_note_audio(attempt.id, clips) && note_audio_changed)
+                if (store->finish_note_audio(attempt.id, clips, details) && note_audio_changed)
                     note_audio_changed(attempt.note_id, epoch); // Enqueue only, while commit/source reads are serialized.
                 return true;
             }, true);

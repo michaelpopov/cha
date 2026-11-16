@@ -432,7 +432,8 @@ public:
         std::string_view origin, std::string_view key_id,
         const std::function<void(const NoteAudioAttempt&)>& launch, bool only_if_missing = false);
     bool register_note_audio(std::int64_t attempt_id, std::string_view batch_id, std::string_view voice);
-    bool finish_note_audio(std::int64_t attempt_id, const std::vector<std::filesystem::path>& clips);
+    bool finish_note_audio(std::int64_t attempt_id, const std::vector<std::filesystem::path>& clips,
+        std::string_view event_details);
     bool retire_note_audio(std::int64_t attempt_id, EventSeverity severity, std::string_view message);
     void save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips);
 

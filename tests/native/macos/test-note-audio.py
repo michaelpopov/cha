@@ -270,7 +270,9 @@ def main():
                 assert database.execute("SELECT count(*) FROM note_audio WHERE note_id=?", (audio_note,)).fetchone() == (3,)
                 assert database.execute("SELECT count(*) FROM note_audio WHERE note_id=?", (l1_id,)).fetchone() == (1,)
                 assert database.execute("SELECT message FROM event_history ORDER BY id DESC LIMIT 1").fetchone() == (
-                    f'Audio ready for L1 of “Audio check” (note {audio_note}): 1 clips saved.',)
+                    f'Audio ready for L1 of “Audio check” (note {audio_note}): 1 clips saved. '
+                    'Batch processing time: unavailable. Input and output token counts unavailable. '
+                    'Estimated Gemini Batch cost: unavailable.',)
             server.shutdown()
             server.server_close()
             thread.join()

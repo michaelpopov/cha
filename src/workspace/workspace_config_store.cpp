@@ -2912,9 +2912,10 @@ bool WorkspaceConfigStore::register_note_audio(std::int64_t id, std::string_view
     const std::lock_guard lock(impl_->mutex);
     return note_audio_register(*impl_->database, id, batch_id, voice);
 }
-bool WorkspaceConfigStore::finish_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips) {
+bool WorkspaceConfigStore::finish_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips,
+    std::string_view event_details) {
     const std::lock_guard lock(impl_->mutex);
-    return note_audio_finish(*impl_->database, id, clips);
+    return note_audio_finish(*impl_->database, id, clips, event_details);
 }
 bool WorkspaceConfigStore::retire_note_audio(std::int64_t id, EventSeverity severity, std::string_view message) {
     const std::lock_guard lock(impl_->mutex);
