@@ -532,14 +532,23 @@ TEST(ElevenLabs, EncodesVoiceAndUsesItsModelSettingsAndAuthentication) {
         .url = "http://127.0.0.1:" + std::to_string(server.port()) + "/v1/text-to-speech",
         .model = "eleven_multilingual_v2", .output_format = "mp3_44100_128",
     };
-    const auto request = make_voice_output_request(output, "**Hello**\n\nWorld", {
+    const auto request = make_voice_output_request(output, "**Hello**\n\nWörld", {
         .reference_id = "voice/id ?", .settings = {.speed = 0.9}, .provider = "elevenlabs",
     });
-    EXPECT_EQ(request.body, (Json{{"text", "Hello\n\nWorld"}, {"model_id", "eleven_multilingual_v2"},
+    EXPECT_EQ(request.body, (Json{{"text", "Hello\n\nWörld"}, {"model_id", "eleven_multilingual_v2"},
         {"voice_settings", {{"speed", 0.9}}}}));
+    test::TestWorkspace workspace;
+    const auto log_file = workspace.root() / "elevenlabs-cost.log";
+    initialize_diagnostic_logging(log_file, "info");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
     const auto result = download_voice_output(output, "eleven-secret", request, [] { return false; });
     ASSERT_TRUE(result);
     EXPECT_EQ(result->audio, "audio");
+    std::ifstream log(log_file);
+    const std::string logged{std::istreambuf_iterator<char>(log), std::istreambuf_iterator<char>()};
+    // Fields follow the variable elapsed time in key order. "Wörld" has five characters.
+    EXPECT_NE(logged.find(R"("estimated_usd":0.00096,"input_characters":12,"model":"eleven_multilingual_v2",)"
+        R"("output_bytes":5,"provider":"elevenlabs"})"), std::string::npos) << logged;
     const auto received = server.requests();
     ASSERT_EQ(received.size(), 1U);
     EXPECT_NE(received[0].find("/v1/text-to-speech/voice%2Fid%20%3F/stream?output_format=mp3_44100_128"), std::string::npos);

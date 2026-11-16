@@ -8,8 +8,10 @@
 #include "storage/session_repository.h"
 
 #include <curl/curl.h>
+#include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstdint>
 #include <memory>
 #include <regex>
 #include <stdexcept>
@@ -18,6 +20,28 @@
 namespace cha {
 namespace {
 using Json = nlohmann::json;
+
+// Published API list prices in USD millionths per input character or byte.
+// https://elevenlabs.io/pricing/api
+// https://fish.audio/app/developers/
+std::optional<unsigned> voice_cost_rate(const VoiceOutputRequest& request) {
+    const std::string_view model = request.model;
+    if (request.provider == "elevenlabs") {
+        if (model == "eleven_v4" || model == "eleven_v3" || model == "eleven_multilingual_v2") return 80;
+        if (model == "eleven_v4_turbo" || model == "eleven_v3_conversational"
+            || model == "eleven_flash_v2" || model == "eleven_flash_v2_5"
+            || model == "eleven_turbo_v2" || model == "eleven_turbo_v2_5") return 40;
+    } else if (request.provider == "fishaudio") {
+        if (model == "s2.1-pro-free") return 0;
+        if (model == "s2.1-pro" || model == "s2-pro" || model == "s1") return 15;
+        if (model == "drama-3") {
+            using namespace std::chrono;
+            // The launch price ends on December 1 at 00:00 PT (08:00 UTC).
+            return system_clock::now() < sys_days{year{2026}/December/1} + hours{8} ? 10 : 50;
+        }
+    }
+    return std::nullopt;
+}
 
 // Re-read the existing response instead of keeping a second streaming buffer.
 // A table header must start with '|', so other unfinished lines can be spoken.
@@ -183,6 +207,29 @@ bool perform_transfer(CURL* curl, const char* error_buffer, const std::function<
 }
 } // namespace
 
+std::size_t voice_output_input_units(std::string_view provider, std::string_view text) {
+    if (provider == "fishaudio") return text.size();
+    return static_cast<std::size_t>(std::ranges::count_if(text, [](unsigned char c) {
+        return (c & 0xc0) != 0x80; // One Unicode code point per leading byte.
+    }));
+}
+
+void record_voice_output_cost(const VoiceOutputRequest& request, std::size_t input_units,
+    std::size_t output_bytes, std::chrono::milliseconds elapsed) noexcept {
+    try {
+        const bool elevenlabs = request.provider == "elevenlabs";
+        const auto rate = voice_cost_rate(request);
+        const auto microdollars = input_units * std::uint64_t{rate.value_or(0)};
+        Json details{{"provider", request.provider}, {"model", request.model},
+            {elevenlabs ? "input_characters" : "input_utf8_bytes", input_units},
+            {"output_bytes", output_bytes}, {"elapsed_ms", elapsed.count()},
+            {"estimated_usd", rate ? Json(microdollars / 1'000'000.0) : Json(nullptr)}};
+        log_info("Voice generation cost: " + details.dump(-1, ' ', false, Json::error_handler_t::replace));
+    } catch (...) {
+        // Cost tracking must not fail an audio transfer.
+    }
+}
+
 std::string speech_text_prefix(std::string_view source, std::string_view provider, bool complete) {
     const auto content = speech_content(source, complete);
     source = content;
@@ -254,6 +301,7 @@ static std::optional<VoiceOutputResult> transfer_voice_output(
     if (cancelled()) {
         return std::nullopt;
     }
+    const auto started = std::chrono::steady_clock::now();
     CurlHandle curl;
     CurlHeaders headers;
     headers.append("Content-Type: application/json");
@@ -289,6 +337,15 @@ static std::optional<VoiceOutputResult> transfer_voice_output(
     char* content_type = nullptr;
     require(curl_easy_getinfo(curl.get(), CURLINFO_RESPONSE_CODE, &status));
     require(curl_easy_getinfo(curl.get(), CURLINFO_CONTENT_TYPE, &content_type));
+    if (status == 200 && content_type && valid_audio_type(content_type) && !receiver.body.empty()) {
+        const auto text = request.body.find("text");
+        if (text != request.body.end() && text->is_string()) {
+            record_voice_output_cost(request,
+                voice_output_input_units(request.provider, text->get_ref<const std::string&>()),
+                receiver.body.size(), std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started));
+        }
+    }
     return VoiceOutputResult{status, {std::move(receiver.body), content_type ? content_type : ""}};
 }
 

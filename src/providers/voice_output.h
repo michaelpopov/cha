@@ -32,6 +32,11 @@ struct VoiceTextChunk { std::string text; bool complete{}; };
 using VoiceTextInput = std::function<VoiceTextChunk()>;
 std::string speech_text_prefix(std::string_view text, std::string_view provider, bool complete);
 
+// Meter the speech text sent to the provider, after Markdown and URL cleanup.
+std::size_t voice_output_input_units(std::string_view provider, std::string_view text);
+void record_voice_output_cost(const VoiceOutputRequest& request, std::size_t input_units,
+    std::size_t output_bytes, std::chrono::milliseconds elapsed) noexcept;
+
 using AudioChunkCallback = std::function<void(std::string_view mime_type, std::string_view bytes)>;
 
 std::optional<EntryAudio> download_voice_output(

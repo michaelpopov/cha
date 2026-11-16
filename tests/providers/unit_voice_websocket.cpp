@@ -188,12 +188,12 @@ TEST(VoiceWebSocket, StreamsAllThreeProtocolsBeforeInputEndsAndDrainsFinalAudio)
     }
 }
 
-TEST(VoiceWebSocket, FlushesSentenceAndLineEndingsWithoutFlushingEveryTextChunk) {
-    const std::vector<std::string> chunks{"A few", " more words", " end. More words",
+TEST_F(VoiceWebSocketDiagnostics, FlushesSentenceAndLineEndingsWithoutFlushingEveryTextChunk) {
+    const std::vector<std::string> chunks{"Ä few", " more words", " end. More words",
         " in one sentence! Next thought", " continues? Some more", " on this line\nNext line",
         " has two. Sentences! And a tail", " ends.", " Final fragment"};
     const std::vector<std::pair<std::string, bool>> expected{
-        {"A few", false}, {" more words", false}, {" end.", true}, {" More words", false},
+        {"Ä few", false}, {" more words", false}, {" end.", true}, {" More words", false},
         {" in one sentence!", true}, {" Next thought", false}, {" continues?", true}, {" Some more", false},
         {" on this line\n", true}, {"Next line", false}, {" has two. Sentences!", true}, {" And a tail", false},
         {" ends.", true}, {" Final fragment", false}};
@@ -208,15 +208,22 @@ TEST(VoiceWebSocket, FlushesSentenceAndLineEndingsWithoutFlushingEveryTextChunk)
         XaiFakeServer server({.after_audio_done = {tail, done}, .speech = true, .msgpack = fish});
         server.start();
         const auto output = output_for(server, fish, model);
+        const auto* provider = fish ? "fishaudio" : "elevenlabs";
         std::size_t next = 0;
         const auto audio = stream_voice_websocket(output, "key", make_voice_output_request(output, std::nullopt,
-            {.reference_id = "voice", .provider = fish ? "fishaudio" : "elevenlabs"}),
+            {.reference_id = "voice", .provider = provider}),
             [] { return false; }, {}, [&] {
                 const auto text = chunks.at(next++);
                 return VoiceTextChunk{text, next == chunks.size()};
             });
         ASSERT_TRUE(audio);
         EXPECT_EQ(audio->audio, "a");
+        // 159 UTF-8 bytes for Fish Audio and 158 Unicode characters for ElevenLabs.
+        // Fields follow the variable elapsed time in key order.
+        const auto cost = (fish ? std::string(R"("estimated_usd":0.002385,"input_utf8_bytes":159,)")
+            : std::string(R"("estimated_usd":0.00632,"input_characters":158,)"))
+            + R"("model":")" + model + R"(","output_bytes":1,"provider":")" + provider + R"("})";
+        EXPECT_NE(logs().find(cost), std::string::npos) << logs();
         server.join();
         std::vector<Json> messages;
         if (fish) {

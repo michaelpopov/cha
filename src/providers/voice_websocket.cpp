@@ -52,7 +52,7 @@ std::optional<EntryAudio> stream_voice_websocket_with_timeout(
     std::chrono::milliseconds idle_timeout) {
     const auto started = Clock::now();
     std::optional<Clock::time_point> first_audio, last_audio;
-    std::size_t text_bytes = 0, audio_chunks = 0;
+    std::size_t text_bytes = 0, input_units = 0, audio_chunks = 0;
     bool text_done = false;
     std::string last_event = "none";
     EntryAudio audio{{}, output.output_format.starts_with("opus") ? "audio/ogg"
@@ -126,6 +126,7 @@ std::optional<EntryAudio> stream_voice_websocket_with_timeout(
                 {"voice_id", request.voice_id}, {"new_turn", false}}})}, {"flush", flush}});
             else send({{"text", text}, {"flush", flush}});
             text_bytes += text.size();
+            input_units += voice_output_input_units(request.provider, text);
         };
         if (fish) {
             auto settings = request.body;
@@ -211,6 +212,8 @@ std::optional<EntryAudio> stream_voice_websocket_with_timeout(
             if (finished) {
                 if (!text_done) throw std::runtime_error("Voice WebSocket completed before the answer finished.");
                 if (!valid_entry_audio(audio)) throw std::runtime_error("Voice provider returned invalid audio.");
+                record_voice_output_cost(request, input_units, audio.audio.size(),
+                    std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started));
                 const bool stopped = cancelled();
                 summarize(stopped ? "cancelled" : "completed");
                 return stopped ? std::nullopt : std::optional<EntryAudio>(std::move(audio));
