@@ -7,6 +7,7 @@ import {
   isXaiVoiceStartResult,
   isXaiVoicePieces,
   type NativeVoiceInputRuntime,
+  type VoiceInputUsage,
   type XaiVoiceStartResult,
   type XaiVoicePieces,
   type AudioDownloadAcceptance,
@@ -77,9 +78,9 @@ export interface ChaWebClient {
   audioUrl(forumId: string, sessionId: string, entryId: number): string;
   getBootstrap(): Promise<ChaWebBootstrap>;
   listSessions(forumId: string): Promise<SessionListing[]>;
-  createSession(forumId: string, text: string): Promise<CreateSessionResult>;
+  createSession(forumId: string, text: string, usage?: VoiceInputUsage[]): Promise<CreateSessionResult>;
   getSession(forumId: string, sessionId: string): Promise<SessionSnapshot>;
-  submitInput(forumId: string, sessionId: string, text: string): Promise<void>;
+  submitInput(forumId: string, sessionId: string, text: string, usage?: VoiceInputUsage[]): Promise<void>;
   stopSession(forumId: string, sessionId: string): Promise<void>;
   deleteSession(forumId: string, sessionId: string): Promise<void>;
 }
@@ -330,9 +331,9 @@ export function createChaWebClient(onContextLost = () => {}): ChaWebClient {
         (response) => readGuarded(response, isSessionListingArray));
     },
 
-    async createSession(forumId, text) {
+    async createSession(forumId, text, voice_input_usage) {
       return exchange('POST', sessionsPath(forumId), 201,
-        (response) => readGuarded(response, isSessionLabelResult), { text });
+        (response) => readGuarded(response, isSessionLabelResult), { text, voice_input_usage });
     },
 
     async getSession(forumId, sessionId) {
@@ -340,9 +341,9 @@ export function createChaWebClient(onContextLost = () => {}): ChaWebClient {
         (response) => readGuarded(response, isSessionSnapshot));
     },
 
-    async submitInput(forumId, sessionId, text) {
+    async submitInput(forumId, sessionId, text, voice_input_usage) {
       await exchange('POST', `${sessionPath(forumId, sessionId)}/input`, 204,
-        async () => undefined, { text });
+        async () => undefined, { text, voice_input_usage });
     },
 
     async stopSession(forumId, sessionId) {

@@ -1,5 +1,7 @@
+import type { VoiceInputRecording } from '../voiceInputUsage';
+
 export interface PromptDrafts {
-  chat: { key: string; text: string };
+  chat: { key: string; text: string; recordings?: readonly VoiceInputRecording[] };
   notes: string;
 }
 
@@ -26,8 +28,12 @@ export function editChatDraft(
   drafts: PromptDrafts,
   activeKey: string,
   text: string,
+  recording?: VoiceInputRecording,
 ): PromptDrafts {
-  return { ...drafts, chat: { key: activeKey, text } };
+  let recordings = drafts.chat.key === activeKey ? drafts.chat.recordings : undefined;
+  if (!text.trim()) recordings = undefined;
+  if (recording && !recordings?.includes(recording)) recordings = [...(recordings ?? []), recording];
+  return { ...drafts, chat: { key: activeKey, text, ...(recordings && { recordings }) } };
 }
 
 export function editNotesDraft(drafts: PromptDrafts, text: string): PromptDrafts {

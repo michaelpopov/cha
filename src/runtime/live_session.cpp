@@ -1,9 +1,9 @@
 #include "runtime/live_session.h"
 
 #include "chat/transcript.h"
+#include "runtime/text_input.h"
 #include "session/session_controller.h"
 #include "util/logging.h"
-#include "runtime/text_input.h"
 
 #include <exception>
 #include <new>
@@ -11,6 +11,8 @@
 #include <type_traits>
 #include <utility>
 #include <variant>
+
+#include <nlohmann/json.hpp>
 
 namespace cha {
 namespace {
@@ -21,6 +23,42 @@ inline constexpr bool unsupported_web_command = false;
 std::string session_log(const FullSessionId& key, std::string_view event) {
     return "web session forum_id=" + key.forum_id + " session_id=" + key.session_id
         + " event=" + std::string(event);
+}
+
+// Published streaming rates in USD per minute. The legacy OpenAI token-priced
+// models use their published per-minute estimates.
+std::optional<double> transcription_rate(const VoiceInputUsage& usage) {
+    const std::string_view model = usage.model;
+    if (usage.provider == "xai") {
+        if (model == "grok-voice-transcribe-2.0" || model == "grok-voice-transcribe-1.0") {
+            return 0.20 / 60;
+        }
+    } else if (usage.provider == "openai") {
+        if (model == "gpt-live-transcribe" || model == "gpt-realtime-whisper") return 0.017;
+        if (model == "gpt-transcribe") return 0.0045;
+        if (model == "gpt-4o-transcribe" || model == "whisper-1") return 0.006;
+        if (model == "gpt-4o-mini-transcribe" || model.starts_with("gpt-4o-mini-transcribe-")) {
+            return 0.003;
+        }
+    }
+    return std::nullopt;
+}
+
+void log_transcription_cost(const FullSessionId& session, const VoiceInputUsage& usage) noexcept {
+    try {
+        using Json = nlohmann::json;
+        const auto rate = transcription_rate(usage);
+        const Json details{
+            {"forum_id", session.forum_id}, {"session_id", session.session_id},
+            {"provider", usage.provider}, {"model", usage.model},
+            {"audio_seconds", usage.audio_seconds},
+            {"estimated_usd", rate ? Json(usage.audio_seconds / 60 * *rate) : Json(nullptr)},
+        };
+        log_info("Speech-to-text cost: "
+            + details.dump(-1, ' ', false, Json::error_handler_t::replace));
+    } catch (...) {
+        // Cost logging must not affect the submitted prompt.
+    }
 }
 
 int shutdown_reason_priority(ShutdownReason reason) {
@@ -282,13 +320,19 @@ void LiveSession::execute(OwnerCommand command) {
     CommandResult outcome = std::visit([this, &controller, &command](auto&& value) -> CommandResult {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
-            if (host_command_ && !controller.is_generating()
+            const bool was_generating = controller.is_generating();
+            if (host_command_ && !was_generating
                 && !command.reply->submission()->expired()) {
                 if (auto result = host_command_(value.text)) return std::move(*result);
             }
-            return handle_text_input(
+            auto result = handle_text_input(
                 controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission(),
                 value.attach_paths);
+            // Recipient detection decides later; settle_submission logs that case.
+            if (!was_generating && controller.is_generating() && !controller.classification_pending()) {
+                for (const auto& usage : value.voice_input_usage) log_transcription_cost(identity_, usage);
+            }
+            return result;
         } else if constexpr (std::is_same_v<T, AttachTextFileCommand>) {
             return {.session = controller.add_text_file(
                 value.name, value.text, command.reply->submission())};
@@ -330,9 +374,10 @@ void LiveSession::execute(OwnerCommand command) {
     publish_update(std::move(outcome.session.state), presentation_changed);
     mirror_if_changed();
     const bool session_ended = outcome.session.session_ended;
-    if (std::holds_alternative<RawCommand>(command.command) && controller.classification_pending()
-        && !deferred_submit_) {
+    auto* const raw = std::get_if<RawCommand>(&command.command);
+    if (raw && controller.classification_pending() && !deferred_submit_) {
         deferred_submit_ = std::move(command.reply);
+        deferred_voice_input_usage_ = std::move(raw->voice_input_usage);
     } else {
         (void)command.reply->complete(std::move(outcome));
     }
@@ -374,6 +419,7 @@ void LiveSession::settle_submission(ControllerUpdate& update) {
     auto result = controller_->take_submission_result();
     if (!result || !deferred_submit_) return;
     auto reply = std::exchange(deferred_submit_, {});
+    const auto voice_input_usage = std::exchange(deferred_voice_input_usage_, {});
     using Outcome = SessionController::SubmissionOutcome;
     if (result->outcome == Outcome::expired) {
         (void)reply->complete(ErrorCode::command_timeout);
@@ -381,6 +427,10 @@ void LiveSession::settle_submission(ControllerUpdate& update) {
         (void)reply->complete(CommandFailure{ErrorCode::invalid_argument,
             result->update.notice.value_or("The prompt could not be dispatched.")});
     } else {
+        // A detected self-note is accepted without generation.
+        if (result->outcome == Outcome::accepted && controller_->is_generating()) {
+            for (const auto& usage : voice_input_usage) log_transcription_cost(identity_, usage);
+        }
         CommandResult outcome{
             .session = std::move(result->update),
             .clear_input = result->outcome == Outcome::accepted,

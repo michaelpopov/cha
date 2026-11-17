@@ -1510,6 +1510,24 @@ components:
         text:
           type: string
           description: Input text, limited by the server's configured prompt byte limit.
+        voice_input_usage:
+          type: array
+          items:
+            $ref: "#/components/schemas/VoiceInputUsage"
+
+    VoiceInputUsage:
+      type: object
+      additionalProperties: false
+      required: [provider, model, audio_seconds]
+      properties:
+        provider:
+          type: string
+          enum: [openai, xai]
+        model:
+          type: string
+        audio_seconds:
+          type: number
+          exclusiveMinimum: 0
 
     TextFileRequest:
       type: object

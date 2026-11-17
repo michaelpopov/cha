@@ -3,6 +3,7 @@
 #include "app/current_vault.h"
 #include "app/media_operations.h"
 #include "bridge/bridge_protocol.h"
+#include "runtime/request_parser.h"
 #include "storage/session_lease.h"
 #include "util/logging.h"
 #include "workspace/workspace_config_store.h"
@@ -147,16 +148,16 @@ std::optional<nlohmann::json> parse_object(
     return value;
 }
 
-std::optional<std::string> parse_text_object(
+std::optional<RawCommand> parse_prompt(
     std::string_view body, int fd, const std::atomic<bool>& stop) {
     const auto object = parse_object(body, fd, stop);
     if (!object) return std::nullopt;
-    if (object->size() != 1 || !object->contains("text")
-        || !(*object)["text"].is_string()) {
+    try {
+        return parse_input_command(*object);
+    } catch (const std::invalid_argument&) {
         write_code(fd, ErrorCode::invalid_argument, stop);
         return std::nullopt;
     }
-    return (*object)["text"].get<std::string>();
 }
 
 bool parse_empty_object(
@@ -640,16 +641,16 @@ void serve_input(
     int fd,
     const std::atomic<bool>& stop) {
     if (!require_json_body(request, fd, stop)) return;
-    const auto text = parse_text_object(request.body, fd, stop);
-    if (!text) return;
-    if (!prompt_allowed(application, *text, fd, stop)) return;
+    auto prompt = parse_prompt(request.body, fd, stop);
+    if (!prompt) return;
+    if (!prompt_allowed(application, prompt->text, fd, stop)) return;
     if (const auto error = open_named(
             application, route.forum_id, route.session_id, epoch)) {
         write_code(fd, *error, stop);
         return;
     }
     const SubmitView view = classify_submit(application.submit(
-        route.forum_id, route.session_id, RawCommand{*text}, epoch));
+        route.forum_id, route.session_id, std::move(*prompt), epoch));
     if (view.outcome == InputOutcome::accepted) {
         write_cgi(fd, 204, {}, {}, stop);
         return;
@@ -694,9 +695,9 @@ void serve_create(
     ChaWebDeleteSession delete_session,
     ChaWebSubmitInput submit_input) {
     if (!require_json_body(request, fd, stop)) return;
-    const auto text = parse_text_object(request.body, fd, stop);
-    if (!text) return;
-    if (!prompt_allowed(application, *text, fd, stop)) return;
+    auto prompt = parse_prompt(request.body, fd, stop);
+    if (!prompt) return;
+    if (!prompt_allowed(application, prompt->text, fd, stop)) return;
     (void)application.get_forum(route.forum_id, epoch);
 
     std::string session_id;
@@ -743,8 +744,8 @@ void serve_create(
     // Once submission starts, errors (including exceptions) can follow stored
     // input. Only a definitive rejection permits deleting the session.
     const SubmitView view = classify_submit(submit_input
-        ? submit_input(application, route.forum_id, session_id, RawCommand{*text}, epoch)
-        : application.submit(route.forum_id, session_id, RawCommand{*text}, epoch));
+        ? submit_input(application, route.forum_id, session_id, std::move(*prompt), epoch)
+        : application.submit(route.forum_id, session_id, std::move(*prompt), epoch));
     if (view.outcome == InputOutcome::accepted) {
         write_json(fd, 201, created, stop);
     } else if (view.outcome == InputOutcome::rejected) {

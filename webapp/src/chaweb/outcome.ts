@@ -1,5 +1,6 @@
 import { ChaProtocolError } from '../api/client';
 import { ChaWebError } from './client';
+import type { VoiceInputRecording } from '../voiceInputUsage';
 
 export const reconnectingNotice = 'Reconnecting';
 export const stopRequestedNotice = 'Stop requested';
@@ -11,6 +12,7 @@ const readDelaysMs = [1_000, 2_000, 4_000, 10_000] as const;
 export interface Draft {
   text: string;
   revision: number;
+  recordings?: readonly VoiceInputRecording[];
 }
 
 export type DraftMap = Record<string, Draft>;
@@ -23,10 +25,14 @@ export function sessionDraftKey(forumId: string, sessionId: string): string {
   return `session:${forumId}/${sessionId}`;
 }
 
-export function editDraft(drafts: DraftMap, key: string, text: string): DraftMap {
+export function editDraft(
+  drafts: DraftMap, key: string, text: string, recording?: VoiceInputRecording,
+): DraftMap {
   const current = drafts[key] ?? { text: '', revision: 0 };
-  if (current.text === text) return drafts;
-  return { ...drafts, [key]: { text, revision: current.revision + 1 } };
+  let recordings = text.trim() ? current.recordings : undefined;
+  if (recording && !recordings?.includes(recording)) recordings = [...(recordings ?? []), recording];
+  if (current.text === text && current.recordings === recordings) return drafts;
+  return { ...drafts, [key]: { text, revision: current.revision + 1, ...(recordings && { recordings }) } };
 }
 
 // An acknowledgement clears only the revision that was submitted.

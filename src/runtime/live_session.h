@@ -175,6 +175,7 @@ private:
     std::shared_ptr<SessionLease> lease_;
     std::unique_ptr<SessionController> controller_;
     std::shared_ptr<CommandReply> deferred_submit_;
+    std::vector<VoiceInputUsage> deferred_voice_input_usage_;
     std::function<std::set<EntryId>()> cached_audio_entries_;
     std::function<void(std::span<const TranscriptEntry>)> update_audio_;
     std::function<std::optional<CommandResult>(std::string_view)> host_command_;

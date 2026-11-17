@@ -134,12 +134,19 @@ struct SessionSnapshot {
     bool operator==(const SessionSnapshot&) const = default;
 };
 
+struct VoiceInputUsage {
+    std::string provider;
+    std::string model;
+    double audio_seconds{};
+};
+
 // Author attribution is not carried here: LiveSession applies its current
 // session persona, so a submitter cannot choose one.
 struct RawCommand {
     std::string text;
     // Only the desktop app reads paths on its own computer.
     bool attach_paths{};
+    std::vector<VoiceInputUsage> voice_input_usage;
 };
 
 struct AttachTextFileCommand {

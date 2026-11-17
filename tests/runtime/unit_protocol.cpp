@@ -384,6 +384,21 @@ TEST(WebProtocol, ParsesRouteSpecificCommandPayloads) {
     ASSERT_TRUE(std::holds_alternative<RawCommand>(input));
     EXPECT_EQ(std::get<RawCommand>(input).text, "hello");
 
+    // Invalid optional usage is ignored; the prompt is still accepted.
+    const RawCommand dictated = parse_input_command({{"text", "hello"}, {"voice_input_usage", {
+        {{"provider", "xai"}, {"model", "grok"}, {"audio_seconds", 1.5}},
+        {{"provider", "other"}, {"model", "grok"}, {"audio_seconds", 1}},
+        {{"provider", "openai"}, {"model", "whisper-1"}, {"audio_seconds", 0}},
+        {{"provider", "openai"}, {"audio_seconds", 1}},
+        "invalid",
+    }}});
+    ASSERT_EQ(dictated.voice_input_usage.size(), 1U);
+    EXPECT_EQ(dictated.voice_input_usage[0].provider, "xai");
+    EXPECT_EQ(dictated.voice_input_usage[0].model, "grok");
+    EXPECT_EQ(dictated.voice_input_usage[0].audio_seconds, 1.5);
+    EXPECT_TRUE(parse_input_command({{"text", "hello"}, {"voice_input_usage", "invalid"}})
+        .voice_input_usage.empty());
+
     const WebCommand cover = parse_cover_command({{"through_entry_id", 7}});
     ASSERT_TRUE(std::holds_alternative<CoverCommand>(cover));
     EXPECT_EQ(std::get<CoverCommand>(cover).through_entry_id, 7U);

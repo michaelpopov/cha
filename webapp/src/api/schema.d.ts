@@ -649,6 +649,13 @@ export interface components {
         InputRequest: {
             /** @description Input text, limited by the server's configured prompt byte limit. */
             text: string;
+            voice_input_usage?: components["schemas"]["VoiceInputUsage"][];
+        };
+        VoiceInputUsage: {
+            /** @enum {string} */
+            provider: "openai" | "xai";
+            model: string;
+            audio_seconds: number;
         };
         TextFileRequest: {
             name: string;

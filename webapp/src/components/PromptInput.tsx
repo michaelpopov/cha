@@ -17,6 +17,7 @@ import {
   publicErrorMessage,
   type ChaClient,
   type NativeVoiceInputRuntime,
+  type VoiceInputUsage,
 } from '../api/client';
 import {
   appendPreparedTranscription,
@@ -27,6 +28,7 @@ import {
   type VoiceInputTransport,
   type VoiceInputXaiBridge,
 } from '../voiceInput';
+import { snapshotVoiceInputUsage, type VoiceInputRecording } from '../voiceInputUsage';
 import { isSpeechPlaybackActive } from '../speechPlayback';
 import { MicrophoneIcon, SendIcon } from './Icons';
 import { TransliterationToggle, useTransliteration } from './TransliterationMode';
@@ -58,7 +60,8 @@ export interface PromptVoiceControls {
 export interface PromptInputProps {
   hidden?: boolean;
   value: string;
-  onChange(next: string): void;
+  recordings?: readonly VoiceInputRecording[];
+  onChange(next: string, recording?: VoiceInputRecording): void;
   onFileDrop?(file: File): void;
   enabled: boolean;
   submitEnabled: boolean;
@@ -68,7 +71,7 @@ export interface PromptInputProps {
   submitLabel: string;
   submitTitle?: string;
   client: ChaClient;
-  onSubmit(text: string): Promise<{ clear_input: boolean }>;
+  onSubmit(text: string, usage?: VoiceInputUsage[]): Promise<{ clear_input: boolean }>;
   onSubmittingChange?(submitting: boolean): void;
   onError(message: string | null): void;
   stopAction?: ReactElement;
@@ -107,6 +110,7 @@ function xaiBridgeFromClient(client: ChaClient): VoiceInputXaiBridge {
 export function PromptInput({
   hidden = false,
   value,
+  recordings,
   onChange,
   onFileDrop,
   enabled,
@@ -125,10 +129,12 @@ export function PromptInput({
   statusRow,
 }: PromptInputProps) {
   const draftRef = useRef(value);
+  const draftRecordings = useRef(recordings ?? []);
   const committedValue = useRef(value);
   if (committedValue.current !== value) {
     committedValue.current = value;
     draftRef.current = value;
+    draftRecordings.current = recordings ?? [];
   }
 
   const onChangeRef = useRef(onChange);
@@ -140,9 +146,15 @@ export function PromptInput({
   onErrorRef.current = onError;
   onSubmittingChangeRef.current = onSubmittingChange;
 
-  function updateDraft(next: string) {
+  function updateDraft(next: string, recording?: VoiceInputRecording) {
     draftRef.current = next;
-    onChangeRef.current(next);
+    if (!next.trim()) draftRecordings.current = [];
+    if (recording && next.trim() && !draftRecordings.current.includes(recording)) {
+      draftRecordings.current = [...draftRecordings.current, recording];
+      onChangeRef.current(next, recording);
+    } else {
+      onChangeRef.current(next);
+    }
   }
 
   const transliteration = useTransliteration<HTMLTextAreaElement>(value);
@@ -368,7 +380,9 @@ export function PromptInput({
         updateDraft(submitted.trim() ? submitted : '');
       }
       if (!submitted.trim()) return;
-      const result = await onSubmitRef.current(submitted);
+      const { usage, acknowledge } = snapshotVoiceInputUsage(draftRecordings.current);
+      const result = await (usage ? onSubmitRef.current(submitted, usage) : onSubmitRef.current(submitted));
+      if (result.clear_input) acknowledge();
       if (composerEpoch.current !== epoch) return;
       if (result.clear_input) {
         updateDraft(withoutSentPrompt(draftRef.current, submitted));
@@ -482,6 +496,9 @@ export function PromptInput({
       prompt: runtime.prompt,
       languages: [voiceLanguage.current],
     };
+    const recording: VoiceInputRecording = {
+      provider: runtime.provider, model: runtime.model, audio_seconds: 0, submittedSeconds: 0,
+    };
     let session: VoiceInputTransport | null = null;
     try {
       session = await VoiceInputSession.start(
@@ -516,7 +533,7 @@ export function PromptInput({
             if (base !== current || text) {
               const next = appendPreparedTranscription(base, text);
               voicePreview = next.slice(base.length);
-              updateDraft(next);
+              updateDraft(next, text ? recording : undefined);
               if (!text && withoutVoiceSendPhrase(next, voiceSendPhrase.current) !== null) {
                 setVoiceSendPending(true);
               }
@@ -528,7 +545,7 @@ export function PromptInput({
           updateDraft(receivedVoiceDelta && current ? current + text
             : configuration.provider === 'xai'
               ? appendPreparedTranscription(current, text)
-              : appendTranscription(current, text));
+              : appendTranscription(current, text), recording);
           if (withoutVoiceSendPhrase(draftRef.current, voiceSendPhrase.current) !== null) {
             setVoiceSendPending(true);
           }
@@ -545,6 +562,8 @@ export function PromptInput({
         client.connectVoiceInput,
         xaiBridgeFromClient(client),
         startup.signal,
+        undefined,
+        recording,
       );
       if (voiceInputAttempt.current !== attempt || microphoneOwner !== microphoneIdentity.current) {
         session.cancel();

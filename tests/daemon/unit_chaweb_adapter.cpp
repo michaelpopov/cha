@@ -606,6 +606,74 @@ TEST_F(ChaWebAdapterTest, CreatesOpensInputsAndStops) {
     EXPECT_EQ(idle.status, 204) << idle.raw;
 }
 
+TEST_F(ChaWebAdapterTest, LogsSpeechToTextCostOnlyWhenInputStartsGeneration) {
+    const auto log_path = workspace_.root() / "transcription.log";
+    initialize_diagnostic_logging(log_path, "info");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+    const nlohmann::json openai{
+        {"provider", "openai"}, {"model", "gpt-live-transcribe"}, {"audio_seconds", 60},
+    };
+    const nlohmann::json xai{
+        {"provider", "xai"}, {"model", "grok-voice-transcribe-2.0"}, {"audio_seconds", 180},
+    };
+    const auto submit = [&](std::string route, const std::string& text, nlohmann::json usage) {
+        return post(std::move(route), {{"text", text}, {"voice_input_usage", std::move(usage)}});
+    };
+    const auto created = submit(sessions_path("lobby"), "@- private note", {openai});
+    ASSERT_EQ(created.status, 201) << created.raw;
+    const auto input = session_path("lobby", created.json.at("id").get<std::string>()) + "/input";
+    EXPECT_EQ(submit(input, "@missing private prompt", {openai}).status, 422);
+    EXPECT_EQ(submit(input, "@guide private prompt", {openai, xai}).status, 204);
+
+    constexpr std::string_view prefix = "Speech-to-text cost: ";
+    std::ifstream log(log_path);
+    std::vector<nlohmann::json> costs;
+    for (std::string line; std::getline(log, line);) {
+        const auto start = line.find(prefix);
+        if (start == std::string::npos) continue;
+        EXPECT_NE(line.find("[info]"), std::string::npos);
+        costs.push_back(nlohmann::json::parse(line.substr(start + prefix.size())));
+    }
+    ASSERT_EQ(costs.size(), 2U);
+    EXPECT_EQ(costs[0].at("session_id"), created.json.at("id"));
+    EXPECT_EQ(costs[0].at("provider"), "openai");
+    EXPECT_DOUBLE_EQ(costs[0].at("estimated_usd").get<double>(), 0.017);
+    EXPECT_EQ(costs[1].at("provider"), "xai");
+    EXPECT_DOUBLE_EQ(costs[1].at("estimated_usd").get<double>(), 0.01);
+}
+
+TEST_F(ChaWebAdapterTest, LogsSpeechToTextCostOnlyWhenRecipientDetectionStartsGeneration) {
+    const auto log_path = workspace_.root() / "transcription.log";
+    initialize_diagnostic_logging(log_path, "info");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
+    const auto decision = [](std::string_view choice) {
+        return http_json(nlohmann::json{{"answers", {{"recipient", {
+            {"type", "choice"}, {"choice", choice}}}}}}.dump());
+    };
+    MockHttpServer server({decision("self_note"), decision("all_characters")});
+    server.start();
+    const auto epoch = application_->context_epoch();
+    const auto key = application_->create_api_key(
+        {.display_name = "OpenRouter", .value = "test-secret"}, epoch);
+    (void)application_->save_jev_settings({
+        "http://127.0.0.1:" + std::to_string(server.port()) + "/api/alpha/decisions",
+        "typesafe/jev-1.13", key.id}, epoch);
+    const auto input = session_path("lobby", create_session()) + "/input";
+    const nlohmann::json usage{
+        {{"provider", "xai"}, {"model", "grok-voice-transcribe-2.0"}, {"audio_seconds", 60}},
+    };
+    EXPECT_EQ(post(input, {{"text", "Note to self: buy milk"}, {"voice_input_usage", usage}}).status, 204);
+    EXPECT_EQ(post(input, {{"text", "Everyone, answer"}, {"voice_input_usage", usage}}).status, 204);
+    server.join();
+
+    std::ifstream log(log_path);
+    std::size_t costs = 0;
+    for (std::string line; std::getline(log, line);) {
+        if (line.find("Speech-to-text cost: ") != std::string::npos) ++costs;
+    }
+    EXPECT_EQ(costs, 1U);
+}
+
 TEST_F(ChaWebAdapterTest, UnknownRoutesAndMethodsAreNotFoundWithoutCors) {
     const struct Case {
         const char* method;

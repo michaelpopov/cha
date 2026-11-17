@@ -43,8 +43,29 @@ const std::string& required_string(
 }
 
 RawCommand parse_input_command(const nlohmann::json& json) {
-    exact_keys(json, {"text"});
-    return {required_string(json, "text")};
+    const auto& text = required_string(json, "text");
+    const auto usage = json.find("voice_input_usage");
+    if (json.size() != (usage == json.end() ? 1u : 2u)) {
+        throw std::invalid_argument("Invalid web command");
+    }
+    RawCommand command{text};
+    // Optional telemetry can be absent or invalid without affecting the prompt.
+    if (usage == json.end() || !usage->is_array()) return command;
+    for (const auto& item : *usage) {
+        if (!item.is_object()) continue;
+        const auto provider = item.find("provider");
+        const auto model = item.find("model");
+        const auto seconds = item.find("audio_seconds");
+        if (provider == item.end() || (*provider != "openai" && *provider != "xai")
+            || model == item.end() || !model->is_string()
+            || seconds == item.end() || !seconds->is_number()) continue;
+        const double duration = seconds->get<double>();
+        if (std::isfinite(duration) && duration > 0) {
+            command.voice_input_usage.push_back(
+                {provider->get<std::string>(), model->get<std::string>(), duration});
+        }
+    }
+    return command;
 }
 
 CoverCommand parse_cover_command(const nlohmann::json& json) {

@@ -2,6 +2,7 @@ import { ChaError } from './api/client';
 import { prepareDictationPiece } from './dictationText';
 import { onSpeechPlaybackChange } from './speechPlayback';
 import captureUrl from './voiceInputCapture.worklet.js?url&no-inline';
+import type { VoiceInputRecording } from './voiceInputUsage';
 import type {
   VoiceInputConfiguration,
   VoiceInputCapture,
@@ -67,6 +68,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
     private readonly xaiBridge: VoiceInputXaiBridge,
     private readonly gain: GainNode,
     private readonly ownsContext: boolean,
+    private readonly recording?: VoiceInputRecording,
   ) {
     this.worklet.port.addEventListener('message', this.onWorkletMessage);
     this.worklet.addEventListener('processorerror', this.onCaptureFailure);
@@ -166,6 +168,7 @@ class XaiVoiceInputSession implements VoiceInputTransport {
       (reply) => {
         this.sending = false;
         if (!this.cancelled && !this.failed && reply.session_id === this.sessionId) {
+          if (this.recording) this.recording.audio_seconds += samples.length / captureSampleRate;
           this.deliver(reply.pieces, reply.preview ?? '');
         }
         this.sendNext();
@@ -334,6 +337,7 @@ export async function startXaiVoiceInput(
   xaiBridge: VoiceInputXaiBridge,
   signal?: AbortSignal,
   capture?: VoiceInputCapture,
+  recording?: VoiceInputRecording,
 ): Promise<VoiceInputTransport> {
   const sessionId = crypto.randomUUID();
   const setup = new AbortController();
@@ -405,6 +409,7 @@ export async function startXaiVoiceInput(
       xaiBridge,
       gain,
       !capture,
+      recording,
     );
     session.attachMicrophone();
     if (setup.signal.aborted) throw abortError();

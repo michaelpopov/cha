@@ -26,6 +26,7 @@ import {
   type CommandInput,
   type DraftMap,
 } from './outcome';
+import { snapshotVoiceInputUsage, type VoiceInputRecording } from '../voiceInputUsage';
 import {
   defaultForumId,
   isWelcomeSession,
@@ -750,10 +751,10 @@ export function useChaweb(client: ChaWebClient, resetToWelcome = false) {
     retarget('');
   }
 
-  function onDraft(text: string) {
+  function onDraft(text: string, recording?: VoiceInputRecording) {
     const key = currentDraftKey();
     if (!key) return;
-    updateDrafts((current) => editDraft(current, key, text));
+    updateDrafts((current) => editDraft(current, key, text, recording));
   }
 
   function send(submittedText?: string) {
@@ -781,9 +782,11 @@ export function useChaweb(client: ChaWebClient, resetToWelcome = false) {
       const draft = draftsRef.current[key] ?? { text: '', revision: 0 };
       const forum = current.forumId;
       const { text, revision } = draft;
+      const { usage, acknowledge } = snapshotVoiceInputUsage(draft.recordings);
       patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined }));
-      void clientRef.current.createSession(forum, text).then(
-        (created) => createdOk(forum, revision, text, created, marker),
+      const api = clientRef.current;
+      void (usage ? api.createSession(forum, text, usage) : api.createSession(forum, text)).then(
+        (created) => { acknowledge(); createdOk(forum, revision, text, created, marker); },
         (error: unknown) => { consumePromptFocus(marker); createdFail(forum, error); },
       );
       return;
@@ -793,9 +796,11 @@ export function useChaweb(client: ChaWebClient, resetToWelcome = false) {
     const forum = current.forumId;
     const session = current.sessionId;
     const { text, revision } = draft;
+    const { usage, acknowledge } = snapshotVoiceInputUsage(draft.recordings);
     patchStatus((state) => withConversation(state, key, { sending: true, notice: undefined }));
-    void clientRef.current.submitInput(forum, session, text).then(
-      () => inputOk(forum, key, revision, text),
+    const api = clientRef.current;
+    void (usage ? api.submitInput(forum, session, text, usage) : api.submitInput(forum, session, text)).then(
+      () => { acknowledge(); inputOk(forum, key, revision, text); },
       (error: unknown) => {
         const failure = classifyWriteFailure(error);
         if (failure === 'rejected' || failure === 'missing') consumePromptFocus(marker);

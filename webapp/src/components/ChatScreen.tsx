@@ -22,12 +22,14 @@ import {
   type CommandResult,
   type SessionSnapshot,
   type TextFileRequest,
+  type VoiceInputUsage,
 } from '../api/client';
 import {
   isFollowing, lastEntryId, scrollTranscript, type PromptFocus, type TranscriptScroll,
 } from '../transcriptScroll';
 import { useAudioDownloads } from '../audioDownloads';
 import { readTextFile } from '../textFile';
+import type { VoiceInputRecording } from '../voiceInputUsage';
 import { ChatPictureLayout } from './ChatPicture';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
 import {
@@ -64,7 +66,7 @@ export interface ChatActions {
   onSetDefaultCharacter(characterId: string): Promise<CommandResult>;
   onSetCharacterSettings(characterId: string, patch: CharacterSettingsPatch): Promise<CommandResult>;
   onStopGeneration(): Promise<CommandResult>;
-  onSubmitInput(text: string): Promise<CommandResult>;
+  onSubmitInput(text: string, usage?: VoiceInputUsage[]): Promise<CommandResult>;
   onUncoverConversation(): Promise<CommandResult>;
 }
 
@@ -74,7 +76,8 @@ interface ChatScreenProps extends ChatActions {
   onPlaybackSpeedChange(speed: number): void;
   client: ChaClient;
   draft: string;
-  onDraftChange(next: string): void;
+  draftRecordings?: readonly VoiceInputRecording[];
+  onDraftChange(next: string, recording?: VoiceInputRecording): void;
   state: AppState;
   dispatch: Dispatch<DataAction>;
   navigate: Dispatch<NavigationAction>;
@@ -326,6 +329,7 @@ export function ChatScreen({
   onPlaybackSpeedChange,
   client,
   draft,
+  draftRecordings,
   onDraftChange,
   state,
   dispatch,
@@ -741,11 +745,11 @@ export function ChatScreen({
     if (next.consumed === pendingPrompt.current) pendingPrompt.current = null;
   });
 
-  async function submitPrompt(text: string) {
+  async function submitPrompt(text: string, usage?: VoiceInputUsage[]) {
     const marker = { key: audioConversationKey ?? '', afterId: lastEntryId(snapshot?.transcript ?? []) };
     pendingPrompt.current = marker;
     try {
-      const result = await onSubmitInput(text);
+      const result = await (usage ? onSubmitInput(text, usage) : onSubmitInput(text));
       if (!result.clear_input && pendingPrompt.current === marker) pendingPrompt.current = null;
       return result;
     } catch (failure) {
@@ -969,6 +973,7 @@ export function ChatScreen({
         inputLabel="Message"
         microphoneEnabled={microphoneEnabled}
         onChange={onDraftChange}
+        recordings={draftRecordings}
         onError={setActionError}
         onFileDrop={connected && !generationActive && !actionPending
           ? (file) => void attachTextFile(file) : undefined}

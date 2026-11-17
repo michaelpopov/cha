@@ -24,12 +24,14 @@ import {
   type NotesClient,
   type NoteTextMode,
   type TextFileRequest,
+  type VoiceInputUsage,
 } from '../api/client';
 import type { NativeBridge } from '../api/nativeBridge';
 import { installAppCloseHost } from '../api/nativeClose';
 import { installNativeLayoutHandler, reportNativeLayout } from '../api/nativeLayout';
 import { DetailRefreshProvider } from '../detailRefresh';
 import { validateBootstrap } from '../state/bootstrap';
+import type { VoiceInputRecording } from '../voiceInputUsage';
 import {
   adoptChatDraft,
   chatDraftKey,
@@ -124,6 +126,7 @@ interface ScreenProps extends ChatActions {
   navigate: Dispatch<NavigationAction>;
   client: ChaClient & NotesClient;
   draft: string;
+  draftRecordings?: readonly VoiceInputRecording[];
   notesDraft: string;
   onNotesDraftChange: Dispatch<SetStateAction<string>>;
   noteItems: readonly NoteItem[];
@@ -142,7 +145,7 @@ interface ScreenProps extends ChatActions {
   onRegisterSave(save: NoteSaveHandle | null, documentId: number | null): void;
   onRegisterLoad(load: Promise<void>): void;
   onRegisterDispose(dispose: () => void): void;
-  onDraftChange(next: string): void;
+  onDraftChange(next: string, recording?: VoiceInputRecording): void;
   onDeleteForum(forumId: string): Promise<void>;
   onCreateSession(forumId: string): Promise<boolean>;
   onOpenSession(forumId: string, sessionId: string): Promise<boolean>;
@@ -220,6 +223,7 @@ function ScreenContent({
   onCoverConversation,
   onDeleteTurn,
   draft,
+  draftRecordings,
   onDraftChange,
   notesDraft,
   onNotesDraftChange,
@@ -265,6 +269,7 @@ function ScreenContent({
         onCoverConversation={onCoverConversation}
         onDeleteTurn={onDeleteTurn}
         draft={draft}
+        draftRecordings={draftRecordings}
         onDraftChange={onDraftChange}
         onRetryStream={onRetryStream}
         onReturnToStart={onReturnToStart}
@@ -884,8 +889,8 @@ export function App({
     )
     : '';
   const chatDraftText = visibleChatDraft(drafts, activeChatKey);
-  const editChat = useCallback((text: string) => {
-    setDrafts((current) => editChatDraft(current, activeChatKey, text));
+  const editChat = useCallback((text: string, recording?: VoiceInputRecording) => {
+    setDrafts((current) => editChatDraft(current, activeChatKey, text, recording));
   }, [activeChatKey]);
   const editNotes = useCallback((text: SetStateAction<string>) => {
     setDrafts((current) => editNotesDraft(current, typeof text === 'function' ? text(current.notes) : text));
@@ -1381,7 +1386,7 @@ export function App({
     }
   }, []);
 
-  const submitInput = useCallback(async (text: string) => {
+  const submitInput = useCallback(async (text: string, usage?: VoiceInputUsage[]) => {
     const active = state.activeConversation;
     if (!active) throw new Error('No live conversation is selected.');
     noteWelcomeSubmission(active.forumId, active.sessionId);
@@ -1392,7 +1397,9 @@ export function App({
       ?? active.forumId;
     const sessionName = state.activeConversationLabel ?? active.sessionId;
     try {
-      return await runMutation(active, 'submit', () => client.submitInput(active.forumId, active.sessionId, { text }));
+      return await runMutation(active, 'submit', () => client.submitInput(active.forumId, active.sessionId, {
+        text, ...(usage && { voice_input_usage: usage }),
+      }));
     } catch (failure: unknown) {
       if (composerVisit.current !== visit) {
         const message = publicErrorMessage(failure, 'The message could not be sent.');
@@ -1648,6 +1655,7 @@ export function App({
                 dispatch={dispatch}
                 navigate={navigate}
                 draft={chatDraftText}
+                draftRecordings={drafts.chat.key === activeChatKey ? drafts.chat.recordings : undefined}
                 editorLiveRef={editorLiveRef}
                 leave={noteLeave}
                 noteItems={noteItems}

@@ -1,6 +1,7 @@
 import type { XaiVoicePieces, XaiVoiceStartResult } from './api/client';
 import { OpenAiVoiceInputSession } from './openAiVoiceInput';
 import { startXaiVoiceInput } from './xaiVoiceInput';
+import type { VoiceInputRecording } from './voiceInputUsage';
 
 export {
   appendPreparedTranscription,
@@ -74,6 +75,7 @@ export class VoiceInputSession {
     xaiBridge: VoiceInputXaiBridge,
     signal?: AbortSignal,
     capture?: VoiceInputCapture,
+    recording?: VoiceInputRecording,
   ): Promise<VoiceInputTransport> {
     if (signal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
@@ -81,14 +83,14 @@ export class VoiceInputSession {
     if (configuration.provider === 'xai') {
       if (!VoiceInputSession.supported('xai')) throw new Error('Voice input is unavailable.');
       return startXaiVoiceInput(
-        configuration, onTranscription, onFailure, xaiBridge, signal, capture,
+        configuration, onTranscription, onFailure, xaiBridge, signal, capture, recording,
       );
     }
     if (configuration.provider !== 'openai' || !VoiceInputSession.supported('openai')) {
       throw new Error('Voice input is unavailable.');
     }
     return OpenAiVoiceInputSession.start(
-      configuration, onTranscription, onFailure, nativeConnect, signal,
+      configuration, onTranscription, onFailure, nativeConnect, signal, recording,
     );
   }
 }

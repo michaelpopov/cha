@@ -1,4 +1,5 @@
 import { onSpeechPlaybackChange } from './speechPlayback';
+import type { VoiceInputRecording } from './voiceInputUsage';
 import type {
   VoiceInputConfiguration,
   VoiceInputConnect,
@@ -35,6 +36,8 @@ export class OpenAiVoiceInputSession {
   private transcriptCompleted = false;
   private transcript = '';
   private paused = false;
+  private captureStartedAt: number | null = null;
+  private capturedMs = 0;
   private transmission = Promise.resolve();
   private readonly unsubscribePlayback: () => void;
 
@@ -45,6 +48,7 @@ export class OpenAiVoiceInputSession {
     private readonly senders: Array<{ sender: RTCRtpSender; track: MediaStreamTrack }>,
     private readonly onTranscription: (text: string, provisional?: boolean) => void,
     private readonly onFailure: (failure: unknown) => void,
+    private readonly recording?: VoiceInputRecording,
   ) {
     this.opened = new Promise((resolve, reject) => {
       this.openSession = resolve;
@@ -52,6 +56,7 @@ export class OpenAiVoiceInputSession {
     });
     this.completed = new Promise((resolve) => { this.completeSession = resolve; });
     events.addEventListener('open', () => {
+      if (!this.paused) this.captureStartedAt = performance.now();
       this.openSession?.();
       this.openSession = null;
       this.rejectSession = null;
@@ -75,6 +80,8 @@ export class OpenAiVoiceInputSession {
 
   private setPaused(paused: boolean): void {
     if (this.stopping || this.paused === paused) return;
+    if (paused) this.stopCaptureClock();
+    else if (this.events.readyState === 'open') this.captureStartedAt = performance.now();
     this.paused = paused;
     // Mute synchronously while WebRTC detaches the track asynchronously.
     for (const { track } of this.senders) track.enabled = !paused;
@@ -99,6 +106,7 @@ export class OpenAiVoiceInputSession {
     onFailure: (failure: unknown) => void,
     nativeConnect: VoiceInputConnect,
     signal?: AbortSignal,
+    recording?: VoiceInputRecording,
   ): Promise<OpenAiVoiceInputSession> {
     if (!OpenAiVoiceInputSession.supported()) {
       throw new Error('Voice input is unavailable.');
@@ -128,7 +136,7 @@ export class OpenAiVoiceInputSession {
       }
       const events = peer.createDataChannel('oai-events');
       session = new OpenAiVoiceInputSession(
-        stream, peer, events, senders, onTranscription, onFailure,
+        stream, peer, events, senders, onTranscription, onFailure, recording,
       );
       const previousCancel = session.cancel.bind(session);
       session.cancel = () => {
@@ -190,9 +198,19 @@ export class OpenAiVoiceInputSession {
     if (!event || typeof event !== 'object' || !('type' in event)) return;
     if (event.type === 'conversation.item.input_audio_transcription.delta'
         && 'delta' in event && typeof event.delta === 'string') {
+      if (this.recording) {
+        this.recording.audio_seconds = (this.capturedMs + this.activeCaptureMs()) / 1000;
+      }
       this.transcript += event.delta;
       this.onTranscription(this.transcript, true);
     } else if (event.type === 'conversation.item.input_audio_transcription.completed') {
+      const usage = 'usage' in event ? event.usage : null;
+      if (this.recording && usage && typeof usage === 'object'
+          && 'type' in usage && usage.type === 'duration'
+          && 'seconds' in usage && typeof usage.seconds === 'number'
+          && Number.isFinite(usage.seconds) && usage.seconds > 0) {
+        this.recording.audio_seconds = usage.seconds;
+      }
       this.onTranscription('', true);
       this.onTranscription('transcript' in event && typeof event.transcript === 'string'
         ? event.transcript : this.transcript);
@@ -228,7 +246,19 @@ export class OpenAiVoiceInputSession {
   }
 
   private stopTracks(): void {
+    this.stopCaptureClock();
     this.unsubscribePlayback();
     for (const track of this.stream.getTracks()) track.stop();
+  }
+
+  private activeCaptureMs(): number {
+    return this.captureStartedAt === null ? 0 : performance.now() - this.captureStartedAt;
+  }
+
+  private stopCaptureClock(): void {
+    if (this.captureStartedAt === null) return;
+    this.capturedMs += this.activeCaptureMs();
+    this.captureStartedAt = null;
+    if (this.recording) this.recording.audio_seconds = this.capturedMs / 1000;
   }
 }

@@ -64,6 +64,7 @@ export type CreateVoiceRequest = components['schemas']['CreateVoiceRequest'];
 export type VoiceUpdate = components['schemas']['VoiceUpdate'];
 export type VoiceInputSettings = components['schemas']['VoiceInputSettings'];
 export type NativeVoiceInputRuntime = components['schemas']['VoiceInputRuntime'];
+export type VoiceInputUsage = components['schemas']['VoiceInputUsage'];
 export type XaiVoiceStartResult = components['schemas']['XaiVoiceStartResult'];
 export type XaiVoicePieces = components['schemas']['XaiVoicePieces'];
 export type JevSettings = components['schemas']['JevSettings'];

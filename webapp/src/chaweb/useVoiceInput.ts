@@ -4,13 +4,14 @@ import type { NativeVoiceInputRuntime } from '../api/client';
 import { appendPreparedTranscription, appendTranscription, withoutVoiceSendPhrase } from '../dictationText';
 import { onSpeechPlaybackChange } from '../speechPlayback';
 import { VoiceInputSession, type VoiceInputTransport } from '../voiceInput';
+import type { VoiceInputRecording } from '../voiceInputUsage';
 import { chaWebMessage, type ChaWebClient } from './client';
 
 export function useVoiceInput(
   client: ChaWebClient,
   key: string,
   draft: string,
-  onDraft: (text: string) => void,
+  onDraft: (text: string, recording?: VoiceInputRecording) => void,
   onSend: (text: string) => void,
   blocked: boolean,
   speechBusy = false,
@@ -36,9 +37,10 @@ export function useVoiceInput(
     setPhase(value);
   }
 
-  function update(text: string) {
+  function update(text: string, recording?: VoiceInputRecording) {
     current.current.draft = text;
-    current.current.onDraft(text);
+    if (recording) current.current.onDraft(text, recording);
+    else current.current.onDraft(text);
   }
 
   function clearPreview() {
@@ -80,6 +82,9 @@ export function useVoiceInput(
     startup.current = controller;
     changePhase('starting');
     setError(null);
+    const recording: VoiceInputRecording = {
+      provider: config.provider, model: config.model, audio_seconds: 0, submittedSeconds: 0,
+    };
     try {
       const transport = await VoiceInputSession.start(config,
         (text, provisional) => {
@@ -91,7 +96,7 @@ export function useVoiceInput(
             ? appendPreparedTranscription(base, text)
             : appendTranscription(base, text);
           if (provisional) preview.current = next.slice(base.length);
-          update(next);
+          update(next, next !== base ? recording : undefined);
           clearTimeout(phraseTimer.current);
           if (withoutVoiceSendPhrase(next, config.send_phrase) !== null) {
             // Finalize recognition before interpreting the phrase as a command.
@@ -108,6 +113,7 @@ export function useVoiceInput(
         },
         controller.signal,
         captureContext.current ? { context: captureContext.current, batchSamples: 8000 } : undefined,
+        recording,
       );
       if (attempt.current !== id || controller.signal.aborted) {
         transport.cancel();

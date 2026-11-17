@@ -198,8 +198,12 @@ it('finishes dictation and sends it with the voice mode Send button', async () =
   const user = userEvent.setup();
   const { transport, start } = stubVoiceInput();
   let hear: (text: string, provisional?: boolean) => void = () => {};
-  start.mockImplementation(async (_configuration, onTranscription) => {
+  start.mockImplementation(async (_configuration, onTranscription, _onFailure,
+    _connect, _xai, _signal, _capture, recording) => {
     hear = onTranscription;
+    transport.stop.mockImplementation(async () => {
+      if (recording) recording.audio_seconds = 3.5;
+    });
     return transport;
   });
   const api = await openPlanning(client({
@@ -211,9 +215,11 @@ it('finishes dictation and sends it with the voice mode Send button', async () =
   await user.click(voice);
   await screen.findByText('Speak now');
   act(() => hear('Book the train', false));
+  expect(api.submitInput).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Send' }));
   await waitFor(() => expect(api.submitInput).toHaveBeenCalledWith(
-    'lobby', 'planning', expect.stringContaining('Book the train')));
+    'lobby', 'planning', expect.stringContaining('Book the train'),
+    [{ provider: 'openai', model: 'test', audio_seconds: 3.5 }]));
   expect(transport.stop).toHaveBeenCalledOnce();
 });
 

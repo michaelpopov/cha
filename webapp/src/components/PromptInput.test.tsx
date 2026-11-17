@@ -3,7 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { VoiceInputUsage } from '../api/client';
+import { editChatDraft, emptyPromptDrafts } from '../state/promptDrafts';
 import { fixtureClient } from '../test/fixtures';
+import { VoiceInputSession } from '../voiceInput';
 import { PromptInput, type PromptInputProps } from './PromptInput';
 import { TransliterationProvider } from './TransliterationMode';
 
@@ -151,6 +154,67 @@ describe('PromptInput', () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('Replaced'));
     await act(async () => { fail(new Error('nope')); });
     expect(input).toHaveValue('Replaced');
+  });
+
+  it('sends dictation usage until a prompt is accepted', async () => {
+    let hear: (text: string) => void = () => {};
+    vi.spyOn(VoiceInputSession, 'supported').mockReturnValue(true);
+    vi.spyOn(VoiceInputSession, 'start').mockImplementation(async (
+      _configuration, onTranscription, _onFailure, _connect, _xai, _signal, _capture, recording,
+    ) => {
+      hear = onTranscription;
+      return { cancel: vi.fn(), stop: vi.fn(async () => { if (recording) recording.audio_seconds = 3.5; }) };
+    });
+    const client = fixtureClient({
+      getVoiceInputRuntime: async () => ({
+        provider: 'xai', url: 'https://voice.test', model: 'test', delay: 'low', prompt: '', send_phrase: 'send',
+      }),
+    });
+    let finish: (result: { clear_input: boolean }) => void = () => {};
+    const onSubmit = vi.fn((_text: string, _usage?: VoiceInputUsage[]) =>
+      new Promise<{ clear_input: boolean }>((resolve) => { finish = resolve; }));
+    // Keep recordings with the draft, as App does.
+    function Dictation() {
+      const [drafts, setDrafts] = useState(emptyPromptDrafts);
+      return (
+        <TransliterationProvider controlsVisible><PromptInput
+          client={client}
+          enabled
+          inputLabel="Message"
+          microphoneEnabled
+          onChange={(text, recording) => setDrafts((current) => editChatDraft(current, 'chat', text, recording))}
+          onError={() => {}}
+          onSubmit={onSubmit}
+          recordings={drafts.chat.recordings}
+          statusRow={() => null}
+          submitEnabled
+          submitLabel="Send message"
+          value={drafts.chat.text}
+        /></TransliterationProvider>
+      );
+    }
+    render(<Dictation />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start voice input' }));
+    await screen.findByRole('button', { name: 'Stop voice input' });
+    act(() => hear('Book the train'));
+    const input = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' });
+    const dictated = input.value;
+    const usage = [{ provider: 'xai', model: 'test', audio_seconds: 3.5 }];
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenLastCalledWith(dictated, usage));
+    await act(async () => { finish({ clear_input: false }); });
+    // A rejected prompt keeps its usage for the next attempt.
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(onSubmit).toHaveBeenLastCalledWith(dictated, usage);
+    fireEvent.change(input, { target: { value: `${dictated} More` } });
+    await act(async () => { finish({ clear_input: true }); });
+    expect(input).toHaveValue('More');
+    // The accepted audio is not reported again with the rest of the draft.
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(3));
+    expect(onSubmit).toHaveBeenLastCalledWith('More');
   });
 
   it('keeps Stop in place of Send and blocks form and Enter submission', () => {
