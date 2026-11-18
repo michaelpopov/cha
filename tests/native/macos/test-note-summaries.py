@@ -79,6 +79,7 @@ def main():
         system_errors = []
         first_summary = []
         second_summary = []
+        overviews = []
         cancelled = threading.Event()
         release_first = threading.Event()
         stop_watching = threading.Event()
@@ -109,9 +110,9 @@ def main():
                     with request_lock:
                         requests[part, marker] += 1
                         count = requests[part, marker]
-                        if (part == 'section'
-                                and requests[part, 'FIRST_CHAPTER'] == requests[part, 'SECOND_CHAPTER'] == 3
-                                and requests[part, 'EXCLUDED'] == 1):
+                        if part == 'overview':
+                            overviews.append(source)
+                        if part == 'section' and marker == 'EXCLUDED' and count == 1:
                             (assets / 'summary-request-held').touch()
                     if part == 'l1' and marker == 'SINGLE_ORIGINAL' and count == 1:
                         (assets / 'single-request-held').touch()
@@ -126,7 +127,7 @@ def main():
                         time.sleep(0.2)
                         (assets / 'retry-backoff').touch()
                         return
-                    hold = part == 'section' and marker == 'FIRST_CHAPTER' and count == 3
+                    hold = part == 'section' and marker == 'EXCLUDED' and count == 1
                     if (part == 'overview' and count == 2) or hold:
                         with closing(sqlite3.connect(database_path)) as database:
                             snapshot = folder_summaries(database)
@@ -175,9 +176,9 @@ def main():
                 original = 'SINGLE_ORIGINAL ' + 'x' * 4096
                 assert note(None, 'Single', original) == 1, 'Update the chat reference in note-summaries.js'
                 folder = database.execute("INSERT INTO note_items(kind,name) VALUES ('folder','Book')").lastrowid
-                first_chapter = note(folder, 'A First chapter', 'FIRST_CHAPTER ' + 'x' * 4096)
+                note(folder, 'A First chapter', 'FIRST_CHAPTER ' + 'x' * 4096)
                 note(folder, 'B Second chapter', 'SECOND_CHAPTER ' + 'x' * 4096)
-                note(folder, 'C Excluded', 'EXCLUDED ' + 'x' * 4096, excluded=True)
+                excluded = note(folder, 'C Excluded', 'EXCLUDED ' + 'x' * 4096, excluded=True)
                 note(folder, 'D Small', 'SMALL')
                 foreground = note(None, 'Foreground', 'Foreground original')
 
@@ -215,6 +216,9 @@ def main():
                         WHERE v.compressed=1 AND v.level IN (1,2) ORDER BY n.name, v.level''').fetchall()
                     assert versions == [(name, level) for name in ('A First chapter', 'B Second chapter', 'C Excluded', 'Single')
                                         for level in (1, 2)], versions
+                    l3 = database.execute('''SELECT n.name, v.id FROM note_items n JOIN note_items v ON v.parent_id=n.id
+                        WHERE v.compressed=1 AND v.level=3 ORDER BY n.name''').fetchall()
+                    assert [name for name, _ in l3] == ['A First chapter', 'B Second chapter', 'Single'], l3
                     # C was included again just before quit. Its completed versions survive cancellation.
                     compressed = database.execute('''SELECT n.name FROM note_items n
                         JOIN note_items v ON v.parent_id=n.id
@@ -222,7 +226,7 @@ def main():
                     assert compressed == [('A First chapter',), ('B Second chapter',), ('C Excluded',), ('Single',)], compressed
                     summary = folder_summaries(database)
                     assert database.execute('SELECT 1 FROM event_history WHERE severity=? AND message=?', (
-                        'info', f'L3 section cancelled for “A First chapter” (note {first_chapter}).')).fetchone(), (
+                        'info', f'L3 cancelled for “C Excluded” (note {excluded}).')).fetchone(), (
                         'The vault did not record cancellation of the held request')
                     lifecycle = database.execute("""SELECT message FROM event_history
                         WHERE severity='info' AND message LIKE 'Summarization %' ORDER BY id""").fetchall()
@@ -246,13 +250,13 @@ def main():
                 assert first_summary[0][:3] == second_summary[0][:3] == (summary[0][0], folder, 'Summary')
                 assert first_summary[0][3] != second_summary[0][3], 'Second run did not replace the Summary content'
                 assert summary == second_summary, 'Cancelled run changed the Summary note'
+                assert 'Edited saved L3' in overviews[1], overviews[1]
                 assert cancelled.wait(2), 'Held provider request was not cancelled'
                 launch('reopen')
                 expected = Counter({(part, marker): 1 for part in ('compressed', 'l1', 'l2')
                                     for marker in ('SINGLE_ORIGINAL', 'FIRST_CHAPTER', 'SECOND_CHAPTER', 'EXCLUDED')})
-                expected.update({('section', 'FIRST_CHAPTER'): 3, ('section', 'SECOND_CHAPTER'): 3,
-                                 ('section', 'EXCLUDED'): 1,
-                                 ('overview', 'overview'): 2})
+                expected.update({('section', marker): 1 for marker in SOURCE_MARKERS if marker != 'SMALL'})
+                expected['overview', 'overview'] = 2
                 assert requests == expected, requests
                 launch('retry')
                 launch('between-steps')
@@ -262,6 +266,9 @@ def main():
                 expected.update(('section', marker) for marker in ('FIRST_CHAPTER', 'SECOND_CHAPTER', 'EXCLUDED'))
                 assert requests == expected, requests
                 with closing(sqlite3.connect(database_path)) as database:
+                    for name, version_id in l3:
+                        assert database.execute('''SELECT v.id FROM note_items n JOIN note_items v ON v.parent_id=n.id
+                            WHERE n.name=? AND v.compressed=1 AND v.level=3''', (name,)).fetchone() == (version_id,)
                     assert database.execute('SELECT content_json FROM note_items WHERE parent_id=1 AND level=1').fetchone() == single_l1
                     terminal = [row[0] for row in database.execute("""SELECT message FROM event_history
                         WHERE message LIKE 'Summarization cancelled for %' ORDER BY id""")]

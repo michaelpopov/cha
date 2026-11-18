@@ -191,7 +191,7 @@ export function NotesTree({
   for (const key of index.children.vault) index.rows[key].parentKey = 'vault';
   dataRef.current = index;
   const signature = vaultName + '\n' + items.map((item) => (
-    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.has_l1_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}:${item.has_l1}:${item.has_l2}:${item.summary_excluded}:${item.folder_summary}`
+    `${item.id}:${item.parent_id ?? ''}:${item.kind}:${item.name}:${item.has_compressed}:${item.has_audio}:${item.has_l1_audio}:${item.read_only}:${item.is_summary}:${item.summary_linked}:${JSON.stringify(item.forum_id)}:${item.has_l1}:${item.has_l2}:${item.has_l3}:${item.summary_excluded}:${item.folder_summary}`
   )).join('\n');
 
   const tree = useTree<NoteTreeRow>({

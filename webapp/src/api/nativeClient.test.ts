@@ -702,7 +702,9 @@ describe('notes native client', () => {
   };
 
   it('calls the seven summary methods with their wire parameters', async () => {
-    const plan = { notes: [{ id: 4, name: 'Draft', levels: ['compressed', 'l1', 'l3'] }] };
+    const plan = { notes: [
+      { id: 4, name: 'Draft', levels: ['compressed', 'l1', 'l3'] }, { id: 5, name: 'Cached', levels: [] },
+    ] };
     const excluded = { ...note, summary_excluded: true };
     const handlers = {
       'notes.summaryStart': vi.fn(() => plan),
@@ -722,7 +724,8 @@ describe('notes native client', () => {
     expect(await client.summaryGenerate(1, 'l3_overview', '# Draft')).toBe('**Summary**');
     expect(await client.summaryCommit(4, 'compressed', '**Summary**')).toBeUndefined();
     expect(await client.summaryCommit(4, 'l1', document)).toBeUndefined();
-    expect(await client.summaryAbandon(1, 'l3')).toBeUndefined();
+    expect(await client.summaryCommit(4, 'l3_section', document)).toBeUndefined();
+    expect(await client.summaryAbandon(1, 'l3', 4)).toBeUndefined();
     expect(await client.summaryFinish(client.contextEpoch())).toBeUndefined();
     expect(await client.setNoteSummaryExcluded(4, true)).toEqual(excluded);
 
@@ -736,8 +739,9 @@ describe('notes native client', () => {
     expect(handlers['notes.summaryCommit'].mock.calls).toEqual([
       [{ id: 4, part: 'compressed', text: '**Summary**' }],
       [{ id: 4, part: 'l1', document }],
+      [{ id: 4, part: 'l3_section', document }],
     ]);
-    expect(handlers['notes.summaryAbandon']).toHaveBeenCalledExactlyOnceWith({ id: 1, part: 'l3' });
+    expect(handlers['notes.summaryAbandon']).toHaveBeenCalledExactlyOnceWith({ id: 1, part: 'l3', source_id: 4 });
     expect(handlers['notes.summaryFinish']).toHaveBeenCalledExactlyOnceWith({});
     expect(handlers['notes.setSummaryExcluded']).toHaveBeenCalledExactlyOnceWith({ id: 4, excluded: true });
   });
@@ -761,7 +765,7 @@ describe('notes native client', () => {
     await expect(client.setNoteSummaryExcluded(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
-  it.each(['compressed', 'l1', 'l2'] as const)('opens %s and its full-text fallback by the logical note ID', async mode => {
+  it.each(['compressed', 'l1', 'l2', 'l3'] as const)('opens %s and its full-text fallback by the logical note ID', async mode => {
     const content = { id: 4, document_id: 8, document };
     const fallback = { ...content, document_id: 4 };
     const getNote = vi.fn(() => content);

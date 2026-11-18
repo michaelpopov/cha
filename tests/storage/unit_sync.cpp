@@ -635,8 +635,10 @@ TEST_F(SyncNotesTest, FolderImportQueuesOnlyOriginalsWithTheirVersionsAndFlags) 
     note_save_compressed(*database_, note.id, "Summary");
     const auto l1 = text_document("Level one");
     const auto l2 = text_document("Level two");
+    const auto l3 = text_document("Level three");
     note_commit_level(*database_, note.id, 1, l1, "Saved.");
     note_commit_level(*database_, note.id, 2, l2, "Saved.");
+    note_commit_level(*database_, note.id, 3, l3, "Saved.");
     (void)note_set_summary_excluded(*database_, note.id, true);
     (void)note_commit_folder_summary(*database_, folder.id, text_document("Overview"));
     const auto file = workspace_.root() / "folder.sqlite3";
@@ -652,6 +654,7 @@ TEST_F(SyncNotesTest, FolderImportQueuesOnlyOriginalsWithTheirVersionsAndFlags) 
     EXPECT_EQ(note_parse_saved_document(bytes, 0), note_document_from_text("Summary"));
     EXPECT_EQ(note_parse_saved_document(decode_base64(queued[1]["l1_content"].get<std::string>()), 0), l1);
     EXPECT_EQ(note_parse_saved_document(decode_base64(queued[1]["l2_content"].get<std::string>()), 0), l2);
+    EXPECT_EQ(note_parse_saved_document(decode_base64(queued[1]["l3_content"].get<std::string>()), 0), l3);
     EXPECT_EQ(queued[1]["summary_excluded"], true);
     EXPECT_EQ(queued[1]["folder_summary"], false);
     EXPECT_EQ(queued[2]["path"], nlohmann::json::array({"Imported", "Export", "Summary"}));
@@ -743,6 +746,55 @@ TEST_F(SyncNotesTest, IncomingCompressionUpdatePreservesOtherVersions) {
         EXPECT_EQ(l1.document, level_one);
         EXPECT_EQ(l2.document_id, l2_id);
         EXPECT_EQ(l2.document, level_two);
+    }
+}
+
+TEST_F(SyncNotesTest, L3GenerationAndManualEditsRoundTrip) {
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Note", sync_machine);
+    const auto copy = note_create(*database_, {}, NoteItemKind::note, "Copy");
+    const auto l1 = note_commit_level(*database_, copy.id, 1, text_document("Copy L1"), "Saved.");
+    for (auto id : {copy.id, l1})
+        database_->prepare("INSERT INTO note_audio VALUES(?,0,'audio/mpeg',X'0102')", id).run();
+    const auto generated = text_document("Generated L3");
+    const auto queued = records();
+    const auto event_count = event_list(*database_).size();
+    database_->execute("CREATE TRIGGER fail_l3 BEFORE INSERT ON sync_queue "
+        "BEGIN SELECT RAISE(ABORT, 'injected sync failure'); END");
+    EXPECT_THROW(note_commit_level(*database_, note.id, 3, generated, "Saved.", sync_machine), NoteError);
+    EXPECT_FALSE(note_find_item(*database_, note.id)->has_l3);
+    EXPECT_EQ(records(), queued);
+    EXPECT_EQ(event_list(*database_).size(), event_count);
+    database_->execute("DROP TRIGGER fail_l3");
+    const auto l3 = note_commit_level(*database_, note.id, 3, generated, "Saved.", sync_machine);
+    auto record = records().back();
+    EXPECT_EQ(record["kind"], "note.level");
+    EXPECT_EQ(record["level"], "l3");
+    record["path"] = {"Copy"};
+    ASSERT_TRUE(note_apply_record(*database_, record));
+    const auto copied = note_get(*database_, copy.id, NoteTextMode::l3);
+    ASSERT_NE(copied.document_id, copy.id);
+    EXPECT_EQ(copied.document, generated);
+    EXPECT_EQ(note_audio_info(*database_, copy.id)["count"], 1);
+    EXPECT_EQ(note_audio_info(*database_, l1)["count"], 1);
+
+    const auto edited = text_document("Edited L3");
+    EXPECT_FALSE(note_save(*database_, l3, edited, sync_machine));
+    EXPECT_EQ(sync_collect_flagged_notes(*database_, sync_machine), 1u);
+    auto update = records().back();
+    EXPECT_EQ(update["kind"], "note.update");
+    EXPECT_EQ(update["path"], nlohmann::json::array({"Note"}));
+    update["path"] = {"Copy"};
+    ASSERT_TRUE(note_apply_record(*database_, update));
+    const auto replaced = note_get(*database_, copy.id, NoteTextMode::l3);
+    EXPECT_EQ(replaced.document_id, copied.document_id);
+    EXPECT_EQ(replaced.document, edited);
+    for (bool omit : {false, true}) {
+        ASSERT_TRUE(note_apply_record(*database_, record));
+        auto clear = update;
+        if (omit) clear.erase("l3_content");
+        else clear["l3_content"] = nullptr;
+        ASSERT_TRUE(note_apply_record(*database_, clear));
+        EXPECT_EQ(note_get(*database_, copy.id, NoteTextMode::l3).document_id, copy.id);
     }
 }
 

@@ -16,7 +16,7 @@ export function hasExactKeys(value: Record<string, unknown>, keys: readonly stri
 export function isNoteItem(value: unknown): value is NoteItem {
   return isRecord(value)
     && hasExactKeys(value, ['id', 'parent_id', 'kind', 'name', 'has_compressed', 'has_audio', 'has_l1_audio', 'read_only', 'is_summary',
-      'summary_linked', 'has_l1', 'has_l2', 'summary_excluded', 'folder_summary',
+      'summary_linked', 'has_l1', 'has_l2', 'has_l3', 'summary_excluded', 'folder_summary',
       ...(Object.hasOwn(value, 'forum_id') ? ['forum_id'] : [])])
     && (!Object.hasOwn(value, 'forum_id') || (value.kind === 'folder' && typeof value.forum_id === 'string'))
     && isNoteId(value.id)
@@ -29,6 +29,7 @@ export function isNoteItem(value: unknown): value is NoteItem {
     && typeof value.read_only === 'boolean'
     && typeof value.is_summary === 'boolean' && typeof value.summary_linked === 'boolean'
     && typeof value.has_l1 === 'boolean' && typeof value.has_l2 === 'boolean'
+    && typeof value.has_l3 === 'boolean'
     && typeof value.summary_excluded === 'boolean' && typeof value.folder_summary === 'boolean'
     && (!value.is_summary || value.kind === 'note') && (!value.summary_linked || value.is_summary)
     && (!value.folder_summary || value.is_summary);
@@ -47,7 +48,7 @@ function isSummaryTarget(value: unknown): value is SummaryTarget {
     && hasExactKeys(value, ['id', 'name', 'levels'])
     && isNoteId(value.id)
     && typeof value.name === 'string' && value.name.length > 0
-    && Array.isArray(value.levels) && value.levels.length > 0
+    && Array.isArray(value.levels)
     && new Set(value.levels).size === value.levels.length
     && value.levels.every(level => ['compressed', 'l1', 'l2', 'l3'].includes(level));
 }

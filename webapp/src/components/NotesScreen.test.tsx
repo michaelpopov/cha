@@ -181,9 +181,11 @@ it.each([
   ['full_text', 'Full text', 'full text', plan.id],
   ['l1', 'L1', 'L1', 40],
   ['l2', 'L2', 'L2', null],
+  ['l3', 'L3', 'L3', null],
   ['compressed', 'Compressed', 'compressed', null],
   ['l1', 'L1', 'full text', plan.id],
   ['l2', 'L2', 'full text', plan.id],
+  ['l3', 'L3', 'full text', plan.id],
   ['compressed', 'Compressed', 'full text', plan.id],
 ] as const)('shows %s mode (%s selected, %s loaded) with audio document %s', async (mode, label, showing, audioId) => {
   const info = vi.fn(async () => ({ count: 1 }));
@@ -198,7 +200,7 @@ it.each([
   expect(getNote).toHaveBeenCalledWith(plan.id, mode);
   fireEvent.click(button);
   const choices = screen.getAllByRole('menuitemradio');
-  expect(choices.map(choice => choice.textContent)).toEqual(['Full text', 'L1', 'L2', 'Compressed']);
+  expect(choices.map(choice => choice.textContent)).toEqual(['Full text', 'L1', 'L2', 'L3', 'Compressed']);
   const selected = screen.getByRole('menuitemradio', { name: label, checked: true });
   expect(selected.querySelector('svg')).toBeInTheDocument();
   expect(screen.getAllByRole('menuitemradio', { checked: true })).toEqual([selected]);

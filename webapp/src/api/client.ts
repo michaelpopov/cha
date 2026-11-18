@@ -214,7 +214,7 @@ export interface NotesClient {
     | [id: number, part: 'compressed', text: string]
     | [id: number, part: Exclude<SummaryCommitPart, 'compressed'>, document: Record<string, unknown>]
   ): Promise<void>;
-  summaryAbandon(id: number, part: components['schemas']['SummaryAbandonRequest']['part']): Promise<void>;
+  summaryAbandon(id: number, part: components['schemas']['SummaryAbandonRequest']['part'], sourceId?: number): Promise<void>;
   summaryFinish(epoch: number): Promise<void>;
   setNoteSummaryExcluded(id: number, excluded: boolean): Promise<NoteItem>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;

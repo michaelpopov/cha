@@ -149,9 +149,9 @@ it('keeps formatting, packages raster bytes and imports the result through CHA',
 });
 
 it.each([
-  ['full_text', 'full_text', ''], ['compressed', 'full_text', ''], ['l1', 'l1', ' (L1)'], ['l2', 'l2', ' (L2)'],
+  ['full_text', 'full_text', ''], ['compressed', 'full_text', ''], ['l1', 'l1', ' (L1)'], ['l2', 'l2', ' (L2)'], ['l3', 'l3', ' (L3)'],
 ] as const)('exports %s using %s and the reader’s fallback', async (mode, readMode, suffix) => {
-  const first = chapter(31, 10, 'First', { has_l1: true, has_l2: true });
+  const first = chapter(31, 10, 'First', { has_l1: true, has_l2: true, has_l3: true });
   const second = chapter(32, 10, 'Second');
   const read = vi.fn(async (note: NoteItem, selected: NoteTextMode) =>
     noteDocument(paragraph(note.id === first.id ? selected : 'Fallback body')));
@@ -170,7 +170,7 @@ it('validates folder membership and level availability before reading, and accep
   const read = vi.fn(async () => noteDocument(paragraph('Summary body')));
   await expect(buildFolderEpub(11, [book], 'full_text', read)).rejects.toThrow('This folder is no longer available.');
   await expect(buildFolderEpub(10, [book], 'full_text', read)).rejects.toThrow('This folder has no notes to export.');
-  for (const mode of ['l1', 'l2'] as const) {
+  for (const mode of ['l1', 'l2', 'l3'] as const) {
     await expect(buildFolderEpub(10, [book, summary], mode, read))
       .rejects.toThrow(`This folder has no ${mode.toUpperCase()} text to export.`);
   }

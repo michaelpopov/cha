@@ -8,6 +8,7 @@
     "summary_linked": false,
     "has_l1": false,
     "has_l2": false,
+    "has_l3": false,
     "summary_excluded": false,
     "folder_summary": false,
     "has_compressed": false,

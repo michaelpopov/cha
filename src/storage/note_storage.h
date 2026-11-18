@@ -61,9 +61,10 @@ struct NoteItem {
     bool has_l2{};
     bool summary_excluded{};
     bool folder_summary{};
+    bool has_l3{};
 };
 
-enum class NoteTextMode { full_text, compressed, l1, l2 };
+enum class NoteTextMode { full_text, compressed, l1, l2, l3 };
 
 struct NoteContent {
     std::int64_t id{};

@@ -554,7 +554,8 @@ public:
     void summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch);
     void commit_summary_part(std::int64_t id, SummaryPart part,
         const nlohmann::json& document, std::uint64_t epoch, std::optional<std::string_view> connection_id = {});
-    void abandon_summary_part(std::string_view connection_id, std::int64_t id, SummaryPart part, std::uint64_t epoch);
+    void abandon_summary_part(std::string_view connection_id, std::int64_t id, SummaryPart part, std::uint64_t epoch,
+        std::optional<std::int64_t> source_id = std::nullopt);
     void finish_summary_batch(std::string_view connection_id, std::uint64_t epoch);
     [[nodiscard]] NoteItem set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch);
 

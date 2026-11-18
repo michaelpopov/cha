@@ -42,8 +42,8 @@ void Application::commit_summary_part(std::int64_t id, SummaryPart part,
 }
 
 void Application::abandon_summary_part(std::string_view connection_id,
-    std::int64_t id, SummaryPart part, std::uint64_t epoch) {
-    impl_->notes->abandon_summary_part(connection_id, id, part, epoch);
+    std::int64_t id, SummaryPart part, std::uint64_t epoch, std::optional<std::int64_t> source_id) {
+    impl_->notes->abandon_summary_part(connection_id, id, part, epoch, source_id);
 }
 
 void Application::finish_summary_batch(std::string_view connection_id, std::uint64_t epoch) {

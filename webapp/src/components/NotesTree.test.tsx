@@ -243,7 +243,7 @@ describe('Notes tree', () => {
     expect(onSummarize).toHaveBeenCalledExactlyOnceWith(item, 1);
   });
 
-  it.each(['has_compressed', 'has_l1', 'has_l2'] as const)('shows the saved version dot for %s', async field => {
+  it.each(['has_compressed', 'has_l1', 'has_l2', 'has_l3'] as const)('shows the saved version dot for %s', async field => {
     renderTree({ items: [{ ...aardvark, [field]: true }, { ...plan, parent_id: null }] });
     const dot = await screen.findByRole('img', { name: 'Other versions saved' });
     expect(dot).toHaveAttribute('title', 'Other versions saved');

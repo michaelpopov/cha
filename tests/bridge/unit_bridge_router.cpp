@@ -4041,7 +4041,7 @@ TEST_F(BridgeRouterTest, NoteSummaryStartChecksSizeAndFiltersFolderTargets) {
     EXPECT_EQ(summary_events("Summarization finished for"), 5U);
 }
 
-TEST_F(BridgeRouterTest, NoteSummaryPlansMixedFolderAndL3OnlyIndependentlyOfOverwrite) {
+TEST_F(BridgeRouterTest, NoteSummaryPlansFolderL3ContributorsAndDueWork) {
     bootstrap_epoch();
     using Json = nlohmann::json;
     const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Book", epoch_);
@@ -4050,6 +4050,7 @@ TEST_F(BridgeRouterTest, NoteSummaryPlansMixedFolderAndL3OnlyIndependentlyOfOver
     for (const auto& note : {a, b})
         application_->save_note(note.id, text_document(std::string(4096, 'a')), epoch_);
     application_->commit_summary_part(a.id, app::SummaryPart::l1, text_document("A L1"), epoch_);
+    application_->commit_summary_part(a.id, app::SummaryPart::l3_section, text_document("A L3"), epoch_);
     application_->commit_summary_part(b.id, app::SummaryPart::l2, text_document("B L2"), epoch_);
     application_->commit_summary_part(folder.id, app::SummaryPart::l3, text_document("Previous folder summary"), epoch_);
 
@@ -4059,13 +4060,23 @@ TEST_F(BridgeRouterTest, NoteSummaryPlansMixedFolderAndL3OnlyIndependentlyOfOver
         EXPECT_TRUE(call("notes.summaryFinish")["ok"]);
         return reply["result"]["notes"];
     };
-    const Json a_l2{{"id", a.id}, {"name", "A"}, {"levels", {"l2", "l3"}}};
+    const Json a_l2{{"id", a.id}, {"name", "A"}, {"levels", {"l2"}}};
     const Json b_l1{{"id", b.id}, {"name", "B"}, {"levels", {"l1", "l3"}}};
     EXPECT_EQ(plan(folder.id, {"l3", "l2", "l1"}, false), Json::array({a_l2, b_l1}));
     const Json a_section{{"id", a.id}, {"name", "A"}, {"levels", {"l3"}}};
     const Json b_section{{"id", b.id}, {"name", "B"}, {"levels", {"l3"}}};
-    for (const auto overwrite : {false, true})
-        EXPECT_EQ(plan(folder.id, {"l3"}, overwrite), Json::array({a_section, b_section}));
+    const Json a_cached{{"id", a.id}, {"name", "A"}, {"levels", Json::array()}};
+    const Json b_cached{{"id", b.id}, {"name", "B"}, {"levels", Json::array()}};
+    EXPECT_EQ(plan(folder.id, {"l3"}, false), Json::array({a_cached, b_section}));
+    EXPECT_EQ(plan(folder.id, {"l3"}, true), Json::array({a_section, b_section}));
+    EXPECT_EQ(plan(folder.id, {"l2"}, false), Json::array({a_l2}));
+    EXPECT_EQ(plan(a.id, {"l3"}, true), Json::array({a_section}));
+    expect_note_error(call("notes.summaryStart", summary_options(a.id, {"l3"}, false)),
+        "invalid_argument", "All selected outputs already exist.");
+    application_->commit_summary_part(b.id, app::SummaryPart::l3_section, text_document("B L3"), epoch_);
+    EXPECT_EQ(plan(folder.id, {"l3"}, false), Json::array({a_cached, b_cached}));
+    expect_note_error(call("notes.summaryStart", summary_options(folder.id, {"l3"}, false, "missing")),
+        "not_found", "That provider was not found.");
 
     const auto other = application_->create_note_item({}, NoteItemKind::folder, "Other book", epoch_);
     const auto ordinary = application_->create_note_item(other.id, NoteItemKind::note, "Summary", epoch_);
@@ -4101,7 +4112,7 @@ TEST_F(BridgeRouterTest, NoteSummaryMethodsRequireExactKeysPartsAndEpoch) {
             invalid(method, missing);
         }
     }
-    for (const auto& levels : {Json::array(), Json::array({"l1", "l1"}), Json::array({"unknown"}), Json::array({"l3"}), Json::array({7}), Json("l1")})
+    for (const auto& levels : {Json::array(), Json::array({"l1", "l1"}), Json::array({"unknown"}), Json::array({7}), Json("l1")})
         invalid("notes.summaryStart", summary_options(id, levels));
     auto options = summary_options(id);
     options["overwrite"] = "true";
@@ -4122,13 +4133,15 @@ TEST_F(BridgeRouterTest, NoteSummaryMethodsRequireExactKeysPartsAndEpoch) {
     for (const auto& text : {Json(""), Json(123), Json(nullptr)}) {
         invalid("notes.summaryGenerate", {{"id", id}, {"part", "l3_overview"}, {"text", text}});
     }
-    for (const auto& part : {Json("l3_section"), Json("l3_overview"), Json("unknown"), Json(nullptr)}) {
+    for (const auto& part : {Json("l3_overview"), Json("unknown"), Json(nullptr)}) {
         invalid("notes.summaryCommit", {{"id", id}, {"part", part}, {"document", text_document("L1")}});
         invalid("notes.summaryAbandon", {{"id", id}, {"part", part}});
     }
     invalid("notes.summaryCommit", {{"id", id}, {"part", "l1"}, {"document", Json::array()}});
     invalid("notes.setSummaryExcluded", {{"id", id}, {"excluded", "true"}});
-    invalid("notes.get", {{"id", id}, {"mode", "l3"}});
+    invalid("notes.get", {{"id", id}, {"mode", "l4"}});
+    invalid("notes.summaryAbandon", {{"id", id}, {"part", "l3_section"}, {"source_id", id}});
+    invalid("notes.summaryAbandon", {{"id", id}, {"part", "l3"}, {"source_id", 0}});
     const auto events = call("events.list")["result"]["items"];
     EXPECT_TRUE(events.empty());
     ++epoch_;
@@ -4509,17 +4522,18 @@ TEST_F(BridgeRouterTest, NoteSummaryCommitAbandonAndCompressionPreserveVersions)
     };
     const auto note_target = "“Chapter” (note " + std::to_string(note.id) + ")";
     const auto folder_target = "“Book” (folder " + std::to_string(folder.id) + ")";
-    for (const auto& [mode, label] : {std::pair{"l1", "L1"}, std::pair{"l2", "L2"}}) {
+    for (const auto& [mode, label, part] : {std::array{"l1", "L1", "l1"},
+        std::array{"l2", "L2", "l2"}, std::array{"l3", "L3", "l3_section"}}) {
         const auto doc = text_document(label);
         ASSERT_EQ(call("notes.summaryCommit",
-            {{"id", note.id}, {"part", mode}, {"document", doc}})["result"], nlohmann::json::object());
+            {{"id", note.id}, {"part", part}, {"document", doc}})["result"], nlohmann::json::object());
         expect_event("success", std::string(label) + " ready for " + note_target + ".");
-        ASSERT_EQ(call("notes.summaryAbandon", {{"id", note.id}, {"part", mode}})["result"], nlohmann::json::object());
+        ASSERT_EQ(call("notes.summaryAbandon", {{"id", note.id}, {"part", part}})["result"], nlohmann::json::object());
         expect_event("error", "Could not make " + std::string(label) + " for " + note_target
             + ": the result could not be converted to a note.");
         EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", mode}})["result"]["document"], doc);
         expect_note_error(call("notes.summaryCommit",
-            {{"id", note.id}, {"part", mode}, {"document", nlohmann::json::object()}}),
+            {{"id", note.id}, {"part", part}, {"document", nlohmann::json::object()}}),
             "invalid_argument", "Summary content must have a doc root.");
         expect_event("error", "Could not make " + std::string(label) + " for " + note_target
             + ": Summary content must have a doc root.");
@@ -4560,6 +4574,12 @@ TEST_F(BridgeRouterTest, NoteSummaryCommitAbandonAndCompressionPreserveVersions)
     ASSERT_TRUE(call("notes.summaryAbandon", {{"id", folder.id}, {"part", "l3"}})["ok"]);
     expect_event("error", "Could not save the Summary note for " + folder_target
         + ": the result could not be converted to a note.");
+    ASSERT_TRUE(call("notes.summaryAbandon", {{"id", folder.id}, {"part", "l3"}, {"source_id", note.id}})["ok"]);
+    expect_event("error", "Could not build the Summary for " + folder_target
+        + " because the L3 for " + note_target + " could not be used.");
+    ASSERT_TRUE(call("notes.summaryAbandon", {{"id", folder.id}, {"part", "l3"}, {"source_id", 987654}})["ok"]);
+    expect_event("error", "Could not build the Summary for " + folder_target
+        + " because the L3 for note 987654 could not be used.");
     expect_note_error(l3(nlohmann::json::object()), "invalid_argument", "The summary document has no readable text.");
     expect_event("error", "Could not save the Summary note for " + folder_target
         + ": The summary document has no readable text.");
@@ -4573,6 +4593,7 @@ TEST_F(BridgeRouterTest, NoteSummaryCommitAbandonAndCompressionPreserveVersions)
     EXPECT_EQ(stored_compression(database_, note.id), "Compressed");
     EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", "l1"}})["result"]["document"], text_document("L1"));
     EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", "l2"}})["result"]["document"], text_document("L2"));
+    EXPECT_EQ(call("notes.get", {{"id", note.id}, {"mode", "l3"}})["result"]["document"], text_document("L3"));
 }
 
 TEST_F(BridgeRouterTest, NoteSummaryAdmitsOneOwnerAndAllowsParallelCalls) {
@@ -4619,7 +4640,7 @@ TEST_F(BridgeRouterTest, NoteSummaryAdmitsOneOwnerAndAllowsParallelCalls) {
     EXPECT_EQ(summary_events("Summarization cancelled for"), 1U);
     EXPECT_EQ(summary_events("Summarization finished for"), 1U);
     const auto events = call("events.list")["result"]["items"];
-    for (const auto label : {"L1", "L2", "L3 section"}) {
+    for (const auto label : {"L1", "L2", "L3"}) {
         const auto message = std::string(label) + " cancelled for “Source” (note " + std::to_string(note.id) + ").";
         EXPECT_EQ(std::ranges::count_if(events, [&](const auto& event) {
             return event["severity"] == "info" && event["message"] == message;
@@ -4814,10 +4835,11 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     EXPECT_EQ(folder["result"]["parent_id"], nullptr);
     EXPECT_EQ(folder["result"]["kind"], "folder");
     EXPECT_EQ(folder["result"]["name"], "Plan");
-    EXPECT_EQ(folder["result"].size(), 14);
+    EXPECT_EQ(folder["result"].size(), 15);
     EXPECT_EQ(folder["result"]["has_compressed"], false);
     EXPECT_EQ(folder["result"]["has_l1"], false);
     EXPECT_EQ(folder["result"]["has_l2"], false);
+    EXPECT_EQ(folder["result"]["has_l3"], false);
     EXPECT_EQ(folder["result"]["summary_excluded"], false);
     EXPECT_EQ(folder["result"]["folder_summary"], false);
     EXPECT_EQ(folder["result"]["has_audio"], false);

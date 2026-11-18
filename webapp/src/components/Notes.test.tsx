@@ -123,7 +123,7 @@ function readyChatComposer() {
   });
 }
 
-function chooseNoteMode(label: 'Full text' | 'L1' | 'L2' | 'Compressed') {
+function chooseNoteMode(label: 'Full text' | 'L1' | 'L2' | 'L3' | 'Compressed') {
   fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
 }
@@ -346,7 +346,7 @@ describe('Note text mode', () => {
     fireEvent.click(mode);
     const menu = screen.getByRole('menu', { name: 'Note text mode' });
     const choices = within(menu).getAllByRole('menuitemradio');
-    expect(choices.map(item => item.textContent)).toEqual(['Full text', 'L1', 'L2', 'Compressed']);
+    expect(choices.map(item => item.textContent)).toEqual(['Full text', 'L1', 'L2', 'L3', 'Compressed']);
     expect(choices[0]).toBeChecked();
     expect(choices[1]).not.toBeChecked();
     fireEvent.keyDown(choices[0], { key: 'ArrowDown' });
@@ -806,7 +806,7 @@ describe('Notes in the application', () => {
     };
     const closeMenu = () => fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     const listsBeforeModes = listNoteItems.mock.calls.length;
-    for (const mode of ['L2', 'Compressed'] as const) {
+    for (const mode of ['L2', 'L3', 'Compressed'] as const) {
       chooseNoteMode(mode);
       await waitFor(() => expect(row).not.toHaveClass('has-audio'));
       expect(await openAudioMenu('Plan')).toBeDisabled();

@@ -77,7 +77,7 @@ export async function buildFolderEpub(
   const folder = items.find(item => item.id === folderId && item.kind === 'folder');
   if (!folder) throw new EpubExportError('This folder is no longer available.');
 
-  const level = mode === 'l1' || mode === 'l2' ? mode : null;
+  const level = mode === 'full_text' || mode === 'compressed' ? null : mode;
   const title = level ? `${folder.name} (${level.toUpperCase()})` : folder.name;
   const chapters: { note: NoteItem; id: string; path: string }[] = [];
   const navigation = xhtmlPage(title);
@@ -109,7 +109,7 @@ export async function buildFolderEpub(
 
   appendContents(String(folderId), append(nav, 'ol'));
   if (!chapters.length) throw new EpubExportError('This folder has no notes to export.');
-  if (level && !chapters.some(({ note }) => level === 'l1' ? note.has_l1 : note.has_l2)) {
+  if (level && !chapters.some(({ note }) => note[`has_${level}`])) {
     throw new EpubExportError(`This folder has no ${level.toUpperCase()} text to export.`);
   }
 

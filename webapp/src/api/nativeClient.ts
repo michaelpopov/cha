@@ -1061,8 +1061,8 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
         part === 'compressed' ? { id, part, text: output } : { id, part, document: output };
       await call('notes.summaryCommit', params, isEmptyResult);
     },
-    summaryAbandon: async (id, part) => {
-      await call('notes.summaryAbandon', { id, part }, isEmptyResult);
+    summaryAbandon: async (id, part, sourceId) => {
+      await call('notes.summaryAbandon', { id, part, ...(sourceId === undefined ? {} : { source_id: sourceId }) }, isEmptyResult);
     },
     summaryFinish: async epoch => {
       await callInContext('notes.summaryFinish', {}, epoch, isEmptyResult);

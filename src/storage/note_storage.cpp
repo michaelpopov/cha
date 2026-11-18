@@ -66,10 +66,11 @@ nlohmann::json stored_note_fields(
     storage::SqliteDatabase& database, std::int64_t id) {
     auto row = database.prepare(
         "SELECT n.kind, n.content_json, c.content_json, n.read_only, n.scroll_top, "
-        "l1.content_json, l2.content_json, n.summary_excluded, n.folder_summary "
+        "l1.content_json, l2.content_json, n.summary_excluded, n.folder_summary, l3.content_json "
         "FROM note_items n LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 AND c.level=0 "
         "LEFT JOIN note_items l1 ON l1.parent_id=n.id AND l1.compressed=1 AND l1.level=1 "
         "LEFT JOIN note_items l2 ON l2.parent_id=n.id AND l2.compressed=1 AND l2.level=2 "
+        "LEFT JOIN note_items l3 ON l3.parent_id=n.id AND l3.compressed=1 AND l3.level=3 "
         "WHERE n.id=?1 AND n.compressed=0",
         id);
     if (!row.step()) throw std::runtime_error("Sync note is missing.");
@@ -87,6 +88,8 @@ nlohmann::json stored_note_fields(
     else fields["l2_content"] = encode_base64(row.blob(6));
     fields["summary_excluded"] = row.integer(7) != 0;
     fields["folder_summary"] = row.integer(8) != 0;
+    if (row.is_null(9)) fields["l3_content"] = nullptr;
+    else fields["l3_content"] = encode_base64(row.blob(9));
     return fields;
 }
 
@@ -194,6 +197,7 @@ NoteItem read_item(storage::SqliteStatement& statement) {
     item.summary_excluded = statement.integer(12) != 0;
     item.folder_summary = statement.integer(13) != 0;
     item.has_l1_audio = statement.integer(14) != 0;
+    item.has_l3 = statement.integer(15) != 0;
     if (item.id <= 0 || item.id > note_id_limit) {
         throw std::runtime_error(
             "Note item " + std::to_string(item.id) + " has an invalid id");
@@ -271,7 +275,7 @@ void require_folder(
 }
 
 // read_item() reads these columns by position.
-// compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
+// compressed = 1 marks every version row. Level 0 is the compressed version.
 constexpr std::string_view note_item_select =
     "SELECT n.id, n.parent_id, n.kind, n.name, "
     "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=0), "
@@ -281,7 +285,8 @@ constexpr std::string_view note_item_select =
     "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=2), "
     "n.summary_excluded, n.folder_summary, "
     "EXISTS (SELECT 1 FROM note_items v JOIN note_audio a ON a.note_id=v.id "
-    "WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1) "
+    "WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=1), "
+    "EXISTS (SELECT 1 FROM note_items v WHERE v.parent_id=n.id AND v.compressed=1 AND v.level=3) "
     "FROM note_items n LEFT JOIN note_summaries s ON s.note_id=n.id ";
 
 std::optional<NoteItem> find_item(
@@ -408,13 +413,12 @@ void replace_summary_note(storage::SqliteDatabase& database, std::int64_t id, st
     update.run();
 }
 
-// compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
+// compressed = 1 marks every version row. Level 0 is the compressed version.
 void delete_version_row(storage::SqliteDatabase& database, std::int64_t id, int level) {
     database.prepare("DELETE FROM note_items WHERE parent_id=? AND compressed=1 AND level=?", id, level).run();
 }
 
 // Caller owns the transaction. An update keeps the version row's ID and scroll position.
-// compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
 std::int64_t write_version_row(
     storage::SqliteDatabase& database, std::int64_t id, int level, std::string_view blob) {
     auto note = database.prepare(
@@ -851,6 +855,7 @@ void to_json(nlohmann::json& json, const NoteItem& item) {
         {"summary_linked", item.summary_linked},
         {"has_l1", item.has_l1},
         {"has_l2", item.has_l2},
+        {"has_l3", item.has_l3},
         {"summary_excluded", item.summary_excluded},
         {"folder_summary", item.folder_summary},
     };
@@ -1178,7 +1183,7 @@ std::optional<nlohmann::json> note_short_summary_catalogue(const std::filesystem
 namespace {
 
 constexpr std::string_view level_column =
-    "level INTEGER NOT NULL DEFAULT 0 CHECK (level IN (0, 1, 2) AND (level = 0 OR compressed = 1))";
+    "level INTEGER NOT NULL DEFAULT 0 CHECK (level IN (0, 1, 2, 3) AND (level = 0 OR compressed = 1))";
 constexpr std::string_view summary_excluded_column =
     "summary_excluded INTEGER NOT NULL DEFAULT 0 CHECK (summary_excluded IN (0, 1))";
 constexpr std::string_view folder_summary_column =
@@ -1186,7 +1191,7 @@ constexpr std::string_view folder_summary_column =
     "AND (folder_summary = 0 OR (kind = 'note' AND compressed = 0 AND parent_id IS NOT NULL)))";
 
 void create_note_items_table(storage::SqliteDatabase& database, std::string_view name) {
-    // compressed = 1 marks every version row. Level 0 is compressed, 1 is L1, and 2 is L2.
+    // compressed = 1 marks every version row. Level 0 is the compressed version.
     database.execute("CREATE TABLE IF NOT EXISTS " + std::string(name) + R"sql( (
     id INTEGER PRIMARY KEY AUTOINCREMENT
         CHECK (id > 0 AND id <= 9007199254740991),
@@ -1238,6 +1243,13 @@ bool note_items_has_column(storage::SqliteDatabase& database, std::string_view n
         if (columns.text(1) == name) return true;
     }
     return false;
+}
+
+bool note_items_has_old_level_check(storage::SqliteDatabase& database) {
+    auto schema = database.prepare(
+        "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='note_items' "
+        "AND instr(sql, 'level IN (0, 1, 2)') > 0");
+    return schema.step();
 }
 
 // create_note_items_schema() drops this old layout and discards its notes.
@@ -1315,8 +1327,15 @@ void create_note_items_schema(storage::SqliteDatabase& database) {
     create_note_items_table(database, "note_items");
     if (!note_items_has_column(database, "forum_id"))
         database.execute("ALTER TABLE note_items ADD COLUMN forum_id TEXT");
-    if (!note_items_has_column(database, "level"))
+    if (!note_items_has_column(database, "level")) {
         database.execute("ALTER TABLE note_items ADD COLUMN " + std::string(level_column));
+    } else if (note_items_has_old_level_check(database)) {
+        database.execute("DROP INDEX IF EXISTS note_items_version_parent; "
+            "ALTER TABLE note_items RENAME COLUMN level TO old_level;");
+        database.execute("ALTER TABLE note_items ADD COLUMN " + std::string(level_column));
+        database.execute("UPDATE note_items SET level = old_level WHERE old_level <> 0; "
+            "ALTER TABLE note_items DROP COLUMN old_level;");
+    }
     if (!note_items_has_column(database, "summary_excluded"))
         database.execute("ALTER TABLE note_items ADD COLUMN " + std::string(summary_excluded_column));
     if (!note_items_has_column(database, "folder_summary"))
@@ -1483,6 +1502,7 @@ namespace {
 int note_text_level(NoteTextMode mode) {
     if (mode == NoteTextMode::l1) return 1;
     if (mode == NoteTextMode::l2) return 2;
+    if (mode == NoteTextMode::l3) return 3;
     return 0;
 }
 
@@ -1663,7 +1683,7 @@ std::int64_t note_commit_level(storage::SqliteDatabase& database, std::int64_t i
         const auto item = find_item(database, id);
         if (!item || item->kind != NoteItemKind::note || item->is_summary)
             fail(NoteFailure::invalid, not_note_message);
-        if (level != 1 && level != 2) fail(NoteFailure::invalid, "Invalid summary level.");
+        if (level < 1 || level > 3) fail(NoteFailure::invalid, "Invalid summary level.");
         if (!document.contains("type") || document["type"] != "doc")
             fail(NoteFailure::invalid, "Summary content must have a doc root.");
         const auto blob = compress_document(compact_document(document, id, true));
@@ -1671,7 +1691,7 @@ std::int64_t note_commit_level(storage::SqliteDatabase& database, std::int64_t i
         const auto document_id = write_version_row(database, id, level, blob);
         event_append_in_transaction(database, EventSeverity::success, success_message);
         if (sync_connected(database, sync_machine))
-            sync_record_note(database, id, {{"level", level == 1 ? "l1" : "l2"},
+            sync_record_note(database, id, {{"level", "l" + std::to_string(level)},
                 {"content", encode_base64(blob)}}, "note.level");
         transaction.commit();
         return document_id;
@@ -1709,7 +1729,7 @@ NoteItem note_commit_folder_summary(storage::SqliteDatabase& database,
             insert.run();
             id = database.last_insert_rowid();
         }
-        rebuild_folder_annotations(database, folder_id, false);
+        rebuild_folder_annotations(database, folder_id, true, &document);
         event_append_in_transaction(database, EventSeverity::success, "Summary ready for “" + folder_name
             + "” (folder " + std::to_string(folder_id) + ", note " + std::to_string(id) + ").");
         if (replacing) sync_flag_note(database, sync_machine, id);
@@ -2240,7 +2260,7 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
             fail(NoteFailure::invalid, not_export_message);
         if (has_levels && file.prepare(R"sql(
                 SELECT 1 FROM note_items c LEFT JOIN note_items p ON p.id=c.parent_id
-                WHERE c.level IS NULL OR c.level NOT IN (0, 1, 2)
+                WHERE c.level IS NULL OR c.level NOT IN (0, 1, 2, 3)
                     OR (c.compressed=0 AND c.level<>0)
                     OR c.summary_excluded IS NULL OR c.summary_excluded NOT IN (0, 1)
                     OR c.folder_summary IS NULL OR c.folder_summary NOT IN (0, 1)
@@ -2497,6 +2517,7 @@ void apply_note_versions(storage::SqliteDatabase& database, std::int64_t id,
     apply_version_content(database, id, record, "compressed_content", 0);
     apply_version_content(database, id, record, "l1_content", 1);
     apply_version_content(database, id, record, "l2_content", 2);
+    apply_version_content(database, id, record, "l3_content", 3);
 }
 
 void apply_insert_note(storage::SqliteDatabase& database, const nlohmann::json& record,
@@ -2620,9 +2641,9 @@ bool apply_note_compress(storage::SqliteDatabase& database, const nlohmann::json
 bool apply_note_level(storage::SqliteDatabase& database, const nlohmann::json& record) {
     const auto item = apply_find_note(database, record);
     const auto level = record.at("level").get<std::string>();
-    if (level != "l1" && level != "l2")
+    if (level != "l1" && level != "l2" && level != "l3")
         fail(NoteFailure::invalid, "The incoming note record is invalid.");
-    apply_version_content(database, item.id, record, "content", level == "l1" ? 1 : 2, true);
+    apply_version_content(database, item.id, record, "content", level[1] - '0', true);
     return true;
 }
 

@@ -128,6 +128,28 @@ TEST_F(NotesServiceTest, SummaryBatchRejectsIncompatibleEffortBeforeRecordingAnE
     notes.finish_summary_batch("owner", 1);
 }
 
+TEST_F(NotesServiceTest, L3CanBeGeneratedForAnExcludedReadOnlyNote) {
+    const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
+    const auto original = text_document(std::string(4096, 'x'));
+    notes.save_note(note.id, original, 1);
+    (void)notes.set_note_read_only(note.id, true, 1);
+    (void)notes.set_note_summary_excluded(note.id, true, 1);
+    EXPECT_EQ(notes.get_note(note.id, 1, NoteTextMode::l3).document_id, note.id);
+    const auto options = SummaryBatchOptions{"test", "none", {"l3"}, false};
+    const auto plan = notes.start_summary_batch("owner", note.id, options, 1);
+    ASSERT_EQ(plan["notes"].size(), 1U);
+    EXPECT_EQ(plan["notes"][0]["levels"], nlohmann::json::array({"l3"}));
+    const auto body = text_document("Generated L3");
+    notes.commit_summary_part(note.id, SummaryPart::l3_section, body, 1, "owner");
+    notes.finish_summary_batch("owner", 1);
+    const auto version = notes.get_note(note.id, 1, NoteTextMode::l3);
+    EXPECT_NE(version.document_id, note.id);
+    EXPECT_EQ(version.document, body);
+    EXPECT_EQ(notes.get_note(note.id, 1).document, original);
+    EXPECT_THROW((void)notes.save_note(version.document_id, text_document("Edited"), 1), ApplicationError);
+    EXPECT_THROW((void)notes.start_summary_batch("owner", note.id, options, 1), ApplicationError);
+}
+
 TEST_F(NotesServiceTest, SummaryBatchRecordsOneTerminalEventAndFreesTheSlot) {
     const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
     notes.save_note(note.id, text_document(std::string(4096, 'x')), 1);

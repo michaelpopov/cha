@@ -326,6 +326,7 @@ TEST_F(ChaWebAdapterTest, NotesReadsReturnOriginalDocumentsWithoutNativeStateOrM
     ASSERT_NE(original, items.end());
     EXPECT_EQ(original->at("has_l1"), true);
     EXPECT_EQ(original->at("has_l2"), false);
+    EXPECT_EQ(original->at("has_l3"), false);
     const auto is_folder_summary = [](const auto& item) { return item.at("folder_summary") == true; };
     ASSERT_EQ(std::count_if(items.begin(), items.end(), is_folder_summary), 1);
     const auto summary = std::find_if(items.begin(), items.end(), is_folder_summary);

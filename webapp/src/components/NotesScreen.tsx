@@ -193,8 +193,8 @@ function ToolbarMenu({
   );
 }
 
-const noteTextLabels = { full_text: 'Full text', l1: 'L1', l2: 'L2', compressed: 'Compressed' } as const;
-const noteTextModes = ['full_text', 'l1', 'l2', 'compressed'] as const;
+const noteTextLabels = { full_text: 'Full text', l1: 'L1', l2: 'L2', l3: 'L3', compressed: 'Compressed' } as const;
+const noteTextModes = ['full_text', 'l1', 'l2', 'l3', 'compressed'] as const;
 
 function FormatBar({
   editor,
@@ -340,8 +340,8 @@ function FormatBar({
           icon={<NoteTextModeIcon mode={noteTextMode} />}
           label="Note text mode"
           title={`${noteTextLabels[noteTextMode]} mode; showing ${
-            loadedTextMode === 'l1' || loadedTextMode === 'l2'
-              ? noteTextLabels[loadedTextMode] : noteTextLabels[loadedTextMode].toLowerCase()
+            loadedTextMode === 'full_text' || loadedTextMode === 'compressed'
+              ? noteTextLabels[loadedTextMode].toLowerCase() : noteTextLabels[loadedTextMode]
           }`}
           onOpenChange={(open) => setFormatMenu(open ? 'mode' : null)}
           open={formatMenu === 'mode'}

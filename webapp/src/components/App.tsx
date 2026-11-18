@@ -1207,8 +1207,9 @@ export function App({
         && item.parent_id === id && (kind === 'summary' ? item.folder_summary : item.kind === 'annotation'));
     const commit: typeof client.summaryCommit = async (...args) => {
       const [id, part] = args;
+      const mode = part === 'l3_section' ? 'l3' : part;
       const replacesView = () => part === 'l3' ? showsFolderChild(id, 'summary')
-        : showsVersion(id, part) && documentIdRef.current !== id;
+        : showsVersion(id, mode) && documentIdRef.current !== id;
       const guarded = await guardView(replacesView);
       const sameEditor = viewIdentity();
       let save: NoteSaveHandle | null = null;
@@ -1216,6 +1217,7 @@ export function App({
       let pendingLoad = false;
       let replaced = false;
       let recovering = false;
+      let unconfirmed = false;
       try {
         checkContext();
         if (guarded && replacesView()) {
@@ -1248,6 +1250,7 @@ export function App({
               throw barrierFailure;
             }
             replaced = true;
+            unconfirmed = part === 'l3_section';
           } else if (definite) throw failure;
         }
       } finally {
@@ -1273,7 +1276,8 @@ export function App({
       checkContext();
       noteActionsRef.current?.refresh();
       if (part === 'l3') await refreshView(() => showsFolderChild(id, 'annotation'), false);
-      else await refreshView(() => showsVersion(id, part) && documentIdRef.current === id, true);
+      else await refreshView(() => showsVersion(id, mode) && documentIdRef.current === id, true);
+      if (unconfirmed) throw new Error('The L3 write could not be confirmed.');
     };
 
     checkContext();
@@ -1298,7 +1302,8 @@ export function App({
       sent = true;
       const { notes } = await client.summaryStart(options, epoch);
       checkContext();
-      void runSummaryBatch(client, source, notes, { checkContext, commit }).catch(failure => {
+      const buildFolderSummary = source.kind === 'folder' && options.levels.includes('l3');
+      void runSummaryBatch(client, source, notes, buildFolderSummary, { checkContext, commit }).catch(failure => {
         if (current()) console.warn('Could not complete the summarization batch.', failure);
       }).finally(finish);
     } catch (failure) {

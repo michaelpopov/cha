@@ -4,6 +4,7 @@ import type { NotesClient, SummaryTarget } from '../api/client';
 import { fixtureClient } from '../test/fixtures';
 import { noteDocument, noteItem, paragraph, textNode } from '../test/notes';
 import { noteDocumentByteLimit } from './documentBytes';
+import { noteCommentColor } from './editor';
 import { runSummaryBatch } from './summaries';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
@@ -18,24 +19,30 @@ const folder = noteItem({ id: 9, kind: 'folder' });
 const alpha: SummaryTarget = { id: 1, name: 'Alpha * #', levels: ['compressed', 'l1', 'l2', 'l3'] };
 const beta: SummaryTarget = { id: 2, name: 'Beta', levels: ['l3'] };
 const heading = (name: string) => ({ type: 'heading', attrs: { level: 1 }, content: [textNode(name)] });
-// Notes with every version, so a folder run makes only their sections.
+// Notes that only need an L3.
 const complete = (ids: number[]): SummaryTarget[] => ids.map(id => ({
   id, name: `Note ${id}`, levels: ['l3'],
 }));
 
 function setup(targets: SummaryTarget[] = [beta, alpha]) {
+  const saved = new Map<number, Record<string, unknown>>();
   const calls = {
+    getNote: vi.fn<NotesClient['getNote']>(async id => ({
+      id, document_id: saved.has(id) ? id + 100 : id, document: saved.get(id) ?? noteDocument(paragraph('Full text')),
+    })),
     summaryLine: vi.fn<NotesClient['summaryLine']>(async () => {}),
     summaryGenerate: vi.fn<NotesClient['summaryGenerate']>(async (id, part) =>
       part === 'l3_overview' ? 'Overview' : part === 'l3_section' ? `Section ${id}` : 'Summary'),
-    summaryCommit: vi.fn<NotesClient['summaryCommit']>(async () => {}),
+    summaryCommit: vi.fn<NotesClient['summaryCommit']>(async (id, part, document) => {
+      if (part === 'l3_section') saved.set(id, document as Record<string, unknown>);
+    }),
     summaryAbandon: vi.fn<NotesClient['summaryAbandon']>(async () => {}),
   };
   const client = fixtureClient(calls);
   const checkContext = vi.fn();
   return {
-    ...calls, checkContext,
-    start: (source = folder) => runSummaryBatch(client, source, targets, {
+    ...calls, checkContext, saved,
+    start: (source = folder, buildFolderSummary = source.kind === 'folder') => runSummaryBatch(client, source, targets, buildFolderSummary, {
       checkContext, commit: calls.summaryCommit,
     }),
   };
@@ -78,6 +85,8 @@ describe('runSummaryBatch', () => {
       .toBeLessThan(test.summaryGenerate.mock.invocationCallOrder.at(-1)!);
     expect(test.summaryCommit).toHaveBeenCalledWith(1, 'compressed', 'Compressed text');
     expect(test.summaryCommit).toHaveBeenCalledWith(1, 'l2', noteDocument(heading(alpha.name), paragraph('Summary')));
+    expect(test.summaryCommit).toHaveBeenCalledWith(1, 'l3_section', noteDocument(paragraph('Section 1')));
+    expect(test.getNote.mock.calls).toEqual([[1, 'l3'], [2, 'l3']]);
     expect(test.summaryCommit).toHaveBeenLastCalledWith(9, 'l3', noteDocument(
       heading(folder.name), paragraph('Overview'),
       heading(alpha.name), paragraph('Section 1'), heading(beta.name), paragraph('Section 2'),
@@ -122,7 +131,7 @@ describe('runSummaryBatch', () => {
     expect(test.summaryGenerate.mock.calls.map(([id, part]) => [id, part])).toEqual([
       [1, 'compressed'], [1, 'l1'], [1, 'l2'], [1, 'l3_section'], [9, 'l3_overview'],
     ]);
-    expect(test.summaryCommit.mock.calls.map(([id, part]) => [id, part])).toEqual([[1, 'l2'], [9, 'l3']]);
+    expect(test.summaryCommit.mock.calls.map(([id, part]) => [id, part])).toEqual([[1, 'l2'], [1, 'l3_section'], [9, 'l3']]);
   });
 
   it('keeps independent level saves when L2 and the overview fail', async () => {
@@ -133,44 +142,114 @@ describe('runSummaryBatch', () => {
     });
     await test.start();
     expect(test.summaryGenerate).toHaveBeenLastCalledWith(9, 'l3_overview', '# Alpha * #\n\nValid\n\n# Beta\n\nValid');
-    expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(1, 'l1', noteDocument(paragraph('Valid')));
+    expect(test.summaryCommit).toHaveBeenCalledWith(1, 'l1', noteDocument(paragraph('Valid')));
+    expect([...test.saved.keys()].sort()).toEqual([1, 2]);
+    expect(test.summaryCommit.mock.calls.every(([, part]) => part !== 'l3')).toBe(true);
   });
 
-  it('starts no section after a failed section, keeps making levels, and sends no overview', async () => {
+  it('keeps making later L3s after a failed overwrite and abandons the folder once', async () => {
     const test = setup([...complete([1, 2, 3]), { id: 4, name: 'Note 4', levels: ['l1', 'l3'] }]);
     const held = holdSections(test);
+    const previous = noteDocument(paragraph('Old L3'));
+    test.saved.set(1, previous);
     test.summaryGenerate.mockImplementationOnce(async () => { throw new Error('Provider refused'); });
     const done = test.start();
-    await vi.waitFor(() => expect([...held.keys()]).toEqual([2, 3]));
-    for (const id of [2, 3]) held.get(id)!.resolve(`Section ${id}`);
+    await vi.waitFor(() => expect([...held.keys()]).toEqual([2, 3, 4]));
+    for (const id of [2, 3, 4]) held.get(id)!.resolve(`Section ${id}`);
     await done;
-    expect(test.summaryGenerate.mock.calls).toEqual([[1, 'l3_section'], [2, 'l3_section'], [3, 'l3_section'], [4, 'l1']]);
-    expect(test.summaryCommit.mock.calls.map(([id, part]) => [id, part])).toEqual([[4, 'l1']]);
+    expect(test.summaryGenerate.mock.calls).toEqual([[1, 'l3_section'], [2, 'l3_section'], [3, 'l3_section'], [4, 'l1'], [4, 'l3_section']]);
+    expect(test.summaryAbandon).toHaveBeenCalledExactlyOnceWith(folder.id, 'l3', 1);
+    expect(test.getNote).not.toHaveBeenCalled();
+    expect(test.saved.get(1)).toEqual(previous);
+    expect([...test.saved.keys()].sort()).toEqual([1, 2, 3, 4]);
   });
 
-  it.each(['compressed', 'l1', 'l2'] as const)('makes only the %s request and write when selected alone', async part => {
-    const test = setup([{ ...alpha, levels: [part] }]);
+  it.each(['compressed', 'l1', 'l2', 'l3'] as const)('makes only the %s request and write when selected alone', async level => {
+    const test = setup([{ ...alpha, levels: [level] }]);
+    const part = level === 'l3' ? 'l3_section' : level;
     await test.start(noteItem({ id: alpha.id }));
     expect(test.summaryGenerate).toHaveBeenCalledExactlyOnceWith(alpha.id, part);
     expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(alpha.id, part,
       part === 'compressed' ? 'Summary' : expect.any(Object));
+    expect(test.getNote).not.toHaveBeenCalled();
   });
 
   it('abandons the correct part after a conversion failure and continues other levels', async () => {
     const test = setup([{ ...alpha, levels: ['l1', 'l2', 'l3'] }]);
     test.summaryGenerate.mockImplementation(async (_id, part) => part === 'l1' || part === 'l3_section' ? '' : 'Valid');
     await test.start();
-    expect(test.summaryAbandon.mock.calls).toEqual([[1, 'l1'], [9, 'l3']]);
+    expect(test.summaryAbandon.mock.calls).toEqual([[1, 'l1'], [1, 'l3_section'], [9, 'l3', 1]]);
     expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(1, 'l2', noteDocument(heading(alpha.name), paragraph('Valid')));
   });
 
   it('abandons L3 when individually valid documents exceed the combined size limit', async () => {
-    const test = setup([beta]);
+    const test = setup([{ ...beta, levels: [] }]);
     const markdown = '```\n' + 'a'.repeat(noteDocumentByteLimit / 2) + '\n```';
+    test.saved.set(beta.id, noteDocument(paragraph('b'.repeat(noteDocumentByteLimit / 2))));
     test.summaryGenerate.mockResolvedValue(markdown);
     await test.start();
     expect(test.summaryAbandon).toHaveBeenCalledExactlyOnceWith(9, 'l3');
     expect(test.summaryCommit).not.toHaveBeenCalled();
+  });
+
+  it('uses the same saved rich L3 for the overview and for the copy even if the L3 changes', async () => {
+    const test = setup([{ ...alpha, levels: [] }, { ...beta, levels: [] }]);
+    const overview = deferred<string>();
+    test.summaryGenerate.mockReturnValue(overview.promise);
+    const blocks = [
+      heading('My heading'),
+      { type: 'paragraph', content: [{ ...textNode('Edited passage'), marks: [
+        { type: 'highlight', attrs: { color: '#ffff00' } },
+        { type: 'link', attrs: { href: 'https://example.com' } },
+      ] }] },
+      { type: 'paragraph', content: [{ ...textNode('A comment'), marks: [
+        { type: 'highlight', attrs: { color: noteCommentColor } },
+      ] }] },
+      { type: 'bulletList', content: [{ type: 'listItem', content: [paragraph('An item')] }] },
+    ];
+    test.saved.set(alpha.id, noteDocument(...blocks));
+    test.saved.set(beta.id, noteDocument(paragraph('Saved Beta')));
+    const done = test.start();
+    await vi.waitFor(() => expect(test.summaryGenerate).toHaveBeenCalledExactlyOnceWith(folder.id, 'l3_overview',
+      expect.stringMatching(/^# Alpha \* #\n\nMy heading\n\nEdited passage\n\nA comment\n{2,}An item\n\n# Beta\n\nSaved Beta$/)));
+    test.saved.set(alpha.id, noteDocument(paragraph('Later edit')));
+    overview.resolve('Overview');
+    await done;
+    expect(test.getNote.mock.calls).toEqual([[alpha.id, 'l3'], [beta.id, 'l3']]);
+    expect(test.summaryLine).not.toHaveBeenCalled();
+    expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(folder.id, 'l3', noteDocument(
+      heading(folder.name), paragraph('Overview'), heading(alpha.name), ...blocks, heading(beta.name), paragraph('Saved Beta')));
+  });
+
+  it('generates only the missing L3 when two of three contributors already have one', async () => {
+    const test = setup([{ ...alpha, levels: [] }, beta, { id: 3, name: 'Gamma', levels: [] }]);
+    test.saved.set(alpha.id, noteDocument(paragraph('Saved Alpha')));
+    test.saved.set(3, noteDocument(paragraph('Saved Gamma')));
+    await test.start();
+    expect(test.summaryGenerate.mock.calls).toEqual([
+      [beta.id, 'l3_section'],
+      [folder.id, 'l3_overview', '# Alpha * #\n\nSaved Alpha\n\n# Beta\n\nSection 2\n\n# Gamma\n\nSaved Gamma'],
+    ]);
+    expect(test.summaryLine.mock.calls).toEqual([[beta.id, false], [beta.id, true]]);
+    expect(test.getNote.mock.calls).toEqual([[alpha.id, 'l3'], [beta.id, 'l3'], [3, 'l3']]);
+  });
+
+  it.each([false, true])('abandons a folder when its cached L3 is unavailable (read error %s)', async readError => {
+    const test = setup([{ ...beta, levels: [] }]);
+    if (readError) test.getNote.mockRejectedValueOnce(new Error('Could not read note'));
+    await test.start();
+    expect(test.summaryAbandon).toHaveBeenCalledExactlyOnceWith(folder.id, 'l3', beta.id);
+    expect(test.summaryGenerate).not.toHaveBeenCalled();
+    expect(test.summaryCommit).not.toHaveBeenCalled();
+  });
+
+  it('abandons the folder after a required section write fails and keeps other writes', async () => {
+    const test = setup([beta, { ...alpha, levels: ['l3'] }]);
+    test.summaryCommit.mockRejectedValueOnce(new Error('Write failed'));
+    await test.start();
+    expect(test.summaryAbandon).toHaveBeenCalledExactlyOnceWith(folder.id, 'l3', alpha.id);
+    expect(test.saved.has(beta.id)).toBe(true);
+    expect(test.getNote).not.toHaveBeenCalled();
   });
 
   it.each(['Late level', ''])('stops the line after a vault change (%j)', async markdown => {
@@ -200,7 +279,7 @@ describe('runSummaryBatch', () => {
     test.checkContext.mockImplementation(() => { throw changed; });
 
     await expect(done).rejects.toBe(changed);
-    expect(test.summaryCommit).not.toHaveBeenCalled();
+    expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(beta.id, 'l3_section', noteDocument(paragraph('Section')));
     expect(test.summaryAbandon).not.toHaveBeenCalled();
   });
 });

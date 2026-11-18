@@ -53,10 +53,11 @@ nlohmann::json note_fields(
     storage::SqliteDatabase& database, std::int64_t id) {
     auto query = database.prepare(
         "SELECT n.content_json, c.content_json, n.scroll_top, n.read_only, "
-        "l1.content_json, l2.content_json, n.summary_excluded "
+        "l1.content_json, l2.content_json, n.summary_excluded, l3.content_json "
         "FROM note_items n LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 AND c.level=0 "
         "LEFT JOIN note_items l1 ON l1.parent_id=n.id AND l1.compressed=1 AND l1.level=1 "
         "LEFT JOIN note_items l2 ON l2.parent_id=n.id AND l2.compressed=1 AND l2.level=2 "
+        "LEFT JOIN note_items l3 ON l3.parent_id=n.id AND l3.compressed=1 AND l3.level=3 "
         "WHERE n.id=?1 AND n.kind='note' AND n.compressed=0",
         id);
     if (!query.step()) throw std::runtime_error("Sync note is missing.");
@@ -71,6 +72,8 @@ nlohmann::json note_fields(
     if (query.is_null(5)) fields["l2_content"] = nullptr;
     else fields["l2_content"] = encode_base64(query.blob(5));
     fields["summary_excluded"] = query.integer(6) != 0;
+    if (query.is_null(7)) fields["l3_content"] = nullptr;
+    else fields["l3_content"] = encode_base64(query.blob(7));
     return fields;
 }
 

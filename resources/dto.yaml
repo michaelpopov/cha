@@ -1990,7 +1990,7 @@ components:
     NoteItem:
       type: object
       additionalProperties: false
-      required: [id, parent_id, kind, name, has_compressed, has_audio, has_l1_audio, read_only, is_summary, summary_linked, has_l1, has_l2, summary_excluded, folder_summary]
+      required: [id, parent_id, kind, name, has_compressed, has_audio, has_l1_audio, read_only, is_summary, summary_linked, has_l1, has_l2, has_l3, summary_excluded, folder_summary]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         parent_id:
@@ -2004,6 +2004,7 @@ components:
         summary_linked: {type: boolean}
         has_l1: {type: boolean}
         has_l2: {type: boolean}
+        has_l3: {type: boolean}
         summary_excluded: {type: boolean}
         folder_summary: {type: boolean}
         has_compressed:
@@ -2056,7 +2057,6 @@ components:
         name: {type: string, minLength: 1}
         levels:
           type: array
-          minItems: 1
           uniqueItems: true
           items: {$ref: "#/components/schemas/SummaryLevel"}
 
@@ -2106,7 +2106,7 @@ components:
           required: [id, part, document]
           properties:
             id: {$ref: "#/components/schemas/NoteId"}
-            part: {type: string, enum: [l1, l2, l3]}
+            part: {type: string, enum: [l1, l2, l3_section, l3]}
             document: {$ref: "#/components/schemas/NoteDocument"}
 
     SummaryAbandonRequest:
@@ -2115,7 +2115,14 @@ components:
       required: [id, part]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
-        part: {type: string, enum: [l1, l2, l3]}
+        part: {type: string, enum: [l1, l2, l3_section, l3]}
+        source_id: {$ref: "#/components/schemas/NoteId"}
+      if:
+        properties:
+          part: {const: l3}
+      else:
+        properties:
+          source_id: false
 
     NotesFlexTestRequest:
       type: object
@@ -2199,7 +2206,7 @@ components:
 
     NoteTextMode:
       type: string
-      enum: [full_text, compressed, l1, l2]
+      enum: [full_text, compressed, l1, l2, l3]
     NoteContent:
       type: object
       additionalProperties: false

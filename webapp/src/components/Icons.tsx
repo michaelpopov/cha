@@ -329,6 +329,7 @@ const noteTextModePaths: Record<NoteTextMode, string> = {
   full_text: 'M12 6.5C9.5 4.5 6.5 4 3 5v14c3.5-1 6.5-.5 9 1.5 2.5-2 5.5-2.5 9-1.5V5c-3.5-1-6.5-.5-9 1.5ZM12 6.5v14',
   l1: 'm3 7 9-4 9 4-9 4-9-4ZM3 12l9 4 9-4M3 17l9 4 9-4',
   l2: 'm3 9 9-4 9 4-9 4-9-4ZM3 15l9 4 9-4',
+  l3: 'm3 12 9-4 9 4-9 4-9-4Z',
   compressed: 'm20 4-6 6m0-5v5h5M4 20l6-6m-5 0h5v5',
 };
 

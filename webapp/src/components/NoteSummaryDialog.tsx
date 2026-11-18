@@ -19,8 +19,7 @@ export function NoteSummaryDialog({ client, source, epoch, onStart, onClose }: {
   onClose(): void;
 }) {
   const folder = source.kind === 'folder';
-  const available = folder ? outputs : outputs.slice(0, 3);
-  const [levels, setLevels] = useState<SummaryLevel[]>(() => available.map(([level]) => level));
+  const [levels, setLevels] = useState<SummaryLevel[]>(() => outputs.map(([level]) => level));
   const [overwrite, setOverwrite] = useState(!folder);
   const [providers, setProviders] = useState<ProviderSummary[] | null>(null);
   const [provider, setProvider] = useState('');
@@ -84,7 +83,7 @@ export function NoteSummaryDialog({ client, source, epoch, onStart, onClose }: {
           <option value="high">High</option><option value="xhigh">Extra high</option>
         </select></label>
         <div className="cha-note-summary-outputs">
-          {available.map(([level, label]) => <label key={level}>
+          {outputs.map(([level, label]) => <label key={level}>
             <input type="checkbox" checked={levels.includes(level)} disabled={pending}
               onChange={event => setLevels(event.target.checked ? [...levels, level] : levels.filter(value => value !== level))} />
             {label}

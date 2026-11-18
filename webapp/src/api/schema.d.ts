@@ -867,6 +867,7 @@ export interface components {
             summary_linked: boolean;
             has_l1: boolean;
             has_l2: boolean;
+            has_l3: boolean;
             summary_excluded: boolean;
             folder_summary: boolean;
             has_compressed: boolean;
@@ -914,13 +915,14 @@ export interface components {
         } | {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */
-            part: "l1" | "l2" | "l3";
+            part: "l1" | "l2" | "l3_section" | "l3";
             document: components["schemas"]["NoteDocument"];
         };
         SummaryAbandonRequest: {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */
-            part: "l1" | "l2" | "l3";
+            part: "l1" | "l2" | "l3_section" | "l3";
+            source_id?: components["schemas"]["NoteId"];
         };
         NotesFlexTestRequest: {
             provider_id: string;
@@ -961,7 +963,7 @@ export interface components {
             [key: string]: unknown;
         };
         /** @enum {string} */
-        NoteTextMode: "full_text" | "compressed" | "l1" | "l2";
+        NoteTextMode: "full_text" | "compressed" | "l1" | "l2" | "l3";
         NoteContent: {
             id: components["schemas"]["NoteId"];
             document_id: components["schemas"]["NoteId"];

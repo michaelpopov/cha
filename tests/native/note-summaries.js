@@ -32,8 +32,7 @@ async function nativeParity(scenario) {
       ?.querySelector('input[type="checkbox"]');
     const isFolder = name === 'Book';
     check(checked('Overwrite')?.checked === !isFolder, 'Unexpected Overwrite default');
-    check(checked('L3')?.checked === (isFolder ? true : undefined), 'Unexpected L3 default');
-    for (const label of ['Compressed', 'L1', 'L2', ...(isFolder ? ['L3'] : [])]) {
+    for (const label of ['Compressed', 'L1', 'L2', 'L3']) {
       const output = checked(label);
       check(output?.checked, label + ' was not selected by default');
       if (outputs && !outputs.includes(label)) output.click();
@@ -98,7 +97,7 @@ async function nativeParity(scenario) {
     };
     if (scenario === 'final-commit') await select('Book');
     if (scenario === 'between-steps') await summarize('Single', ['L1']);
-    else await summarize('Book', ['L3']);
+    else await summarize('Book', ['L3'], true);
     // Keep delivery acknowledgements flowing so close negotiation still runs.
     await until(scenario + ' reply held', () => pendingReply);
     return;
@@ -145,6 +144,8 @@ async function nativeParity(scenario) {
   check(title.type === 'heading' && title.content.map(child => child.text).join('') === 'Single', 'L2 title is missing');
   check(editor().getJSON().content.some(node => node.type === 'bulletList'), 'L2 list was lost');
   check(editor().getText().includes('Key\tValue\n\nColor\tBlue'), 'L2 table did not become plain text rows');
+  await mode('L3');
+  await until('saved single L3 body', () => editor()?.getText() === 'Section result');
 
   await select('Book');
   await summarize('Book');
@@ -157,9 +158,14 @@ async function nativeParity(scenario) {
   for (const name of headings.slice(1)) {
     check(row(name)?.querySelector('[aria-label="Other versions saved"]'), 'Missing version dot for ' + name);
   }
-  await summarize('Book', ['L3'], true);
+  await select('A First chapter');
+  await until('editable chapter L3', () => editor()?.isEditable && editor()?.getText() === 'Section result');
+  editor().commands.insertContent(' Edited saved L3');
+  await summarize('Book', ['L3']);
   await finish(3);
-  await summaryText(2);
+  await select('Summary');
+  const reused = await summaryText(2);
+  check(reused.getText().includes('Edited saved L3'), 'The Summary did not copy the edited L3');
 
   await action('C Excluded', 'Exclude from summaries');
   await summarize('Book');

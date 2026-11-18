@@ -16,6 +16,7 @@ app::SummaryPart require_saved_summary_part(const nlohmann::json& params, bool a
     if (allow_compressed && part == "compressed") return app::SummaryPart::compressed;
     if (part == "l1") return app::SummaryPart::l1;
     if (part == "l2") return app::SummaryPart::l2;
+    if (part == "l3_section") return app::SummaryPart::l3_section;
     if (part == "l3") return app::SummaryPart::l3;
     throw std::invalid_argument("The summary part is not valid.");
 }
@@ -173,6 +174,7 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             if (name == "compressed") mode = NoteTextMode::compressed;
             else if (name == "l1") mode = NoteTextMode::l1;
             else if (name == "l2") mode = NoteTextMode::l2;
+            else if (name == "l3") mode = NoteTextMode::l3;
             else if (name != "full_text") throw std::invalid_argument("The note text mode is not valid.");
         } else require_only_keys(params, {"id"});
         return nlohmann::json(application.get_note(require_note_id(params), epoch, mode));
@@ -229,11 +231,18 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             epoch, connection_id);
         return nlohmann::json::object();
     }
-    case Method::notes_summary_abandon:
-        require_only_keys(params, {"id", "part"});
-        application.abandon_summary_part(connection_id, require_note_id(params),
-            require_saved_summary_part(params), epoch);
+    case Method::notes_summary_abandon: {
+        const auto part = require_saved_summary_part(params);
+        std::optional<std::int64_t> source_id;
+        if (part == app::SummaryPart::l3 && params.contains("source_id")) {
+            require_only_keys(params, {"id", "part", "source_id"});
+            source_id = require_positive_id(params, "source_id");
+        } else {
+            require_only_keys(params, {"id", "part"});
+        }
+        application.abandon_summary_part(connection_id, require_note_id(params), part, epoch, source_id);
         return nlohmann::json::object();
+    }
     case Method::notes_set_summary_excluded:
         require_only_keys(params, {"id", "excluded"});
         if (!params.at("excluded").is_boolean())

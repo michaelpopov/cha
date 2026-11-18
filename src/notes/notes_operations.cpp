@@ -385,7 +385,7 @@ std::string_view summary_part_label(SummaryPart part) {
     case SummaryPart::compressed: return "Compressed version";
     case SummaryPart::l1: return "L1";
     case SummaryPart::l2: return "L2";
-    case SummaryPart::l3_section: return "L3 section";
+    case SummaryPart::l3_section: return "L3";
     case SummaryPart::l3_overview: return "L3 overview";
     case SummaryPart::l3: return "Summary note";
     }
@@ -402,10 +402,10 @@ void record_note_summary_failure(WorkspaceConfigStore& store, SummaryPart part,
     std::string_view target, std::string_view reason) noexcept {
     try {
         std::string message = part == SummaryPart::l3 ? "Could not save the " : "Could not make ";
-        if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview) message += "the ";
+        if (part == SummaryPart::l3_overview) message += "the ";
         message.append(summary_part_label(part)).append(" for ").append(target).append(": ").append(reason);
         if (!message.ends_with('.')) message += '.';
-        if (part == SummaryPart::l3_section || part == SummaryPart::l3_overview)
+        if (part == SummaryPart::l3_overview)
             message += " The Summary note was not changed.";
         store.append_event(EventSeverity::error, message);
     } catch (...) { log_warn("Could not record note summary outcome."); }
@@ -504,9 +504,7 @@ nlohmann::json NotesService::start_summary_batch(std::string connection_id, std:
         }
         if (selected.empty())
             throw ApplicationError(ErrorCode::invalid_argument, "Select at least one output.");
-        if (!folder && selected.contains("l3"))
-            throw ApplicationError(ErrorCode::invalid_argument, "L3 is only available for folders.");
-
+        const bool build_folder_summary = folder && selected.contains("l3");
         auto notes = nlohmann::json::array();
         bool eligible = false;
         const auto add_target = [&](const NoteItem& note) {
@@ -516,8 +514,8 @@ nlohmann::json NotesService::start_summary_batch(std::string connection_id, std:
                 levels.push_back("compressed");
             if (selected.contains("l1") && (options.overwrite || !note.has_l1)) levels.push_back("l1");
             if (selected.contains("l2") && (options.overwrite || !note.has_l2)) levels.push_back("l2");
-            if (selected.contains("l3")) levels.push_back("l3");
-            if (!levels.empty())
+            if (selected.contains("l3") && (options.overwrite || !note.has_l3)) levels.push_back("l3");
+            if (build_folder_summary || !levels.empty())
                 notes.push_back({{"id", note.id}, {"name", note.name}, {"levels", std::move(levels)}});
         };
         if (!folder) {
@@ -725,7 +723,7 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
     std::unique_lock lifecycle(impl_->lifecycle_mutex);
     if (connection_id) impl_->require_summary_batch(*connection_id, epoch);
     else impl_->require_admitted(epoch);
-    if (part != SummaryPart::compressed && part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
+    if (part == SummaryPart::l3_overview)
         throw ApplicationError(ErrorCode::invalid_argument);
     const bool folder = folder_summary_part(part);
     auto target = note_summary_target(id, "", folder);
@@ -744,9 +742,10 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
             return;
         }
         if (!folder) {
-            document_id = impl_->store->commit_note_level(id, part == SummaryPart::l1 ? 1 : 2, document,
+            const int level = part == SummaryPart::l1 ? 1 : part == SummaryPart::l2 ? 2 : 3;
+            document_id = impl_->store->commit_note_level(id, level, document,
                 std::string(summary_part_label(part)) + " ready for " + target + ".");
-            if (part == SummaryPart::l2) return;
+            if (part != SummaryPart::l1) return;
         } else {
             document_id = impl_->store->commit_folder_summary(id, document).id;
         }
@@ -764,16 +763,26 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
 }
 
 void NotesService::abandon_summary_part(std::string_view connection_id,
-    std::int64_t id, SummaryPart part, std::uint64_t epoch) {
+    std::int64_t id, SummaryPart part, std::uint64_t epoch, std::optional<std::int64_t> source_id) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_summary_batch(connection_id, epoch);
-    if (part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
+    if (part == SummaryPart::compressed || part == SummaryPart::l3_overview
+        || (source_id && part != SummaryPart::l3))
         throw ApplicationError(ErrorCode::invalid_argument);
     try {
         const auto item = impl_->store->get_note_item(id);
         if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
-        record_note_summary_failure(*impl_->store, part, note_summary_target(id, item->name, folder_summary_part(part)),
-            "the result could not be converted to a note");
+        const bool folder = folder_summary_part(part);
+        require_summary_target(*item, folder);
+        const auto target = note_summary_target(id, item->name, folder);
+        if (source_id) {
+            const auto source = impl_->store->get_note_item(*source_id);
+            impl_->store->append_event(EventSeverity::error, "Could not build the Summary for " + target
+                + " because the L3 for " + note_summary_target(*source_id, source ? source->name : "", false)
+                + " could not be used.");
+        } else {
+            record_note_summary_failure(*impl_->store, part, target, "the result could not be converted to a note");
+        }
     } catch (const NoteError& error) { rethrow_note(error); }
 }
 

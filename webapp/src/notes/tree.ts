@@ -11,6 +11,7 @@ export type NoteTreeItem = {
   has_compressed?: boolean;
   has_l1?: boolean;
   has_l2?: boolean;
+  has_l3?: boolean;
   summary_excluded?: boolean;
   folder_summary?: boolean;
   has_audio?: boolean;
@@ -89,7 +90,7 @@ export function buildNoteIndex(items: readonly NoteTreeItem[]): {
       id,
       noteId: item.id,
       name: item.name,
-      hasVersions: !!(item.has_compressed || item.has_l1 || item.has_l2),
+      hasVersions: !!(item.has_compressed || item.has_l1 || item.has_l2 || item.has_l3),
       summaryExcluded: item.summary_excluded ?? false,
       folderSummary: item.folder_summary ?? false,
       // Playback is only offered for read-only notes.
