@@ -6,7 +6,9 @@
 #include "runtime/runtime_settings.h"
 #include "runtime/live_session_manager.h"
 #include "storage/session_repository.h"
+#include "storage/sqlite_storage.h"
 #include "workspace/builtins.h"
+#include "workspace/workspace.h"
 #include "support/test_workspace.h"
 #include "workspace/workspace_config_store.h"
 
@@ -102,6 +104,53 @@ TEST_F(NotesServiceTest, AdmissionRejectsBeforeMutation) {
     try { (void)notes.get_note(item.id, 2); FAIL(); }
     catch (const ApplicationError& error) { EXPECT_EQ(error.code, ErrorCode::vault_changed); }
     EXPECT_EQ(store->list_note_items().back().name, "Draft");
+}
+
+TEST_F(NotesServiceTest, SummaryBatchRecordsOneTerminalEventAndFreesTheSlot) {
+    const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
+    notes.save_note(note.id, text_document(std::string(4096, 'x')), 1);
+    store->apply_notes_update({.compression_provider_id = "test"});
+    const auto label = "“Chapter” (note " + std::to_string(note.id) + ")";
+    EXPECT_EQ(notes.start_summary_batch("owner", note.id, 1)["notes"].size(), 1U);
+    notes.rename_note_item(note.id, "Renamed", 1);
+    EXPECT_THROW(notes.start_summary_batch("other", note.id, 1), ApplicationError);
+    notes.finish_summary_batch("other", 1);
+    {
+        const std::lock_guard lock(lifecycle);
+        notes.cancel_summaries_locked("other");
+        EXPECT_EQ(store->list_events().size(), 1U);
+        notes.cancel_summaries_locked("owner");
+        notes.cancel_summaries_locked();
+    }
+    const auto cancelled = store->list_events();
+    ASSERT_EQ(cancelled.size(), 2U);
+    EXPECT_EQ(cancelled[1].message, "Summarization started for " + label + ", 1 note.");
+    EXPECT_EQ(cancelled[0].message, "Summarization cancelled for " + label + ".");
+    EXPECT_EQ(cancelled[0].severity, EventSeverity::info);
+    (void)notes.start_summary_batch("other", note.id, 1);
+    notes.finish_summary_batch("other", 1);
+    notes.finish_summary_batch("other", 1);
+    const auto finished = store->list_events();
+    ASSERT_EQ(finished.size(), 4U);
+    EXPECT_EQ(finished.front().message, "Summarization finished for “Renamed” (note " + std::to_string(note.id) + ").");
+}
+
+TEST_F(NotesServiceTest, SummaryBatchRequiresTheStartEventAndFreesTheSlotIfTheEndEventFails) {
+    const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
+    notes.save_note(note.id, text_document(std::string(4096, 'x')), 1);
+    store->apply_notes_update({.compression_provider_id = "test"});
+    storage::SqliteDatabase database(store->database_path(), storage::SqliteDatabase::Mode::read_write);
+    database.execute("ALTER TABLE event_history RENAME TO unavailable_events");
+    EXPECT_THROW(notes.start_summary_batch("first", note.id, 1), std::runtime_error);
+    database.execute("ALTER TABLE unavailable_events RENAME TO event_history");
+    EXPECT_TRUE(store->list_events().empty());
+    EXPECT_NO_THROW((void)notes.start_summary_batch("first", note.id, 1));
+    database.execute("ALTER TABLE event_history RENAME TO unavailable_events");
+    EXPECT_NO_THROW(notes.finish_summary_batch("first", 1));
+    database.execute("ALTER TABLE unavailable_events RENAME TO event_history");
+    EXPECT_NO_THROW((void)notes.start_summary_batch("second", note.id, 1));
+    notes.finish_summary_batch("second", 1);
+    EXPECT_EQ(store->list_events().size(), 3U);
 }
 
 TEST(FlexTest, MapsTheResultToItsPanelText) {

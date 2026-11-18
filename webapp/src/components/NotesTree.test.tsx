@@ -52,12 +52,12 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     commitSessionSummary: async () => { throw new Error('sessionSummary.commit'); },
     abandonSessionSummary: async () => undefined,
     contextEpoch: () => 1,
-    summaryPlan: async () => ({ notes: [] }),
+    summaryStart: async () => ({ notes: [] }),
     summaryLine: async () => undefined,
     summaryGenerate: async () => { throw new Error('notes.summaryGenerate'); },
     summaryCommit: async () => undefined,
     summaryAbandon: async () => undefined,
-    summaryCancel: async () => undefined,
+    summaryFinish: async () => undefined,
     summaryCompress: async () => { throw new Error('notes.summaryCompress'); },
     setNoteSummaryExcluded: async () => { throw new Error('notes.setSummaryExcluded'); },
     compressionStatus: async () => ({ pending: false }),
@@ -230,7 +230,7 @@ describe('Notes tree', () => {
       fireEvent.keyDown(menu, { key: 'Escape' });
     }
     await chooseAction('Study', 'Summarize');
-    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(study, 1, expect.any(Function));
+    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(study, 1);
   });
 
   it('refreshes the exclusion check mark and displays a refused summary plan', async () => {
@@ -258,7 +258,7 @@ describe('Notes tree', () => {
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     await chooseAction('Aardvark', 'Summarize');
     expect(await screen.findByText(message)).toBeInTheDocument();
-    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(item, 1, expect.any(Function));
+    expect(onSummarize).toHaveBeenCalledExactlyOnceWith(item, 1);
   });
 
   it.each(['has_compressed', 'has_l1', 'has_l2'] as const)('shows the saved version dot for %s', async field => {

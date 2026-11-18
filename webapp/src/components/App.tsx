@@ -46,7 +46,7 @@ import { notesExtensions } from '../notes/editor';
 import { summaryDocument, summaryConversionError } from '../notes/summaryImport';
 import { useNoteLeave } from '../notes/useNoteLeave';
 import { compressAndWait, type CompressionCancellation } from '../notes/compression';
-import { summarizeAndWait } from '../notes/summaries';
+import { runSummaryBatch } from '../notes/summaries';
 import { useNoteImports, type NoteImports } from '../notes/useNoteImports';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
 import { reloadApplication, writeAppRoute } from '../state/route';
@@ -782,7 +782,8 @@ export function App({
   notesEpochRef.current = state.notesEpoch;
   activeNoteIdRef.current = state.activeNoteId;
   const notesVisibleRef = useRef(false);
-  const compressionRun = useRef<(CompressionCancellation & { notesChanged: boolean; label?: string }) | null>(null);
+  const compressionRun = useRef<(CompressionCancellation & { notesChanged: boolean }) | null>(null);
+  const summaryBatch = useRef<NoteItem | null>(null);
   const [compression, setCompression] = useState<NoteCompressionProgress | null>(null);
   const compressionInProgress = useCallback(() => compressionRun.current !== null, []);
   notesVisibleRef.current = workspaceVisibility(state).notesVisible;
@@ -959,6 +960,8 @@ export function App({
 
   const summaryViewRef = useRef({ noteActions, sourceChanged });
   summaryViewRef.current = { noteActions, sourceChanged };
+  const noteViewRef = useRef({ items: noteItems, mode: state.noteTextMode, request: state.noteRequest });
+  noteViewRef.current = { items: noteItems, mode: state.noteTextMode, request: state.noteRequest };
   const notesCancellation = useRef(new AbortController());
   useEffect(() => {
     const controller = new AbortController();
@@ -1141,11 +1144,7 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const runNoteOperation = useCallback(async (
-    operation: { source: NoteItem } | { targets: Parameters<CompressNote>[0]; folder: boolean },
-    epoch: number,
-    refresh: () => Promise<void>,
-  ) => {
+  const compressNote = useCallback<CompressNote>(async (targets, epoch, folder, refresh) => {
     const context = notesCancellation.current.signal;
     const checkContext = () => {
       if (context.aborted || client.contextEpoch() !== epoch)
@@ -1153,9 +1152,7 @@ export function App({
     };
     checkContext();
     if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    const run: NonNullable<typeof compressionRun.current> = {
-      requested: false, notesChanged: false, label: 'source' in operation ? 'Note summaries' : undefined,
-    };
+    const run: NonNullable<typeof compressionRun.current> = { requested: false, notesChanged: false };
     compressionRun.current = run;
     setCompression({ message: 'Saving note…', cancelEnabled: true });
     const noteId = activeNoteIdRef.current;
@@ -1174,34 +1171,17 @@ export function App({
       checkContext();
       if (run.requested) return;
       started = true;
-      if ('source' in operation) {
-        const { source } = operation;
-        const result = await summarizeAndWait(client, source, run, checkContext, progress => {
-          if (progress.cancelEnabled) setCompression(progress);
-          // Disable Cancel before the folder commit is sent.
-          else flushSync(() => setCompression(progress));
-        });
-        reload = noteId !== null && ((state.noteTextMode === 'l1' || state.noteTextMode === 'l2')
-          ? result.targetIds.includes(noteId)
-          : state.noteTextMode === 'compressed' && result.compressedIds.includes(noteId));
-        if (result.folderSummaryCommitted) {
-          reload ||= noteItems.some(item => item.id === noteId && item.parent_id === source.id
-            && (item.folder_summary || item.kind === 'annotation'));
-        }
-      } else {
-        const { targets, folder } = operation;
-        for (const [index, target] of targets.entries()) {
-          if (run.requested) break;
-          checkContext();
-          const progress = {
-            message: `Compressing “${target.name}”…`,
-            count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
-            cancelEnabled: true,
-          };
-          setCompression(progress);
-          await compressAndWait(client, target.id, epoch, folder, run, context, () => setCompression(progress));
-          if (target.id === noteId && state.noteTextMode === 'compressed') reload = true;
-        }
+      for (const [index, target] of targets.entries()) {
+        if (run.requested) break;
+        checkContext();
+        const progress = {
+          message: `Compressing “${target.name}”…`,
+          count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
+          cancelEnabled: true,
+        };
+        setCompression(progress);
+        await compressAndWait(client, target.id, epoch, folder, run, context, () => setCompression(progress));
+        if (target.id === noteId && state.noteTextMode === 'compressed') reload = true;
       }
     } finally {
       try {
@@ -1232,12 +1212,182 @@ export function App({
         noteLeave.endNoteAction();
       }
     }
-  }, [client, noteItems, noteLeave.beginNoteAction, noteLeave.endNoteAction, state.noteTextMode]);
+  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, state.noteTextMode]);
 
-  const compressNote = useCallback<CompressNote>((targets, epoch, folder, refresh) =>
-    runNoteOperation({ targets, folder }, epoch, refresh), [runNoteOperation]);
-  const summarizeNotes = useCallback<SummarizeNotes>((source, epoch, refresh) =>
-    runNoteOperation({ source }, epoch, refresh), [runNoteOperation]);
+  const summarizeNotes = useCallback<SummarizeNotes>(async (source, epoch) => {
+    if (summaryBatch.current)
+      throw new ChaError('invalid_argument', `Summarization is already running for “${summaryBatch.current.name}”.`);
+    const signal = notesCancellation.current.signal;
+    const editorEpoch = notesEpochRef.current;
+    const current = () => {
+      try { return !signal.aborted && notesEpochRef.current === editorEpoch && client.contextEpoch() === epoch; }
+      catch { return false; }
+    };
+    const checkContext = () => {
+      if (!current()) throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+    };
+    const viewIdentity = () => {
+      const noteId = activeNoteIdRef.current;
+      const request = noteViewRef.current.request;
+      return () => notesEpochRef.current === editorEpoch && activeNoteIdRef.current === noteId
+        && noteViewRef.current.request === request;
+    };
+    const saveScroll = async (save: NoteSaveHandle | null) => {
+      try { await save?.saveScrollPosition?.(); }
+      catch (failure) { console.warn('Could not save the note scroll position.', failure); }
+    };
+    const reloadView = () => flushSync(() => dispatch({ type: 'reload-note' }));
+    const freezeAndSave = async (save: NoteSaveHandle, sameView: () => boolean, afterSave?: () => Promise<void>) => {
+      save.freeze();
+      const serial = save.inFlightSerial();
+      try {
+        await save.waitInFlight();
+        if (!sameView()) return false;
+        if (serial !== null && save.saveError?.serial === serial) return false;
+        if (!await save.flushRemaining() || !sameView()) return false;
+        await afterSave?.();
+        return true;
+      } finally {
+        if (sameView()) save.unfreeze();
+      }
+    };
+    const guardView = async (matches: () => boolean) => {
+      while (current() && matches()) {
+        if (noteLeave.beginNoteAction()) return true;
+        await noteLeave.whenIdle(signal);
+      }
+      return false;
+    };
+    const refreshView = async (matches: () => boolean, saveOriginal: boolean) => {
+      if (!await guardView(matches)) return;
+      try {
+        const sameEditor = viewIdentity();
+        const sameView = () => current() && sameEditor();
+        if (!sameView() || !matches()) return;
+        const save = noteSaveRef.current;
+        const reopen = async () => {
+          if (save?.isOpen) await saveScroll(save);
+          if (sameView() && matches()) reloadView();
+        };
+        if (saveOriginal && save?.isOpen) await freezeAndSave(save, sameView, reopen);
+        else await reopen();
+      } finally {
+        noteLeave.endNoteAction();
+      }
+    };
+    const showsVersion = (id: number, mode: NoteTextMode) =>
+      notesVisibleRef.current && activeNoteIdRef.current === id && noteViewRef.current.mode === mode;
+    const showsFolderChild = (id: number, kind: 'summary' | 'annotation') =>
+      notesVisibleRef.current && noteViewRef.current.items.some(item => item.id === activeNoteIdRef.current
+        && item.parent_id === id && (kind === 'summary' ? item.folder_summary : item.kind === 'annotation'));
+    const commit: typeof client.summaryCommit = async (id, part, document) => {
+      const replacesView = () => part === 'l3' ? showsFolderChild(id, 'summary')
+        : showsVersion(id, part) && documentIdRef.current !== id;
+      const guarded = await guardView(replacesView);
+      const sameEditor = viewIdentity();
+      let save: NoteSaveHandle | null = null;
+      let cancelledSave = false;
+      let pendingLoad = false;
+      let replaced = false;
+      let recovering = false;
+      try {
+        checkContext();
+        if (guarded && replacesView()) {
+          save = noteSaveRef.current;
+          if (save?.isOpen) {
+            cancelledSave = save.freeze();
+            await save.waitInFlight();
+            if (current() && sameEditor()) await saveScroll(save);
+          } else {
+            // Discard a getNote reply that may contain the pre-commit version.
+            pendingLoad = true;
+            disposeEditorRef.current();
+          }
+        }
+        checkContext();
+        try {
+          await client.summaryCommit(id, part, document);
+          replaced = true;
+        } catch (failure) {
+          const definite = failure instanceof ChaError
+            && !['command_timeout', 'application_unavailable', 'server_stopping'].includes(failure.code);
+          if (!definite && current()) {
+            // This read follows the commit in the desktop bridge's ordinary queue.
+            try { await client.listNoteItems(); }
+            catch (barrierFailure) {
+              if (guarded && current()) {
+                recovering = true;
+                reload();
+              }
+              throw barrierFailure;
+            }
+            replaced = true;
+          } else if (definite) throw failure;
+        }
+      } finally {
+        if (guarded) {
+          try {
+            if (sameEditor()) {
+              const stillCurrent = current();
+              if (replaced || pendingLoad || recovering || !stillCurrent) {
+                save?.dispose();
+                disposeEditorRef.current();
+                if (stillCurrent && !recovering && notesVisibleRef.current) reloadView();
+              } else if (save?.isOpen) {
+                save.unfreeze();
+                if (cancelledSave) save.submitNow();
+              }
+            }
+          } finally {
+            // A queued commit may still run, so keep note actions blocked until the reload.
+            if (!recovering) noteLeave.endNoteAction();
+          }
+        }
+      }
+      checkContext();
+      noteActionsRef.current?.refresh();
+      if (part === 'l3') await refreshView(() => showsFolderChild(id, 'annotation'), false);
+      else await refreshView(() => showsVersion(id, part) && documentIdRef.current === id, true);
+    };
+
+    checkContext();
+    if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
+    summaryBatch.current = source;
+    let sent = false;
+    const finish = async () => {
+      try { if (sent) await client.summaryFinish(epoch); }
+      catch { /* The native lifecycle also retires batches on disconnect and vault changes. */ }
+      finally { summaryBatch.current = null; }
+    };
+    try {
+      try {
+        const save = noteSaveRef.current;
+        const sameEditor = viewIdentity();
+        if (save?.isOpen && !await freezeAndSave(save, () => current() && sameEditor()))
+          throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
+        checkContext();
+      } finally {
+        noteLeave.endNoteAction();
+      }
+      sent = true;
+      const { notes } = await client.summaryStart(source.id, epoch);
+      void runSummaryBatch(client, source, notes, {
+        checkContext,
+        commit,
+        compressed: async id => {
+          checkContext();
+          noteActionsRef.current?.refresh();
+          await refreshView(() => showsVersion(id, 'compressed')
+            && (documentIdRef.current === id || noteLoadRef.current !== null), true);
+        },
+      }).catch(failure => {
+        if (current()) console.warn('Could not complete the summarization batch.', failure);
+      }).finally(finish);
+    } catch (failure) {
+      await finish();
+      throw failure;
+    }
+  }, [client, reload, noteLeave.beginNoteAction, noteLeave.endNoteAction, noteLeave.whenIdle]);
 
   const deleteNoteItem = useCallback<DeleteNoteItem>(async (sourceId, listing, refresh) => {
     if (!noteLeave.beginNoteAction()) return 'busy';
@@ -1729,7 +1879,7 @@ export function App({
             )}
           </main>
         </div>
-        {compression && <NoteCompressionDialog label={compressionRun.current?.label} progress={compression} onCancel={() => {
+        {compression && <NoteCompressionDialog progress={compression} onCancel={() => {
           const run = compressionRun.current;
           if (!compression.cancelEnabled || !run) return;
           run.requested = true;

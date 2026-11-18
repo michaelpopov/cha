@@ -9,8 +9,7 @@ export type NoteCompressionProgress = {
   cancelEnabled: boolean;
 };
 
-export function NoteCompressionDialog({ label = 'Note compression', progress, onCancel }: {
-  label?: string;
+export function NoteCompressionDialog({ progress, onCancel }: {
   progress: NoteCompressionProgress;
   onCancel(): void;
 }) {
@@ -18,7 +17,7 @@ export function NoteCompressionDialog({ label = 'Note compression', progress, on
   const dialog = useDialogElement(() => cancel.current?.focus());
   return createPortal(
     <dialog
-      aria-label={label}
+      aria-label="Note compression"
       className="cha-dialog"
       onCancel={event => {
         event.preventDefault();

@@ -82,6 +82,7 @@ nlohmann::json store_status(const app::Application::FolderStoreOperationStatus& 
 
 std::optional<nlohmann::json> dispatch_notes_operation(
     app::Application& application,
+    const std::string& connection_id,
     Method method,
     const nlohmann::json& params,
     std::uint64_t epoch) {
@@ -200,17 +201,21 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             require_note_id(params), static_cast<std::int64_t>(*top), epoch);
         return nlohmann::json::object();
     }
-    case Method::notes_summary_plan:
+    case Method::notes_summary_start:
         require_only_keys(params, {"id"});
-        return application.summary_plan(require_note_id(params), epoch);
+        return application.start_summary_batch(connection_id, require_note_id(params), epoch);
+    case Method::notes_summary_finish:
+        require_only_keys(params, {});
+        application.finish_summary_batch(connection_id, epoch);
+        return nlohmann::json::object();
     case Method::notes_summary_commit:
         require_only_keys(params, {"id", "part", "document"});
         application.commit_summary_part(require_note_id(params),
-            require_saved_summary_part(params), require_document(params), epoch);
+            require_saved_summary_part(params), require_document(params), epoch, connection_id);
         return nlohmann::json::object();
     case Method::notes_summary_abandon:
         require_only_keys(params, {"id", "part"});
-        application.abandon_summary_part(require_note_id(params),
+        application.abandon_summary_part(connection_id, require_note_id(params),
             require_saved_summary_part(params), epoch);
         return nlohmann::json::object();
     case Method::notes_set_summary_excluded:

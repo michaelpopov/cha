@@ -95,7 +95,7 @@ export type SetNoteReadOnly = (id: number, readOnly: boolean) => Promise<NoteIte
 export type CompressNote = (
   targets: readonly Pick<NoteItem, 'id' | 'name'>[], epoch: number, folder: boolean, refresh: () => Promise<void>,
 ) => Promise<void>;
-export type SummarizeNotes = (source: NoteItem, epoch: number, refresh: () => Promise<void>) => Promise<void>;
+export type SummarizeNotes = (source: NoteItem, epoch: number) => Promise<void>;
 
 type RefreshResult = 'applied' | 'ignored' | 'failed';
 
@@ -801,7 +801,7 @@ export function NotesTree({
     if (!source || epoch === undefined || !canMutateNow()) return;
     setError(null);
     try {
-      await onSummarize(source, epoch, refreshAfterOperation);
+      await onSummarize(source, epoch);
     } catch (failure) {
       if (alive.current) setError(publicErrorMessage(failure, 'Could not start summaries. Try again.'));
     } finally {

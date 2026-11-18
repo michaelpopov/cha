@@ -1,6 +1,4 @@
-import type { NoteItem, NotesClient, SummaryTarget } from '../api/client';
-import type { NoteCompressionProgress } from '../components/NoteCompressionDialog';
-import type { CompressionCancellation } from './compression';
+import { ChaError, type NoteItem, type NotesClient, type SummaryTarget } from '../api/client';
 import { noteDocumentByteLength, noteDocumentByteLimit } from './documentBytes';
 import { markdownNoteDocument, summaryConversionError } from './summaryImport';
 import { compareNoteSiblings } from './tree';
@@ -22,25 +20,25 @@ function titledDocument(title: string, markdown: string, sections: Section[] = [
   return document;
 }
 
-export async function summarizeAndWait(
+export async function runSummaryBatch(
   client: NotesClient,
   source: NoteItem,
-  run: CompressionCancellation,
-  checkContext: () => void,
-  onProgress: (progress: NoteCompressionProgress) => void,
-): Promise<{ targetIds: number[]; compressedIds: number[]; folderSummaryCommitted: boolean }> {
-  const result = { targetIds: [] as number[], compressedIds: [] as number[], folderSummaryCommitted: false };
-
-  let cancellation: Promise<void> | undefined;
-  run.cancelJob = () => {
-    cancellation = client.summaryCancel().catch(() => {});
-  };
+  admitted: SummaryTarget[],
+  view: {
+    checkContext(): void;
+    commit: NotesClient['summaryCommit'];
+    compressed(id: number): Promise<void>;
+  },
+): Promise<void> {
   const folder = source.kind === 'folder';
+  const targets = admitted.map(target => ({ ...target, kind: 'note' as const })).sort(compareNoteSiblings);
+  let makeL3 = folder;
+  // Sections keep their place in tree order, whichever line finishes first.
+  const sections: (Section | undefined)[] = targets.map(() => undefined);
 
   async function makeLevel({ id, name }: SummaryTarget, part: 'l1' | 'l2') {
     const markdown = await client.summaryGenerate(id, part);
-    if (run.requested) return;
-    checkContext();
+    view.checkContext();
     let document;
     try {
       document = part === 'l2' ? titledDocument(name, markdown) : markdownNoteDocument(markdown);
@@ -48,93 +46,61 @@ export async function summarizeAndWait(
       await client.summaryAbandon(id, part);
       return;
     }
-    await client.summaryCommit(id, part, document);
+    await view.commit(id, part, document);
   }
 
-  try {
-    const plan = await client.summaryPlan(source.id);
-    const targets = plan.notes.map(target => ({ ...target, kind: 'note' as const })).sort(compareNoteSiblings);
-    result.targetIds = targets.map(target => target.id);
-    let makeL3 = folder && targets.length > 0;
-    // Sections keep their place in tree order, whichever line finishes first.
-    const sections: (Section | undefined)[] = targets.map(() => undefined);
-
-    async function compress({ id }: SummaryTarget) {
-      if (await client.summaryCompress(id)) result.compressedIds.push(id);
-    }
-
-    async function makeSection({ id, name }: SummaryTarget, index: number) {
-      if (!makeL3) return;
-      try {
-        sections[index] = { name, markdown: await client.summaryGenerate(id, 'l3_section') };
-      } catch {
-        makeL3 = false;
-      }
-    }
-
-    // A failed step does not stop its line. The backend has already recorded the event.
-    // A vault change stops the line.
-    async function step(work: () => Promise<void>) {
-      if (run.requested) return;
-      checkContext();
-      try {
-        await work();
-      } catch {
-        // Recorded by the backend.
-      }
-    }
-
-    // A line makes the steps of one note in order, so later steps can reuse the
-    // provider's cached prefix. Up to three lines run at the same time.
-    let next = 0;
-    async function line() {
-      while (next < targets.length && !run.requested) {
-        const index = next++;
-        const target = targets[index];
-        checkContext();
-        onProgress({
-          message: `Summarizing “${target.name}”…`,
-          count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
-          cancelEnabled: true,
-        });
-        await step(() => client.summaryLine(target.id, false));
-        if (folder && !target.has_compressed) await step(() => compress(target));
-        if (!folder || !target.has_l1) await step(() => makeLevel(target, 'l1'));
-        if (!folder || !target.has_l2) await step(() => makeLevel(target, 'l2'));
-        await step(() => makeSection(target, index));
-        await step(() => client.summaryLine(target.id, true));
-      }
-    }
-    await Promise.allSettled(Array.from({ length: Math.min(3, targets.length) }, line));
-    checkContext();
-
-    if (!makeL3 || run.requested || sections.includes(undefined)) return result;
-    const message = 'Writing the Summary note…';
-    onProgress({ message, cancelEnabled: true });
-    const complete = sections as Section[];
-    const text = complete.map(({ name, markdown }) => `# ${name}\n\n${markdown}`).join('\n\n');
+  // Individual failures are recorded in Events. A lost vault or connection stops the line.
+  async function step(work: () => Promise<void>) {
+    view.checkContext();
     try {
-      const overview = await client.summaryGenerate(source.id, 'l3_overview', text);
-      if (run.requested) return result;
-      checkContext();
-      let document;
-      try {
-        document = titledDocument(source.name, overview, complete);
-      } catch {
-        await client.summaryAbandon(source.id, 'l3');
-        return result;
-      }
-      onProgress({ message, cancelEnabled: false });
-      await client.summaryCommit(source.id, 'l3', document);
-      result.folderSummaryCommitted = true;
-    } catch {
-      // The backend reports failures from generation, commit, and abandon.
-    } finally {
-      checkContext();
+      await work();
+    } catch (failure) {
+      if (failure instanceof ChaError && ['vault_changed', 'server_stopping', 'application_unavailable'].includes(failure.code))
+        throw failure;
     }
-    return result;
-  } finally {
-    run.cancelJob = undefined;
-    await cancellation;
+    view.checkContext();
   }
+
+  // Keep each note's steps in order so the provider can reuse its cached prefix.
+  let next = 0;
+  async function line() {
+    while (next < targets.length) {
+      const index = next++;
+      const target = targets[index];
+      const { id, name } = target;
+      await step(() => client.summaryLine(id, false));
+      if (folder && !target.has_compressed) await step(async () => {
+        if (await client.summaryCompress(id)) await view.compressed(id);
+      });
+      if (!folder || !target.has_l1) await step(() => makeLevel(target, 'l1'));
+      if (!folder || !target.has_l2) await step(() => makeLevel(target, 'l2'));
+      if (makeL3) await step(async () => {
+        try {
+          sections[index] = { name, markdown: await client.summaryGenerate(id, 'l3_section') };
+        } catch (failure) {
+          makeL3 = false;
+          throw failure;
+        }
+      });
+      await step(() => client.summaryLine(id, true));
+    }
+  }
+  const settled = await Promise.allSettled(Array.from({ length: Math.min(3, targets.length) }, line));
+  for (const result of settled) if (result.status === 'rejected') throw result.reason;
+
+  if (!makeL3 || sections.includes(undefined)) return;
+  const complete = sections as Section[];
+  const text = complete.map(({ name, markdown }) => `# ${name}\n\n${markdown}`).join('\n\n');
+  await step(async () => {
+    const overview = await client.summaryGenerate(source.id, 'l3_overview', text);
+    view.checkContext();
+    let document;
+    try {
+      document = titledDocument(source.name, overview, complete);
+    } catch {
+      await client.summaryAbandon(source.id, 'l3');
+      return;
+    }
+    await view.commit(source.id, 'l3', document);
+  });
 }

@@ -2018,13 +2018,21 @@ components:
           type: string
           minLength: 1
 
-    SummaryPlan:
+    SummaryStartRequest:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
+
+    SummaryStartResult:
       type: object
       additionalProperties: false
       required: [notes]
       properties:
         notes:
           type: array
+          minItems: 1
           items: {$ref: "#/components/schemas/SummaryTarget"}
 
     SummaryTarget:

@@ -875,7 +875,10 @@ export interface components {
             read_only: boolean;
             name: string;
         };
-        SummaryPlan: {
+        SummaryStartRequest: {
+            id: components["schemas"]["NoteId"];
+        };
+        SummaryStartResult: {
             notes: components["schemas"]["SummaryTarget"][];
         };
         SummaryTarget: {

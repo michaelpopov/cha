@@ -1326,76 +1326,6 @@ describe('Notes in the application', () => {
     expect(saveNote).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['button', 'Escape'] as const)('cancels summaries with %s and waits for the calls to settle', async cancelWith => {
-    const generation = deferred<string>();
-    const summaryCancel = vi.fn(async () => undefined);
-    const summaryCommit = vi.fn();
-    const bus = contextBus();
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [plan],
-      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
-      summaryPlan: async () => ({ notes: [plan] }),
-      summaryGenerate: () => generation.promise,
-      summaryCancel, summaryCommit,
-    })} contextEvents={bus} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await screen.findByText('Original');
-    const old = noteEditor();
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
-    await within(dialog).findByText('Summarizing “Plan”…');
-    const cancel = within(dialog).getByRole('button', { name: 'Cancel' });
-    expect(cancel).toHaveFocus();
-    expect(old.isEditable).toBe(false);
-    expect(screen.getByRole('button', { name: 'Note text mode' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Actions for Plan' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    act(() => bus.layout('split'));
-    expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
-    expect(screen.queryByRole('separator', { name: 'Resize notes and chat' })).not.toBeInTheDocument();
-    if (cancelWith === 'button') fireEvent.click(cancel);
-    else fireEvent(dialog, new Event('cancel', { cancelable: true }));
-    expect(dialog).toHaveTextContent('Cancelling…');
-    expect(cancel).toBeDisabled();
-    expect(summaryCancel).toHaveBeenCalledOnce();
-    expect(old.isEditable).toBe(false);
-    await act(async () => generation.resolve('Late summary'));
-    expect(dialog).not.toBeInTheDocument();
-    expect(summaryCommit).not.toHaveBeenCalled();
-    expect(noteEditor()).toBe(old);
-    expect(old.isEditable).toBe(true);
-  });
-
-  it('lets a pending save finish before closing a cancelled summary without planning', async () => {
-    const saving = deferred<void>();
-    const saveNote = vi.fn(() => saving.promise);
-    const summaryPlan = vi.fn();
-    const summaryCancel = vi.fn();
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [plan],
-      getNote: async id => ({ id, document_id: id, document: noteDocument('Original') }),
-      saveNote, summaryPlan, summaryCancel,
-    })} />);
-    await openNotes();
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
-    await waitFor(() => expect(noteEditor().getText()).toBe('Original'));
-    act(() => typeInNote(' edited'));
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Plan' }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
-    expect(dialog).toHaveTextContent('Saving note…');
-    await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await act(async () => saving.resolve());
-    expect(dialog).not.toBeInTheDocument();
-    expect(summaryPlan).not.toHaveBeenCalled();
-    expect(summaryCancel).not.toHaveBeenCalled();
-    expect(noteEditor().getText()).toBe('Original edited');
-    expect(noteEditor().isEditable).toBe(true);
-  });
-
   it.each([
     ['L1', 'l1', true, false],
     ['L2', 'l2', true, false],
@@ -1407,6 +1337,8 @@ describe('Notes in the application', () => {
     const bus = contextBus();
     const other = { ...plan, id: 5, name: 'Other' };
     let committed = false;
+    const summaryGenerate = vi.fn(() => generation.promise);
+    const summaryFinish = vi.fn(async () => {});
     let body = 'Original';
     const getNote = vi.fn(async (id: number, requested?: NoteTextMode) => {
       const version = target && committed && requested !== 'full_text';
@@ -1415,8 +1347,8 @@ describe('Notes in the application', () => {
     render(<App client={fixtureClient({
       listNoteItems: async () => [plan, other],
       getNote,
-      summaryPlan: async () => ({ notes: [target ? plan : other] }),
-      summaryGenerate: () => generation.promise,
+      summaryStart: async () => ({ notes: [target ? plan : other] }),
+      summaryGenerate, summaryFinish,
       summaryCommit: async () => { committed = true; },
     })} contextEvents={bus} />);
     await openNotes();
@@ -1432,15 +1364,14 @@ describe('Notes in the application', () => {
     const name = target ? 'Plan' : 'Other';
     fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Note summaries' });
-    await within(dialog).findByText(`Summarizing “${name}”…`);
+    await waitFor(() => expect(summaryGenerate).toHaveBeenCalledOnce());
     if (sync) {
       body = 'Synced text';
       act(() => bus.notesChanged());
-      expect(noteEditor()).toBe(old);
+      await screen.findByText(body);
     }
     await act(async () => generation.resolve('Saved version'));
-    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    await waitFor(() => expect(summaryFinish).toHaveBeenCalledOnce());
     if ((target && mode !== 'full_text') || sync) {
       expect(getNote).toHaveBeenCalledExactlyOnceWith(plan.id, mode);
       expect(noteEditor().getText()).toBe(sync ? body : 'Saved version');

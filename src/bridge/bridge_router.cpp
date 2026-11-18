@@ -1487,11 +1487,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     static_cast<std::int64_t>(require_safe_id(params, "id")), part, std::move(source), epoch), true);
                 return;
             }
-            case Method::notes_summary_cancel:
-                require_only_keys(params, {});
-                application.cancel_summary_parts(connection_id, epoch);
-                result = nlohmann::json::object();
-                break;
             case Method::notes_summary_compress:
                 require_only_keys(params, {"id"});
                 start_background(connection_id, id, application.compress_summary_note(connection_id,
@@ -1565,7 +1560,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                                application, method, params, epoch)) {
                     result = std::move(*settings_result);
                 } else if (auto notes_result = dispatch_notes_operation(
-                               application, method, params, epoch)) {
+                               application, connection_id, method, params, epoch)) {
                     result = std::move(*notes_result);
                 } else {
                     fail(ErrorCode::invalid_argument, "That method is not available.");
@@ -1575,7 +1570,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             }
             std::lock_guard lock(mutex);
             auto connection = find_connection(connection_id);
-            if (!connection) return;
+            if (!connection) {
+                // Disconnect may have cleaned up before the batch was admitted.
+                if (method == Method::notes_summary_start) application.release_connection_resources(connection_id);
+                return;
+            }
             finish_request(
                 connection,
                 id,

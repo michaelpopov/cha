@@ -701,51 +701,51 @@ describe('notes native client', () => {
     const plan = { notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: true, has_l2: false }] };
     const excluded = { ...note, summary_excluded: true };
     const handlers = {
-      'notes.summaryPlan': vi.fn(() => plan),
+      'notes.summaryStart': vi.fn(() => plan),
       'notes.summaryGenerate': vi.fn(() => ({ markdown: '**Summary**' })),
       'notes.summaryCommit': vi.fn(() => ({})),
       'notes.summaryAbandon': vi.fn(() => ({})),
-      'notes.summaryCancel': vi.fn(() => ({})),
+      'notes.summaryFinish': vi.fn(() => ({})),
       'notes.summaryCompress': vi.fn(() => ({ compressed: true })),
       'notes.setSummaryExcluded': vi.fn(() => excluded),
     };
     const client = clientFor(handlers);
-    expect(await client.summaryPlan(1)).toEqual(plan);
+    expect(await client.summaryStart(1, client.contextEpoch())).toEqual(plan);
     expect(await client.summaryGenerate(4, 'l1')).toBe('**Summary**');
     expect(await client.summaryGenerate(1, 'l3_overview', '# Draft')).toBe('**Summary**');
     expect(await client.summaryCommit(4, 'l1', document)).toBeUndefined();
     expect(await client.summaryAbandon(1, 'l3')).toBeUndefined();
-    expect(await client.summaryCancel()).toBeUndefined();
+    expect(await client.summaryFinish(client.contextEpoch())).toBeUndefined();
     expect(await client.summaryCompress(4)).toBe(true);
     expect(await client.setNoteSummaryExcluded(4, true)).toEqual(excluded);
 
-    expect(handlers['notes.summaryPlan']).toHaveBeenCalledExactlyOnceWith({ id: 1 });
+    expect(handlers['notes.summaryStart']).toHaveBeenCalledExactlyOnceWith({ id: 1 });
     expect(handlers['notes.summaryGenerate'].mock.calls).toEqual([
       [{ id: 4, part: 'l1' }],
       [{ id: 1, part: 'l3_overview', text: '# Draft' }],
     ]);
     expect(handlers['notes.summaryCommit']).toHaveBeenCalledExactlyOnceWith({ id: 4, part: 'l1', document });
     expect(handlers['notes.summaryAbandon']).toHaveBeenCalledExactlyOnceWith({ id: 1, part: 'l3' });
-    expect(handlers['notes.summaryCancel']).toHaveBeenCalledExactlyOnceWith({});
+    expect(handlers['notes.summaryFinish']).toHaveBeenCalledExactlyOnceWith({});
     expect(handlers['notes.summaryCompress']).toHaveBeenCalledExactlyOnceWith({ id: 4 });
     expect(handlers['notes.setSummaryExcluded']).toHaveBeenCalledExactlyOnceWith({ id: 4, excluded: true });
   });
 
   it('rejects malformed replies to all seven summary methods', async () => {
     const client = clientFor({
-      'notes.summaryPlan': () => ({ notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: 'true', has_l2: false }] }),
+      'notes.summaryStart': () => ({ notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: 'true', has_l2: false }] }),
       'notes.summaryGenerate': () => ({ markdown: 42 }),
       'notes.summaryCommit': () => null,
       'notes.summaryAbandon': () => ({ unexpected: true }),
-      'notes.summaryCancel': () => [],
+      'notes.summaryFinish': () => [],
       'notes.summaryCompress': () => ({ compressed: 'yes' }),
       'notes.setSummaryExcluded': () => ({ ...note, folder_summary: true }),
     });
-    await expect(client.summaryPlan(1)).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryStart(1, client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryGenerate(4, 'l1')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryCommit(4, 'l1', document)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryAbandon(1, 'l3')).rejects.toBeInstanceOf(ChaProtocolError);
-    await expect(client.summaryCancel()).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryFinish(client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryCompress(4)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.setNoteSummaryExcluded(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
   });

@@ -1,5 +1,5 @@
 import {
-  hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent, isSummaryCompressed, isSummaryGenerated, isSummaryPlan,
+  hasExactKeys, isNoteId, isNoteItem, isNoteItemList, isNoteParent, isSummaryCompressed, isSummaryGenerated, isSummaryStartResult,
 } from './noteGuards';
 import { prepareEpubImport } from '../notes/epubImport';
 import { readFileBytes } from '../notes/pictures';
@@ -1065,7 +1065,10 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     abandonSessionSummary: async (runId, reason) => {
       await call('sessionSummary.abandon', { run_id: runId, reason }, isEmptyResult);
     },
-    summaryPlan: id => call('notes.summaryPlan', { id }, isSummaryPlan),
+    summaryStart: (id, epoch) => {
+      const params: components['schemas']['SummaryStartRequest'] = { id };
+      return callInContext('notes.summaryStart', params, epoch, isSummaryStartResult);
+    },
     summaryLine: async (id, finished) => {
       await call('notes.summaryLine', { id, finished }, isEmptyResult);
     },
@@ -1077,8 +1080,8 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
     summaryAbandon: async (id, part) => {
       await call('notes.summaryAbandon', { id, part }, isEmptyResult);
     },
-    summaryCancel: async () => {
-      await call('notes.summaryCancel', {}, isEmptyResult);
+    summaryFinish: async epoch => {
+      await callInContext('notes.summaryFinish', {}, epoch, isEmptyResult);
     },
     summaryCompress: async id => (await call('notes.summaryCompress', { id }, isSummaryCompressed)).compressed,
     setNoteSummaryExcluded: (id, excluded) => call('notes.setSummaryExcluded', { id, excluded }, isNoteItem),

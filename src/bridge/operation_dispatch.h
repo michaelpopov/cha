@@ -22,6 +22,7 @@ namespace cha::bridge {
     std::uint64_t epoch);
 [[nodiscard]] std::optional<nlohmann::json> dispatch_notes_operation(
     app::Application& application,
+    const std::string& connection_id,
     Method method,
     const nlohmann::json& params,
     std::uint64_t epoch);

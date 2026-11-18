@@ -576,7 +576,7 @@ std::shared_ptr<OperationReply> NotesService::compress_summary_note(std::string 
     std::int64_t id, std::uint64_t epoch) {
     auto reply = std::make_shared<OperationReply>();
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    impl_->require_summary_batch(connection_id, epoch);
     const auto source = impl_->compression_source_locked(id, /*skip_ineligible=*/true);
     if (!source) {
         reply->complete({{"compressed", false}});
@@ -599,7 +599,7 @@ std::shared_ptr<OperationReply> NotesService::compress_summary_note(std::string 
     }
     const auto control = std::make_shared<Impl::CompressionControl>();
     control->name = note.name;
-    // One flag: summary Cancel, connection close, and a vault change all stop this request.
+    // Cancel compression and batch cleanup share the same flag.
     auto call = std::make_shared<Impl::SummaryCall>();
     const auto line = impl_->find_note_summary_line(connection_id, id);
     call->connection_id = std::move(connection_id);
@@ -774,9 +774,12 @@ void NotesService::Impl::retire_deleted_compressions_locked(const std::vector<st
     }
 }
 
-nlohmann::json NotesService::summary_plan(std::int64_t id, std::uint64_t epoch) {
+nlohmann::json NotesService::start_summary_batch(std::string connection_id, std::int64_t id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    if (impl_->summary_batch)
+        throw ApplicationError(ErrorCode::invalid_argument,
+            "Summarization is already running for “" + impl_->summary_batch->name + "”.");
     try {
         const auto item = impl_->store->get_note_item(id);
         if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
@@ -802,7 +805,15 @@ nlohmann::json NotesService::summary_plan(std::int64_t id, std::uint64_t epoch) 
                     add_target(note);
             }
         }
-        return {{"notes", std::move(notes)}};
+        if (notes.empty())
+            throw ApplicationError(ErrorCode::invalid_argument, "No eligible notes to summarize.");
+        auto target = note_summary_target(id, item->name, folder);
+        const auto count = notes.size();
+        nlohmann::json result{{"notes", std::move(notes)}};
+        impl_->store->append_event(EventSeverity::info, "Summarization started for " + target + ", "
+            + std::to_string(count) + (count == 1 ? " note." : " notes."));
+        impl_->summary_batch.emplace(Impl::SummaryBatch{std::move(connection_id), epoch, std::move(target), item->name});
+        return result;
     } catch (const NoteError& error) { rethrow_note(error); }
 }
 
@@ -814,7 +825,7 @@ std::shared_ptr<NoteSummaryLine> NotesService::Impl::find_note_summary_line(
 
 void NotesService::summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    impl_->require_summary_batch(connection_id, epoch);
     const auto key = std::pair{std::move(connection_id), id};
     if (!finished) {
         const auto note = impl_->store->get_note_item(id);
@@ -869,7 +880,7 @@ void NotesService::summary_line(std::string connection_id, std::int64_t id, bool
 std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string connection_id,
     std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    impl_->require_summary_batch(connection_id, epoch);
     const auto prompt = summary_prompt(part);
     const bool folder = folder_summary_part(part);
     auto target = note_summary_target(id, "", folder);
@@ -976,9 +987,10 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
 }
 
 void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
-    const nlohmann::json& document, std::uint64_t epoch) {
+    const nlohmann::json& document, std::uint64_t epoch, std::optional<std::string_view> connection_id) {
     std::unique_lock lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    if (connection_id) impl_->require_summary_batch(*connection_id, epoch);
+    else impl_->require_admitted(epoch);
     if (part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
         throw ApplicationError(ErrorCode::invalid_argument);
     const bool folder = folder_summary_part(part);
@@ -1006,9 +1018,10 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
     } catch (...) { log_warn("Could not deliver summary audio notification."); }
 }
 
-void NotesService::abandon_summary_part(std::int64_t id, SummaryPart part, std::uint64_t epoch) {
+void NotesService::abandon_summary_part(std::string_view connection_id,
+    std::int64_t id, SummaryPart part, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
+    impl_->require_summary_batch(connection_id, epoch);
     if (part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
         throw ApplicationError(ErrorCode::invalid_argument);
     try {
@@ -1031,10 +1044,19 @@ void NotesService::Impl::cancel_summary_calls(std::optional<std::string_view> co
     });
 }
 
-void NotesService::cancel_summary_parts(std::string_view connection_id, std::uint64_t epoch) {
+void NotesService::Impl::require_summary_batch(std::string_view connection_id, std::uint64_t epoch) const {
+    require_admitted(epoch);
+    if (!summary_batch || summary_batch->connection_id != connection_id || summary_batch->epoch != epoch)
+        throw ApplicationError(ErrorCode::operation_cancelled, "The summarization batch ended.");
+}
+
+void NotesService::finish_summary_batch(std::string_view connection_id, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    if (!impl_->summary_batch || impl_->summary_batch->connection_id != connection_id
+        || impl_->summary_batch->epoch != epoch) return;
     impl_->cancel_summary_calls(connection_id);
+    impl_->retire_summary_batch("finished");
 }
 
 NoteItem NotesService::set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch) {
@@ -1333,8 +1355,20 @@ void NotesService::Impl::retire_summary(const FullSessionId& identity, const std
     } catch (...) { log_warn("Could not record summary outcome."); }
 }
 
+void NotesService::Impl::retire_summary_batch(std::string_view outcome) noexcept {
+    auto batch = std::move(*summary_batch);
+    summary_batch.reset();
+    if (published_epoch.load() != batch.epoch) return;
+    try {
+        store->append_event(EventSeverity::info,
+            "Summarization " + std::string(outcome) + " for " + batch.target + ".");
+    } catch (...) { log_warn("Could not record summarization outcome."); }
+}
+
 void NotesService::cancel_summaries_locked(std::optional<std::string_view> connection_id) {
     impl_->cancel_summary_calls(connection_id);
+    if (impl_->summary_batch && (!connection_id || impl_->summary_batch->connection_id == *connection_id))
+        impl_->retire_summary_batch("cancelled");
     for (auto it = impl_->summaries.begin(); it != impl_->summaries.end();) {
         const auto [identity, run] = *it++;
         if (!connection_id || run->connection_id == *connection_id)

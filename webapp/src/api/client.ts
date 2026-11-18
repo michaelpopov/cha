@@ -99,7 +99,7 @@ export type FolderStoreOperation = components['schemas']['FolderStoreOperation']
 export type ActivityEvent = components['schemas']['ActivityEvent'];
 export type ActivityEventList = components['schemas']['ActivityEventList'];
 export type NoteContent = components['schemas']['NoteContent'];
-export type SummaryPlan = components['schemas']['SummaryPlan'];
+export type SummaryStartResult = components['schemas']['SummaryStartResult'];
 export type SummaryTarget = components['schemas']['SummaryTarget'];
 export type SummaryGenerated = components['schemas']['SummaryGenerated'];
 export type SummaryCompressed = components['schemas']['SummaryCompressed'];
@@ -211,12 +211,12 @@ export interface NotesClient {
   compressNote: (id: number, epoch: number, skipIneligible?: boolean) => Promise<NoteCompressionStartResult>;
   compressionStatus: (id: number, epoch: number) => Promise<NoteCompressionStatus>;
   cancelCompression: (id: number, epoch: number) => Promise<void>;
-  summaryPlan(id: number): Promise<SummaryPlan>;
+  summaryStart(id: number, epoch: number): Promise<SummaryStartResult>;
   summaryLine(id: number, finished: boolean): Promise<void>;
   summaryGenerate(id: number, part: SummaryGeneratePart, text?: string): Promise<string>;
   summaryCommit(id: number, part: SummaryCommitPart, document: Record<string, unknown>): Promise<void>;
   summaryAbandon(id: number, part: SummaryCommitPart): Promise<void>;
-  summaryCancel(): Promise<void>;
+  summaryFinish(epoch: number): Promise<void>;
   // Resolves true when it saved a new Compressed version.
   summaryCompress(id: number): Promise<boolean>;
   setNoteSummaryExcluded(id: number, excluded: boolean): Promise<NoteItem>;

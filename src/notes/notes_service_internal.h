@@ -125,6 +125,16 @@ struct NotesService::Impl {
     void remove_summary_call(const std::shared_ptr<SummaryCall>& call);
     void cancel_summary_calls(std::optional<std::string_view> connection_id);
 
+    struct SummaryBatch {
+        std::string connection_id;
+        std::uint64_t epoch;
+        std::string target;
+        std::string name;
+    };
+    std::optional<SummaryBatch> summary_batch;
+    void require_summary_batch(std::string_view connection_id, std::uint64_t epoch) const;
+    void retire_summary_batch(std::string_view outcome) noexcept;
+
     struct SummaryRun {
         std::int64_t run_id{};
         std::string connection_id;

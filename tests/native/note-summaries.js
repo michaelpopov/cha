@@ -1,5 +1,5 @@
-// Real host smoke test with the local provider in test-note-summaries.py.
-async function nativeParity() {
+// Runs in the instrumented production host against the fake provider.
+async function nativeParity(scenario) {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   const until = async (label, condition) => {
     const deadline = Date.now() + 10000;
@@ -18,94 +18,133 @@ async function nativeParity() {
   })).click();
   const row = name => [...document.querySelectorAll('[role="treeitem"]')].find(node => node.getAttribute('aria-label') === name);
   const editor = () => document.querySelector('.cha-notes-document .ProseMirror')?.chaEditor;
+  const messageBox = () => document.querySelector('textarea[aria-label="Message"]:not(:disabled)');
   const action = async (name, label) => {
     const actionsMenu = () => document.querySelector('.cha-session-menu[role="menu"]');
     await click('Actions for ' + name, row(name));
     await click(label, await until('actions menu for ' + name, actionsMenu));
     await until('actions menu closed', () => !actionsMenu());
   };
-  const completed = [];
-  const dialog = () => document.querySelector('dialog[aria-label="Note summaries"][open]');
-  const progress = text => until(text, () => dialog()?.innerText.includes(text) && dialog());
-  const finish = () => until('summary dialog closed', () => !dialog());
   const select = async name => (await until(name, () => row(name))).click();
-  const mode = async name => {
+  const mode = async (name, shown = name) => {
     await click('Note text mode');
     const menu = await until('text mode menu', () => document.querySelector('[role="menu"][aria-label="Note text mode"]'));
     await click(name, menu);
-    await until(name + ' mode loaded', () => button('Note text mode')?.title === name + ' mode; showing ' + name);
+    await until(name + ' mode loaded', () => button('Note text mode')?.title === name + ' mode; showing ' + shown);
   };
   const summaryText = version => until('Summary version ' + version, () => {
     const current = editor();
     return current?.getText().includes('Overview result ' + version) && current;
   });
+  const held = name => until(name, async () => (await fetch('/' + name, { cache: 'no-store' })).ok);
+  const openEvents = async () => {
+    await click('Settings');
+    await click('Events');
+  };
+  const event = prefix => until(prefix, () => [...document.querySelectorAll('.cha-event-message')]
+    .find(node => node.textContent.startsWith(prefix)));
+  const finish = n => held('batch-finished-' + n);
 
-  try {
-    await until('startup', () => document.querySelector('textarea[aria-label="Message"]:not(:disabled)'));
+  await until('startup', messageBox);
+  if (scenario === 'reopen' || scenario === 'reopen-final') {
+    await openEvents();
+    await event('Summarization cancelled for “Book”');
     await click('Notes');
-    await select('Single');
-    await until('editable note', () => editor()?.isEditable);
-    await action('Single', 'Summarize');
-    const single = await progress('Summarizing “Single”…');
-    check(document.activeElement === button('Cancel', single), 'Cancel did not receive focus');
-    check(editor()?.isEditable === false, 'Expected a read-only editor during summary generation');
-    await finish();
-    await mode('L1');
-    await until('L1 text', () => editor()?.getText() === 'L1 result');
-    await mode('L2');
-    await until('L2 text', () => editor()?.getText().includes('L2 result'));
-    const [title] = editor().getJSON().content;
-    check(title.type === 'heading' && title.content.map(child => child.text).join('') === 'Single', 'L2 title is missing');
-    check(editor().getJSON().content.some(node => node.type === 'bulletList'), 'L2 list was lost');
-    check(editor().getText().includes('Key\tValue\n\nColor\tBlue'), 'L2 table did not become plain text rows');
-    completed.push('single-note dialog and L1/L2 editor modes');
-
     await select('Book');
-    await action('Book', 'Summarize');
-    // Both notes start at the same time, so the dialog shows the last started note.
-    await progress('Note 2 of 2');
-    await finish();
     await select('Summary');
-    const first = await summaryText(1);
-    const headings = first.getJSON().content.filter(node => node.type === 'heading')
-      .map(node => node.content.map(child => child.text).join(''));
-    check(headings.join('|') === 'Book|A First chapter|B Second chapter', 'Unexpected Summary headings: ' + headings);
-    for (const name of headings.slice(1)) {
-      check(row(name)?.querySelector('[aria-label="Other versions saved"]'), 'Missing version dot for ' + name);
-    }
-    completed.push('folder progress, Summary headings, and version dots');
+    await summaryText(scenario === 'reopen' ? 2 : 3);
+    return;
+  }
 
-    await action('Book', 'Summarize');
-    await progress('Note 2 of 2');
-    await finish();
-    const second = JSON.stringify((await summaryText(2)).getJSON());
-    completed.push('folder Summary refreshed');
-
-    await action('Book', 'Summarize');
-    const delayed = await progress('Note 2 of 2');
-    await until('provider holding the section request', async () =>
-      (await fetch('/summary-request-held', { cache: 'no-store' })).ok);
-    await click('Cancel', delayed);
-    await finish();
-    await select('A First chapter');
-    await until('chapter opened', () => row('A First chapter')?.getAttribute('aria-current') === 'true'
-      && editor()?.getText().includes('L2 result'));
-    await select('Summary');
-    check(JSON.stringify((await summaryText(2)).getJSON()) === second, 'Cancellation changed the Summary note');
-    completed.push('folder cancellation preserved the Summary');
-
-    window.__CHA_NATIVE_SET_LAYOUT__('split');
-    const message = await until('chat composer', () => document.querySelector('textarea[aria-label="Message"]:not(:disabled)'));
-    const send = async text => {
-      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(message, text);
-      message.dispatchEvent(new Event('input', { bubbles: true }));
-      await click('Send message');
+  await click('Notes');
+  if (scenario === 'retry') {
+    await action('Single', 'Summarize');
+    await held('retry-backoff');
+    return;
+  }
+  if (scenario === 'between-steps' || scenario === 'final-commit') {
+    let pendingReply = false;
+    let overviewDelivered = false;
+    const receive = window.__CHA_NATIVE_RECEIVE__;
+    window.__CHA_NATIVE_RECEIVE__ = batch => {
+      const messages = batch.messages.filter(message => {
+        if (!message.ok || !message.result || pendingReply) return true;
+        if (scenario === 'between-steps') {
+          pendingReply = message.result.markdown === 'L1 result between steps';
+        } else {
+          pendingReply = overviewDelivered && Object.keys(message.result).length === 0;
+          if (message.result.markdown === 'Overview result 3') overviewDelivered = true;
+        }
+        return !pendingReply;
+      });
+      receive({ ...batch, messages });
     };
-    await send('##000001');
-    await until('note attached', () => document.body.innerText.includes('Added note “Single” to this chat.'));
-    await send('Check the attached note.');
-    await until('chat reply', () => document.body.innerText.includes('Attachment received.'));
-    completed.push('summarized note attached to chat');
-    return { ok: true, completed };
-  } catch (error) { return { ok: false, completed, reason: String(error) }; }
+    if (scenario === 'final-commit') await select('Book');
+    await action(scenario === 'between-steps' ? 'Single' : 'Book', 'Summarize');
+    // Keep delivery acknowledgements flowing so close negotiation still runs.
+    await until(scenario + ' reply held', () => pendingReply);
+    return;
+  }
+
+  await select('Single');
+  await until('editable note', () => editor()?.isEditable);
+  await action('Single', 'Summarize');
+  await held('single-request-held');
+  check(!document.querySelector('dialog[open]'), 'Summarize opened a dialog');
+  check(editor()?.isEditable, 'Editor was frozen by the summary request');
+  await select('Foreground');
+  await until('unrelated note opened', () => editor()?.isEditable && editor().getText() === 'Foreground original');
+  editor().commands.insertContent(' Foreground edit');
+  await mode('L1', 'full text');
+  window.__CHA_NATIVE_SET_LAYOUT__('split');
+  await until('split layout', () => editor() && messageBox());
+  window.__CHA_NATIVE_SET_LAYOUT__('single');
+  await until('single layout', () => editor() && !messageBox());
+  await openEvents();
+  await event('Summarization started for “Single”');
+  await click('Chat');
+  const send = async text => {
+    const message = await until('chat composer', messageBox);
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(message, text);
+    message.dispatchEvent(new Event('input', { bubbles: true }));
+    await click('Send message');
+  };
+  await send('##000001');
+  await until('note attached', () => document.body.innerText.includes('Added note “Single” to this chat.'));
+  await send('Check the attached note.');
+  const message = await until('chat composer', messageBox);
+  message.focus();
+  await until('chat reply', () => document.body.innerText.includes('Attachment received.'));
+  await finish(1);
+  check(document.activeElement === messageBox(), 'Summary completion moved focus out of Chat');
+
+  await click('Notes');
+  await select('Single');
+  await until('L1 text', () => editor()?.getText() === 'L1 result');
+  await mode('L2');
+  await until('L2 text', () => editor()?.getText().includes('L2 result'));
+  const [title] = editor().getJSON().content;
+  check(title.type === 'heading' && title.content.map(child => child.text).join('') === 'Single', 'L2 title is missing');
+  check(editor().getJSON().content.some(node => node.type === 'bulletList'), 'L2 list was lost');
+  check(editor().getText().includes('Key\tValue\n\nColor\tBlue'), 'L2 table did not become plain text rows');
+
+  await select('Book');
+  await action('Book', 'Summarize');
+  await finish(2);
+  await select('Summary');
+  const first = await summaryText(1);
+  const headings = first.getJSON().content.filter(node => node.type === 'heading')
+    .map(node => node.content.map(child => child.text).join(''));
+  check(headings.join('|') === 'Book|A First chapter|B Second chapter', 'Unexpected Summary headings: ' + headings);
+  for (const name of headings.slice(1)) {
+    check(row(name)?.querySelector('[aria-label="Other versions saved"]'), 'Missing version dot for ' + name);
+  }
+  await action('Book', 'Summarize');
+  await finish(3);
+  await summaryText(2);
+
+  await action('C Excluded', 'Exclude from summaries');
+  await action('Book', 'Summarize');
+  await held('summary-request-held');
+  // The test host now calls NSApp.terminate, which negotiates with the editor.
 }
