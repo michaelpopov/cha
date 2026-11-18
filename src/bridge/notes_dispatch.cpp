@@ -159,6 +159,10 @@ std::optional<nlohmann::json> dispatch_notes_operation(
         return nlohmann::json{{"id", application.import_note_book(
             require_parent_id(params), require_string(params, "name"), notes, epoch)}};
     }
+    case Method::notes_select:
+        require_only_keys(params, {"id"});
+        application.select_note(require_note_id(params), epoch);
+        return nlohmann::json::object();
     case Method::notes_get: {
         auto mode = NoteTextMode::full_text;
         if (params.contains("mode")) {

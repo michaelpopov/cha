@@ -236,9 +236,9 @@ export type AppAction =
   | { type: 'show-chat-tab' }
   | { type: 'show-notes-tab' }
   | { type: 'open-note'; noteId: number; mode?: NoteTextMode; destination?: AnnotationDestination; importSource?: NoteImportSource }
-  | { type: 'set-note-text-mode'; mode: NoteTextMode; noteId: number | null }
+  | { type: 'set-note-text-mode'; mode: NoteTextMode }
   | { type: 'reload-note' }
-  | { type: 'close-note' }
+  | { type: 'close-note'; noteId?: number }
   | { type: 'toggle-picture' }
   | { type: 'toggle-notes-toolbar' }
   | { type: 'set-notes-font-size'; size: number }
@@ -490,18 +490,13 @@ function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, open
   return snapshot.characters.some(({ id }) => id === selected) ? selected : null;
 }
 
-function releaseClosedNote(previous: AppState, state: AppState, action: AppAction): AppState {
-  const { notesVisible, chatVisible } = workspaceVisibility(state);
-  if (notesVisible) return state;
+function releaseClosedNote(state: AppState): AppState {
+  if (workspaceVisibility(state).notesVisible) return state;
   // A hidden editor reloads at its saved scroll position when it returns.
   if (state.noteDestination !== undefined || state.noteImportSource !== undefined) {
-    state = { ...state, noteDestination: undefined, noteImportSource: undefined };
+    return { ...state, noteDestination: undefined, noteImportSource: undefined };
   }
-  if (state.activeNoteId === null) return state;
-  const leftVisibleNote = workspaceVisibility(previous).notesVisible
-    && action.type !== 'set-layout' && action.type !== 'show-chat-tab';
-  if (chatVisible && !leftVisibleNote) return state;
-  return { ...state, activeNoteId: null };
+  return state;
 }
 
 function reduceApp(state: AppState, action: AppAction): AppState {
@@ -520,6 +515,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         bootstrapStatus: 'ready',
         bootstrap: action.bootstrap,
         bootstrapMessage: null,
+        activeNoteId: action.bootstrap.current_note_id ?? null,
       }, action.bootstrap);
     case 'bootstrap-failed':
       return {
@@ -551,6 +547,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         ...updated,
         mainView: state.mainView,
         bootstrap: action.bootstrap,
+        activeNoteId: action.bootstrap.current_note_id ?? null,
         inspectedVaultName: state.mainView === 'settings-vault'
           && state.inspectedVaultName === state.bootstrap?.vault_name
           ? action.bootstrap.vault_name : state.inspectedVaultName,
@@ -605,13 +602,13 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         noteTextMode: action.type === 'set-note-text-mode' ? action.mode : state.noteTextMode,
-        activeNoteId: action.type === 'set-note-text-mode' ? action.noteId : state.activeNoteId,
         noteDestination: undefined,
         noteImportSource: undefined,
         noteRequest: state.noteRequest + 1,
         noteAutoFocus: false,
       };
     case 'close-note':
+      if (action.noteId !== undefined && state.activeNoteId !== action.noteId) return state;
       return { ...state, activeNoteId: null, noteDestination: undefined, noteImportSource: undefined };
     case 'show-personas':
       return {
@@ -1281,7 +1278,7 @@ function reduceSessionActivity(state: AppState, action: AppAction): readonly Ses
 }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
-  const next = releaseClosedNote(state, reduceApp(state, action), action);
+  const next = releaseClosedNote(reduceApp(state, action));
   const activity = reduceSessionActivity(next, action);
   // Keep the same array when nothing changed. Background checks restart on a new one.
   if (activity.length === next.sessionActivity.length

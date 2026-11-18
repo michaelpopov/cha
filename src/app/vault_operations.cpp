@@ -1043,6 +1043,7 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
         }
         app.current_vault_.set(selected);
         app.command.vault = selected;
+        app.clear_current_note();
         try {
             // Migration edits the store and takes its lock again.
             // Keep application maintenance active, but release the
@@ -1316,6 +1317,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
             const auto transferred = download_database_from_r2(
                 active.data, active.source, r2, R2DatabaseLease::already_held,
                 app.active_password, [this] { return app.shutdown_requested(); }, before_install);
+            app.clear_current_note();
             downloaded_vault = load_vault_definition_file(app.command.config_directory, active.source);
             vault::assign_vault_paths(*downloaded_vault, app.command);
             const auto configured = std::find_if(

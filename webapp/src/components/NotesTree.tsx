@@ -325,6 +325,12 @@ export function NotesTree({
     if (browsing) requestBackgroundRefresh();
   }, [browsing]);
 
+  useEffect(() => {
+    if (!browsing && activeNoteId !== null && !loadedRef.current && !listingRef.current) {
+      requestBackgroundRefresh();
+    }
+  }, [activeNoteId, browsing]);
+
   function retryList() {
     const gen = ++generation.current;
     void runList(gen);

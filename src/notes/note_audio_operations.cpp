@@ -54,7 +54,7 @@ std::optional<std::chrono::sys_time<std::chrono::microseconds>> batch_time(
         + seconds{tm.tm_sec} + microseconds{micros};
 }
 
-std::string batch_event_details(const nlohmann::json& operation, const NoteAudioUsage& usage,
+std::string batch_log_details(const nlohmann::json& operation, const NoteAudioUsage& usage,
     std::size_t requests, bool google) {
     using namespace std::chrono;
     const auto metadata = operation.find("metadata");
@@ -365,11 +365,13 @@ void NotesService::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t 
     const auto block_count = static_cast<std::size_t>(attempt.clip_count);
     const bool google = google_note_audio_service(attempt.service_origin);
     const auto retire = [&](EventSeverity severity, const std::string& message) {
-        const auto details = attempt.batch_id ? batch_event_details(operation, usage, block_count, google) : std::string{};
+        const auto details = attempt.batch_id ? batch_log_details(operation, usage, block_count, google) : std::string{};
         retry([&] {
             const std::lock_guard lock(lifecycle_mutex);
             check();
-            return store->retire_note_audio(attempt.id, severity, message + details);
+            const bool retired = store->retire_note_audio(attempt.id, severity, message);
+            if (retired && !details.empty()) log_info(message + details);
+            return retired;
         }, true);
     };
     try {
@@ -418,13 +420,17 @@ void NotesService::Impl::run_note_audio(NoteAudioAttempt attempt, std::uint64_t 
             retry([&] { download_note_audio(credentials, operation, block_count, temporary->path, *cancel); }, false);
             step = "conversion";
             auto clips = retry([&] { return process_note_audio(block_count, temporary->path, *cancel, usage); }, false);
-            const auto details = batch_event_details(operation, usage, block_count, google);
+            const auto details = batch_log_details(operation, usage, block_count, google);
             step = "save";
             retry([&] {
                 const std::lock_guard lock(lifecycle_mutex);
                 check();
-                if (store->finish_note_audio(attempt.id, clips, details) && note_audio_changed)
-                    note_audio_changed(attempt.note_id, epoch); // Enqueue only, while commit/source reads are serialized.
+                if (store->finish_note_audio(attempt.id, clips)) {
+                    log_info("Audio ready for " + note_audio_target(attempt) + ": "
+                        + std::to_string(attempt.clip_count) + " clips saved." + details);
+                    if (note_audio_changed)
+                        note_audio_changed(attempt.note_id, epoch); // Enqueue only, while commit/source reads are serialized.
+                }
                 return true;
             }, true);
         }

@@ -95,7 +95,8 @@ public:
     void start_turn(RequestId request_id, const TranscriptEntry& prompt);
     void record_entry(const TranscriptEntry& entry);
     // Stores the note copy and its notice in one transaction.
-    [[nodiscard]] TranscriptEntry add_note(const NoteText& note, EntryId entry_id);
+    [[nodiscard]] std::optional<TranscriptEntry> add_note(
+        const NoteText& note, EntryId entry_id, bool skip_unchanged = false);
     [[nodiscard]] TranscriptEntry add_text_file(
         std::string_view name, std::string_view text, EntryId entry_id);
     // Persistent attach rechecks that the folder exists on this journal

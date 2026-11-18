@@ -2106,7 +2106,7 @@ bool note_audio_register(storage::SqliteDatabase& database, std::int64_t attempt
 }
 
 bool note_audio_finish(storage::SqliteDatabase& database, std::int64_t attempt_id,
-    const std::vector<std::filesystem::path>& clips, std::string_view event_details) {
+    const std::vector<std::filesystem::path>& clips) {
     storage::SqliteTransaction transaction(database);
     const auto attempt = note_audio_attempt_by_id(database, attempt_id);
     if (!attempt) return false;
@@ -2114,7 +2114,7 @@ bool note_audio_finish(storage::SqliteDatabase& database, std::int64_t attempt_i
         throw NoteError(NoteFailure::invalid, "Incomplete audio batch.");
     save_audio_in_transaction(database, attempt->note_id, clips);
     event_append_in_transaction(database, EventSeverity::success, "Audio ready for " + note_audio_target(*attempt)
-        + ": " + std::to_string(attempt->clip_count) + " clips saved." + std::string(event_details));
+        + ": " + std::to_string(attempt->clip_count) + " clips saved.");
     database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
     transaction.commit();
     return true;

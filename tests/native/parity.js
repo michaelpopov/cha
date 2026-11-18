@@ -106,6 +106,8 @@ async function nativeParity() {
     await rpc('session.open', identity);
     const persisted = await rpc('session.snapshot', identity);
     check(persisted.session_label === 'Renamed parity', 'renamed session did not persist');
+    const note = await rpc('notes.create', {parent_id: null, kind: 'note', name: 'Current note parity'});
+    await rpc('notes.select', {id: note.id});
     const other = await rpc('session.create', {forum_id: 'lobby', label: 'Navigation'});
     for (let i = 0; i < 12; ++i) {
       const selected = {...identity, session_id: i % 2 ? created.id : other.id};
@@ -113,6 +115,11 @@ async function nativeParity() {
       check((await rpc('session.snapshot', selected)).session_id === selected.session_id,
         'rapid selection restored the wrong conversation');
     }
+    check((await rpc('app.bootstrap')).bootstrap.current_note_id === note.id,
+      'opening another conversation cleared the current note');
+    await rpc('notes.delete', {id: note.id});
+    check(!('current_note_id' in (await rpc('app.bootstrap')).bootstrap),
+      'deleting the current note did not clear the selection');
     const character = await rpc('character.create', {display_name: 'Parity guide', description: 'Test'});
     const persona = await rpc('persona.create', {display_name: 'Parity narrator'});
     const forum = await rpc('forum.create', {display_name: 'Parity room', persona_id: persona.id});

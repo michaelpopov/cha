@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch } from 'react';
 
-import { ChaError, publicErrorMessage, type ChaClient } from './api/client';
+import { ChaError, publicErrorMessage, type ChaClient, type NotesClient } from './api/client';
 import type { SessionEventConnection, SessionEventHandlers } from './api/events';
 import type { LeaveNoteThen } from './notes/useNoteLeave';
 import {
@@ -75,12 +75,13 @@ interface LiveSessionOptions {
   onSessionDiscarded?(): void;
   onWelcomeRefresh?(): void;
   onConversationOpened?(forumId: string, sessionId: string): void;
+  onNoteOpenError?(message: string): void;
   leaveNoteThen?: LeaveNoteThen;
   navigationBlocked?(): boolean;
 }
 
 export function useLiveSession(
-  client: ChaClient,
+  client: ChaClient & Pick<NotesClient, 'selectNote'>,
   state: AppState,
   dispatch: Dispatch<AppAction>,
   {
@@ -90,6 +91,7 @@ export function useLiveSession(
     onSessionDiscarded,
     onWelcomeRefresh,
     onConversationOpened,
+    onNoteOpenError,
     leaveNoteThen = passthroughLeave,
     navigationBlocked = neverBlockNavigation,
   }: LiveSessionOptions,
@@ -261,9 +263,21 @@ export function useLiveSession(
       if (!(splitWorkspace && action.type === 'open-note')) beginNavigation();
       dispatch(action);
     };
-    if (splitWorkspace && (action.type === 'show-chat' || action.type === 'show-initial-conversation')) commit();
+    if (action.type === 'open-note') {
+      void leaveRef.current(async () => {
+        if (vaultContext.current !== context) return false;
+        try {
+          await client.selectNote(action.noteId);
+        } catch (failure: unknown) {
+          if (vaultContext.current === context)
+            onNoteOpenError?.(publicErrorMessage(failure, 'The note could not be opened.'));
+          return false;
+        }
+        return commit();
+      }, { holdAction: true });
+    } else if (splitWorkspace && (action.type === 'show-chat' || action.type === 'show-initial-conversation')) commit();
     else void leaveRef.current(commit);
-  }, [beginNavigation, dispatch, navigationBlocked, splitWorkspace]);
+  }, [beginNavigation, client, dispatch, navigationBlocked, onNoteOpenError, splitWorkspace]);
 
   // Welcome and deletion also discard the last open target.
   const clearLiveSession = useCallback(() => {

@@ -167,6 +167,7 @@ enum class Method {
     notes_create,
     notes_import_book,
     notes_get,
+    notes_select,
     notes_read_page,
     notes_read_text_file,
     notes_read_picture,

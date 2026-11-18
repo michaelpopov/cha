@@ -789,7 +789,7 @@ export function App({
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
     disposeEditor: () => {
       disposeEditorRef.current();
-      dispatch({ type: 'close-note' });
+      dispatch({ type: 'reload-note' });
     },
   });
   const closeHost = useRef(noteLeave);
@@ -864,6 +864,14 @@ export function App({
     disposeEditorRef.current = dispose;
   }, []);
   const [noteItems, setNoteItems] = useState<NoteItem[]>([]);
+  const updateNoteItems = useCallback((items: NoteItem[]) => {
+    const id = activeNoteIdRef.current;
+    if (id !== null && !items.some(item => item.id === id) && noteItems.some(item => item.id === id)) {
+      noteSaveRef.current?.dispose();
+      dispatch({ type: 'close-note', noteId: id });
+    }
+    setNoteItems(items);
+  }, [noteItems]);
   const [noteActions, setNoteActions] = useState<NoteActions | null>(null);
   const noteActionsRef = useRef(noteActions);
   noteActionsRef.current = noteActions;
@@ -913,6 +921,7 @@ export function App({
     retryDelays,
     refreshBootstrap,
     onSessionDiscarded: sessionDiscarded,
+    onNoteOpenError: reportBackgroundError,
     onWelcomeRefresh: () => { void refreshAfterWelcome(); },
     onConversationOpened: (forumId, sessionId) => {
       setDrafts((current) => adoptChatDraft(
@@ -935,10 +944,9 @@ export function App({
   const changeNoteTextMode = useCallback((mode: NoteTextMode) => {
     if (mode === state.noteTextMode || compressionRun.current) return;
     const context = vaultContext.current;
-    const noteId = activeNoteIdRef.current;
     void noteLeave.leaveNoteThen(() => {
       if (vaultContext.current !== context) return false;
-      dispatch({ type: 'set-note-text-mode', mode, noteId });
+      dispatch({ type: 'set-note-text-mode', mode });
     });
   }, [noteLeave.leaveNoteThen, state.noteTextMode]);
 
@@ -1389,14 +1397,47 @@ export function App({
   const submitInput = useCallback(async (text: string, usage?: VoiceInputUsage[]) => {
     const active = state.activeConversation;
     if (!active) throw new Error('No live conversation is selected.');
-    noteWelcomeSubmission(active.forumId, active.sessionId);
-    if (text.trim()) retainSession(active.forumId, active.sessionId);
+    const epoch = client.contextEpoch();
+    const context = notesCancellation.current.signal;
+    const checkContext = () => {
+      if (context.aborted || client.contextEpoch() !== epoch)
+        throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
+    };
     const visit = composerVisit.current;
     const forumName = state.sessionSnapshot?.forum.display_name
       ?? state.bootstrap?.forums.find((forum) => forum.id === active.forumId)?.display_name
       ?? active.forumId;
     const sessionName = state.activeConversationLabel ?? active.sessionId;
     try {
+      const save = noteSaveRef.current;
+      if (save?.isOpen && (save.hasUnsaved() || save.inFlightSerial() !== null)) {
+        if (!noteLeave.beginNoteAction())
+          throw new ChaError('invalid_argument', 'A notes action is already in progress.');
+        const notesEpoch = notesEpochRef.current;
+        const noteId = activeNoteIdRef.current;
+        let canceled = false;
+        let flushed = false;
+        try {
+          canceled = save.freeze();
+          const admitted = save.inFlightSerial();
+          await save.waitInFlight();
+          checkContext();
+          if (admitted !== null && save.saveError?.serial === admitted)
+            throw new ChaError('internal_error', save.saveError.message);
+          flushed = true;
+          if (!await save.flushRemaining())
+            throw new ChaError('internal_error', save.saveError?.message ?? 'The note could not be saved.');
+        } finally {
+          if (save.isOpen && notesEpochRef.current === notesEpoch && activeNoteIdRef.current === noteId) {
+            save.unfreeze();
+            if (canceled && !flushed && !context.aborted) save.submitNow();
+          }
+          noteLeave.endNoteAction();
+        }
+      }
+      checkContext();
+      noteWelcomeSubmission(active.forumId, active.sessionId);
+      if (text.trim()) retainSession(active.forumId, active.sessionId);
       return await runMutation(active, 'submit', () => client.submitInput(active.forumId, active.sessionId, {
         text, ...(usage && { voice_input_usage: usage }),
       }));
@@ -1410,7 +1451,8 @@ export function App({
       }
       throw failure;
     }
-  }, [client, noteWelcomeSubmission, retainSession, runMutation, state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
+  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, noteWelcomeSubmission, retainSession, runMutation,
+    state.activeConversation, state.activeConversationLabel, state.sessionSnapshot, state.bootstrap]);
 
   const attachTextFile = useCallback((file: TextFileRequest) => {
     const active = state.activeConversation;
@@ -1545,17 +1587,13 @@ export function App({
   const visibility = workspaceVisibility(state);
   const chatVisible = ready && visibility.chatVisible;
   const notesVisible = ready && visibility.notesVisible;
-  const windowItemName = ready && state.mainView === 'notes'
-    ? noteItems.find(({ id }) => id === state.activeNoteId)?.name
-    : ready && state.mainView === 'chat' && state.sessionOperation === 'idle'
-      ? state.activeConversationLabel : null;
+  const windowChatName = ready && state.sessionOperation === 'idle' ? state.activeConversationLabel : null;
+  const windowNoteName = ready ? noteItems.find(({ id }) => id === state.activeNoteId)?.name : null;
 
   useEffect(() => {
-    const vaultName = state.bootstrap?.vault_name;
-    document.title = vaultName
-      ? `CHA: ${vaultName}${windowItemName ? ` — ${windowItemName}` : ''}`
-      : 'CHA';
-  }, [state.bootstrap?.vault_name, windowItemName]);
+    const parts = [windowChatName, windowNoteName].filter(Boolean);
+    document.title = parts.length ? `CHA: ${parts.join(' — ')}` : 'CHA';
+  }, [windowChatName, windowNoteName]);
 
   const detailRefresh = {
     epoch: detailEpoch,
@@ -1598,7 +1636,7 @@ export function App({
                 onSummarize={summarizeNotes}
                 compressionInProgress={compressionInProgress}
                 onSetNoteReadOnly={setNoteReadOnly}
-                onNoteItems={setNoteItems}
+                onNoteItems={updateNoteItems}
                 onSourceChanged={sourceChanged}
                 onOpenNote={requestOpenNote}
                 vaultName={state.bootstrap?.vault_name ?? ''}

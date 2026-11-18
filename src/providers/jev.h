@@ -25,12 +25,15 @@ struct JevRequestInput {
     std::vector<JevOption> characters;
     std::chrono::steady_clock::time_point deadline{
         std::chrono::steady_clock::time_point::max()};
+    bool ask_recipient{true};
+    std::optional<std::string> current_note_name;
 };
 enum class JevOutcome { success, cancelled, failure };
 struct JevResult {
     JevOutcome outcome{JevOutcome::failure};
     std::string choice;
     std::string message;
+    bool use_current_note{};
 };
 using JevExecutor = std::function<JevResult(const JevRequestInput&, const std::atomic_bool&)>;
 

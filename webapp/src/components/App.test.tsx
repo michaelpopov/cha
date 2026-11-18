@@ -1652,13 +1652,13 @@ it.each(['Garden planning', 'New session'])(
   act(() => stream.onSnapshot({
     ...lobbySnapshot('created', sessionLabel), recent_pending: true,
   }));
-  expect(document.title).toBe(`CHA: Personal — ${sessionLabel}`);
+  expect(document.title).toBe(`CHA: ${sessionLabel}`);
   expect(getBootstrap).toHaveBeenCalledTimes(2);
   getBootstrap.mockResolvedValue(refreshed);
   act(() => stream.onSnapshot(lobbySnapshot('created', finalLabel)));
   expect(await screen.findByRole('button', { name: `${finalLabel}The Lobby` }))
     .toHaveAttribute('aria-current', 'page');
-  await waitFor(() => expect(document.title).toBe(`CHA: Personal — ${finalLabel}`));
+  await waitFor(() => expect(document.title).toBe(`CHA: ${finalLabel}`));
   await act(async () => finishPendingRefresh(bootstrapFixture));
   expect(screen.getByRole('button', { name: `${finalLabel}The Lobby` }))
     .toHaveAttribute('aria-current', 'page');
@@ -2119,7 +2119,7 @@ it.each(['session_stopping', 'session_open_timeout'] as const)(
 
     expect(await screen.findByRole('alert')).toHaveTextContent(`Retryable ${code}`);
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(document.title).toBe(`CHA: ${bootstrapFixture.vault_name}`);
+    expect(document.title).toBe('CHA');
   },
 );
 

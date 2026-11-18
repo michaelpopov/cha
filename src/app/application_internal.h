@@ -37,6 +37,9 @@ struct Application::Impl {
     [[nodiscard]] std::optional<ErrorCode> admit_locked(std::uint64_t epoch) const;
 
     void require_admitted(std::uint64_t epoch) const;
+    std::optional<CurrentNote> current_note(std::uint64_t epoch);
+    std::optional<std::int64_t> selected_note_id(std::uint64_t epoch);
+    void clear_current_note();
 
     void pause_resources(bool cancel);
 
@@ -177,6 +180,8 @@ struct Application::Impl {
     BackgroundJobs background_jobs;
     XaiVoiceSessions xai_voice{background_jobs};
     mutable std::timed_mutex lifecycle_mutex;
+    std::mutex current_note_mutex;
+    std::optional<std::int64_t> current_note_id;
     std::atomic_bool stopping_flag{};
     // Set from the maintenance copy of an R2 upload until its transfer ends.
     std::atomic_bool vault_upload_running{};

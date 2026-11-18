@@ -782,6 +782,7 @@ TEST_F(NoteAudioBackground, AbandonmentSignalsOnlyTheRemovedNotesAndContextChang
 }
 
 TEST_F(NoteAudioBackground, RegistrationAndFinalEventFailuresRetryOnlyTheLocalTransaction) {
+    set_diagnostic_log_level("info");
     MockHttpServer upload({audio_json({{"file", {{"name", audio_file}}}})});
     auto operation = audio_operation();
     operation["metadata"]["createTime"] = "2026-11-15T22:49:39.246223661Z";
@@ -809,12 +810,19 @@ TEST_F(NoteAudioBackground, RegistrationAndFinalEventFailuresRetryOnlyTheLocalTr
     const auto events = application->list_events(epoch);
     ASSERT_EQ(events.size(), 2u);
     EXPECT_EQ(events.front().severity, EventSeverity::success);
-    EXPECT_NE(events.front().message.find("Batch processing time: 97.313 s. Input: 16 text tokens. "
-        "Output: 100 audio tokens. Estimated Gemini Batch cost: unavailable."), std::string::npos);
+    EXPECT_EQ(events.front().message, "Audio ready for “Chapter” (note " + std::to_string(note.id)
+        + "): 2 clips saved.");
+    const auto logged = log_text();
+    const auto prefix = "[info] " + events.front().message + " Batch processing time: 97.313 s. Input: 16 text tokens. ";
+    const auto cost_log = logged.find(prefix);
+    ASSERT_NE(cost_log, std::string::npos) << logged;
+    EXPECT_EQ(logged.find(prefix, cost_log + prefix.size()), std::string::npos);
+    EXPECT_NE(logged.find("Output: 100 audio tokens. Estimated Gemini Batch cost: unavailable."), std::string::npos);
     EXPECT_EQ(completions.load(), 1);
 }
 
 TEST_F(NoteAudioBackground, RecoveredBatchReportsPartialUsageAfterARequestFails) {
+    set_diagnostic_log_level("info");
     auto operation = audio_operation();
     operation["metadata"]["createTime"] = "2027-01-01T00:00:00Z";
     operation["metadata"]["endTime"] = "2027-01-01T00:00:15Z";
@@ -832,7 +840,10 @@ TEST_F(NoteAudioBackground, RecoveredBatchReportsPartialUsageAfterARequestFails)
     const auto events = application->list_events(epoch);
     ASSERT_EQ(events.size(), 2u);
     EXPECT_EQ(events.front().severity, EventSeverity::error);
-    EXPECT_NE(events.front().message.find("Batch processing time: 15.000 s. Input: 11 text tokens. "
+    EXPECT_EQ(events.front().message.find("Batch processing time:"), std::string::npos);
+    EXPECT_EQ(events.front().message.find("Estimated Gemini Batch cost:"), std::string::npos);
+    const auto logged = log_text();
+    EXPECT_NE(logged.find("[info] " + events.front().message + " Batch processing time: 15.000 s. Input: 11 text tokens. "
         "Output: 93 audio tokens. Estimated Gemini Batch cost: unavailable. "
         "Incomplete usage (1 of 3 requests reported)."), std::string::npos);
     EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
@@ -857,6 +868,7 @@ TEST_F(NoteAudioBackground, NativeRecoveryReadsSavedBatchImmediatelyWithoutSubmi
 }
 
 TEST_F(NoteAudioBackground, RecoversL1AudioAndReportsTheOriginalNote) {
+    set_diagnostic_log_level("info");
     const auto summary = note_document_from_text("Summary narration.");
     const auto l1 = application->store().commit_note_level(note.id, 1, summary, "Saved.");
     (void)application->rename_note_item(note.id, "Renamed chapter", epoch);
@@ -893,8 +905,10 @@ TEST_F(NoteAudioBackground, RecoversL1AudioAndReportsTheOriginalNote) {
     EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 0);
     EXPECT_EQ(completed_id.load(), l1);
     EXPECT_EQ(application->list_events(epoch).front().message, "Audio ready for " + target
+        + ": 1 clips saved.");
+    EXPECT_NE(log_text().find("[info] Audio ready for " + target
         + ": 1 clips saved. Batch processing time: unavailable. Input and output token counts unavailable."
-          " Estimated Gemini Batch cost: unavailable.");
+          " Estimated Gemini Batch cost: unavailable."), std::string::npos);
 
     application->commit_summary_part(note.id, SummaryPart::l1, note_document_from_text("Replacement"), epoch);
     EXPECT_EQ(application->get_note_audio_info(l1, epoch)["count"], 0);

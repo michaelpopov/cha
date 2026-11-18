@@ -1,4 +1,5 @@
 import type { Bootstrap } from '../api/client';
+import { isNoteId } from '../api/noteGuards';
 import { hasIdentity, isRecord } from '../api/guards';
 
 function hasForumIdentity(
@@ -25,6 +26,9 @@ function hasForumIdentity(
 
 export function validateBootstrap(value: unknown): Bootstrap {
   if (!isRecord(value)) throw new TypeError('Bootstrap must be an object.');
+  if ('current_note_id' in value && !isNoteId(value.current_note_id)) {
+    throw new TypeError('Bootstrap contains an invalid current_note_id.');
+  }
 
   const requiredIds = ['initial_forum_id', 'initial_session_id', 'entrance_forum_id'] as const;
   for (const field of requiredIds) {

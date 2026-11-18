@@ -441,8 +441,10 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     MockHttpServer server({
         http_response("text/plain", ""), response, response});
     set_r2(*application, server.port());
+    application->select_note(note, application->context_epoch());
     server.start();
     (void)wait_upload(application->start_database_upload({}, application->context_epoch()));
+    EXPECT_EQ(application->bootstrap().presentation.current_note_id, note);
     compression.join();
     EXPECT_FALSE(application->note_compression_status(pending, application->context_epoch())["pending"].get<bool>());
     EXPECT_EQ(application->get_note(pending, application->context_epoch(), NoteTextMode::compressed).document_id, pending);
@@ -697,7 +699,9 @@ TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlder
         std::ofstream(backup) << "older backup";
         const auto old_epoch = application->context_epoch();
         server.start();
+        application->select_note(note, old_epoch);
         (void)application->download_database(old_epoch);
+        EXPECT_FALSE(application->bootstrap().presentation.current_note_id);
         compression.join();
         EXPECT_FALSE(application->note_compression_status(pending, application->context_epoch())["pending"].get<bool>());
         EXPECT_EQ(stored_notes(pair.database_a, password), remote_notes);
@@ -716,7 +720,7 @@ TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlder
 
 TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
     TwoVaults pair;
-    (void)seed_notes(pair.database_a, "Destination");
+    const auto note = seed_notes(pair.database_a, "Destination");
     (void)seed_notes(pair.database_b, "Source");
     const auto before = stored_notes(pair.database_a);
     const auto source_before = stored_notes(pair.database_b);
@@ -726,7 +730,9 @@ TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
     pair.command.vault.mirror = mirror;
     pair.command.vaults.front() = pair.command.vault;
     auto application = Application::open(pair.command);
+    application->select_note(note, application->context_epoch());
     (void)application->merge_vault("B", {}, application->context_epoch());
+    EXPECT_EQ(application->bootstrap().presentation.current_note_id, note);
     EXPECT_EQ(stored_notes(pair.database_a), before);
     EXPECT_EQ(stored_notes(pair.database_b), source_before);
     (void)application->export_configuration(application->context_epoch());
@@ -739,11 +745,13 @@ TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
         }
     }
     (void)application->import_configuration(application->context_epoch());
+    EXPECT_EQ(application->bootstrap().presentation.current_note_id, note);
     EXPECT_EQ(stored_notes(pair.database_a), before);
     // Rebuild a mirror containing an actual session, not just an empty directory.
     (void)application->create_session("lobby", "Mirrored session", application->context_epoch());
     application.reset();
     application = Application::open(pair.command);
+    EXPECT_FALSE(application->bootstrap().presentation.current_note_id);
     ASSERT_TRUE(std::filesystem::exists(mirror));
     std::size_t documents = 0;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(mirror)) {

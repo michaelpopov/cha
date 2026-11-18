@@ -166,6 +166,7 @@ export interface components {
             vaults: string[];
             initial_forum_id: components["schemas"]["Identifier"];
             initial_session_id: components["schemas"]["Identifier"];
+            current_note_id?: components["schemas"]["NoteId"];
             entrance_forum_id: components["schemas"]["Identifier"];
             personas: components["schemas"]["PersonaSummary"][];
             characters: components["schemas"]["CharacterSummary"][];
@@ -821,6 +822,9 @@ export interface components {
             };
         };
         NativeSafeInteger: number;
+        NotesSelectRequest: {
+            id: components["schemas"]["NoteId"];
+        };
         NoteId: number;
         /** @enum {string} */
         NoteItemKind: "folder" | "note" | "annotation";

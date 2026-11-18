@@ -768,6 +768,14 @@ describe('notes native client', () => {
     return createNativeChaClient(createFakeNativeBridge(handlers));
   }
 
+  it('selects a source note with an empty reply', async () => {
+    const select = vi.fn().mockReturnValueOnce({}).mockReturnValueOnce({ id: 4 });
+    const client = clientFor({ 'notes.select': select });
+    await expect(client.selectNote(4)).resolves.toBeUndefined();
+    expect(select).toHaveBeenCalledExactlyOnceWith({ id: 4 });
+    await expect(client.selectNote(4)).rejects.toBeInstanceOf(ChaProtocolError);
+  });
+
   it('accepts compression and folder skips using the captured context', async () => {
     const compress = vi.fn().mockReturnValueOnce({ accepted: true }).mockReturnValueOnce({ skipped: true });
     const client = clientFor({ 'notes.compressStart': compress });

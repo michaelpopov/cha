@@ -294,6 +294,32 @@ TEST_F(ChatSyncTest, InitialIncludesAttachmentsAndSettingsInOrder) {
     EXPECT_EQ(records[4]["kind"], "chat.character");
 }
 
+TEST_F(ChatSyncTest, UnchangedAutomaticNoteCopyWritesNoNoticeOrSyncRecord) {
+    make_chat_session(*database_, "f1", "s-note", "Chat");
+    const auto key = session_key_for(*database_, "f1", "s-note");
+    const auto note = note_create(*database_, {}, NoteItemKind::note, "Plan");
+    SessionJournal journal(path_, key);
+    journal.set_sync_machine(std::string(sync_machine));
+    journal.start_turn(1, human_entry(1, "Hi", 1));
+    journal.complete_turn(1, reply_entry(2, "Hello", 1));
+    NoteText copy{note.id, note.name, "Cancellation terms"};
+    ASSERT_TRUE(journal.add_note(copy, 3, true));
+    const auto before = queued_records(*database_);
+    ASSERT_EQ(before.back()["kind"], "chat.add_note");
+    database_->execute("CREATE TRIGGER reject_note_update BEFORE UPDATE ON session_notes "
+        "BEGIN SELECT RAISE(ABORT, 'Unexpected note update'); END");
+    EXPECT_FALSE(journal.add_note(copy, 4, true));
+    EXPECT_EQ(queued_records(*database_), before);
+    database_->execute("DROP TRIGGER reject_note_update");
+    ASSERT_TRUE(journal.add_note(copy, 4)); // An explicit Ref ID always records a notice.
+    EXPECT_EQ(queued_records(*database_).size(), before.size() + 1);
+    copy.name = "Hotel";
+    const auto updated = journal.add_note(copy, 5, true);
+    ASSERT_TRUE(updated);
+    EXPECT_EQ(updated->text, "Updated this chat’s copy of note “Hotel”.");
+    EXPECT_EQ(queued_records(*database_).size(), before.size() + 2);
+}
+
 TEST_F(ChatSyncTest, DeletedSourceMakesCopyIneligible) {
     make_chat_session(*database_, "f1", "s-r55", "Chat");
     const auto key = session_key_for(*database_, "f1", "s-r55");

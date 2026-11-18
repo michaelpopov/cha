@@ -50,6 +50,7 @@ struct RunSpec {
     // The prompt's UTC Unix-seconds timestamp. It is copied into the durable
     // transcript entry when this run becomes active.
     std::int64_t created_at{};
+    std::optional<std::string> current_note_name;
 };
 
 // Complete immutable input for backend preparation. Ordinary requests and

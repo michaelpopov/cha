@@ -11,6 +11,9 @@ int main(int argc, char** argv) {
         for (auto& item : cases) {
             cha::JevRequestInput input;
             input.prompt = item.at("prompt").get<std::string>();
+            input.ask_recipient = item.at("expected").contains("recipient");
+            if (item.contains("current_note_name"))
+                input.current_note_name = item.at("current_note_name").get<std::string>();
             // A roster entry is a name or {"name": ..., "nicknames": [...]}.
             for (const auto& entry : item.at("roster")) {
                 const auto key = "character_" + std::to_string(input.characters.size() + 1);

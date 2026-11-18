@@ -327,7 +327,7 @@ void LiveSession::execute(OwnerCommand command) {
             }
             auto result = handle_text_input(
                 controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission(),
-                value.attach_paths);
+                value.attach_paths, controller.current_note(value.current_note_id));
             // Recipient detection decides later; settle_submission logs that case.
             if (!was_generating && controller.is_generating() && !controller.classification_pending()) {
                 for (const auto& usage : value.voice_input_usage) log_transcription_cost(identity_, usage);

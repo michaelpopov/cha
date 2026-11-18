@@ -46,7 +46,7 @@ describe('application navigation reducer', () => {
     });
   });
 
-  it('retains a hidden note across unrelated actions but clears it on leaving the workspace', () => {
+  it('retains a hidden note across layouts, Settings, and Events', () => {
     let state = appReducer(readyState(), { type: 'set-layout', mode: 'split' });
     state = appReducer(state, { type: 'open-note', noteId: 42, destination, importSource: { kind: 'page', url: 'https://example.org' } });
     state = appReducer(state, { type: 'show-chat' });
@@ -64,15 +64,20 @@ describe('application navigation reducer', () => {
     expect(state.activeNoteId).toBe(42);
     state = appReducer(state, { type: 'set-layout', mode: 'single' });
     state = appReducer(state, { type: 'show-settings' });
-    expect(state.activeNoteId).toBeNull();
+    expect(state.activeNoteId).toBe(42);
     expect(workspaceVisibility(state)).toEqual({ notesVisible: false, chatVisible: false });
     expect(state.layoutMode).toBe('single');
+    state = appReducer(state, { type: 'show-settings-events' });
+    expect(state.activeNoteId).toBe(42);
+    state = appReducer(state, { type: 'show-notes-tab' });
+    expect(workspaceVisibility(state).notesVisible).toBe(true);
+    expect(state.activeNoteId).toBe(42);
   });
 
-  it('clears discarded notes and preserves the existing Single View close behavior', () => {
+  it('keeps the selected note when opening a conversation in Single View', () => {
     let state = appReducer(readyState(), { type: 'open-note', noteId: 42 });
     state = appReducer(state, { type: 'show-chat' });
-    expect(state.activeNoteId).toBeNull();
+    expect(state.activeNoteId).toBe(42);
     state = appReducer(state, { type: 'set-layout', mode: 'split' });
     state = appReducer(state, { type: 'open-note', noteId: 42 });
     state = appReducer(state, { type: 'close-note' });
@@ -631,7 +636,7 @@ describe('character picture selection', () => {
     expect(appReducer(chat, showNotes)).toEqual({ ...notes, noteDestination: undefined });
   });
 
-  it('opens a note beside the current conversation and releases it when the main panel leaves', () => {
+  it('keeps both selections when leaving Notes', () => {
     let state = readyState();
     const conversation = state.activeConversation;
     state = appReducer(state, { type: 'open-note', noteId: 4 });
@@ -644,7 +649,7 @@ describe('character picture selection', () => {
     expect(state.noteRequest).toBe(2);
     state = appReducer(state, { type: 'show-settings' });
     expect(state.mainView).toBe('settings');
-    expect(state.activeNoteId).toBeNull();
+    expect(state.activeNoteId).toBe(4);
     expect(state.activeConversation).toEqual(conversation);
   });
 
@@ -659,13 +664,25 @@ describe('character picture selection', () => {
     expect(state.activeConversation).toBeNull();
   });
 
+  it('restores the note from startup and refreshed bootstrap data', () => {
+    const bootstrap = { ...bootstrapFixture, current_note_id: 42 };
+    let state = appReducer(readyState(), { type: 'bootstrap-loaded', bootstrap });
+    expect(state.activeNoteId).toBe(42);
+    state = appReducer(state, { type: 'vault-context-reset' });
+    expect(state.activeNoteId).toBeNull();
+    state = appReducer(state, { type: 'vault-context-refreshed', bootstrap });
+    expect(state.activeNoteId).toBe(42);
+    state = appReducer(state, { type: 'vault-context-refreshed', bootstrap: bootstrapFixture });
+    expect(state.activeNoteId).toBeNull();
+  });
+
   it.each(['compressed', 'l1', 'l2'] as const)('keeps %s mode for the app session and only reloads when it changes', mode => {
     const initial = readyState();
     expect(initial.noteTextMode).toBe('full_text');
     let state = appReducer(initial, {
       type: 'open-note', noteId: 4, importSource: { kind: 'file', path: '/tmp/note.md' },
     });
-    const change = { type: 'set-note-text-mode', mode, noteId: 4 } as const;
+    const change = { type: 'set-note-text-mode', mode } as const;
     state = appReducer(state, change);
     expect(state).toMatchObject({ noteTextMode: mode, noteRequest: 2, activeNoteId: 4, notesEpoch: 0 });
     expect(state.noteImportSource).toBeUndefined();

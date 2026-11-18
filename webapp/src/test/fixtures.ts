@@ -415,6 +415,7 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     storeClose: unavailable('notes.storeClose'),
     importEpub: unavailable('notes.importBook'),
     createNoteItem: unavailable('notes.create'),
+    selectNote: async () => undefined,
     getNote: unavailable('notes.get'),
     readNotePicture: async () => new Uint8Array(),
     readNotePage: unavailable('notes.readPage'),

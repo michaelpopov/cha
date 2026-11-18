@@ -1,5 +1,7 @@
 #pragma once
 
+#include "chat/current_note.h"
+
 #include "workspace/workspace.h"
 #include "session/submission.h"
 
@@ -25,6 +27,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace cha {
@@ -97,7 +100,8 @@ public:
         std::string_view author_id,
         std::string text,
         std::string handle = {},
-        std::shared_ptr<SubmissionState> submission = {});
+        std::shared_ptr<SubmissionState> submission = {},
+        std::optional<CurrentNote> current_note = {});
     [[nodiscard]] ControllerUpdate add_item(
         std::int64_t item_id, std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate detach_folder(
@@ -118,7 +122,8 @@ public:
         std::string_view author_id,
         std::string text,
         std::vector<std::string> handles,
-        std::shared_ptr<SubmissionState> submission = {});
+        std::shared_ptr<SubmissionState> submission = {},
+        std::optional<CurrentNote> current_note = {});
     [[nodiscard]] ControllerUpdate set_default_character_by_id(std::string_view id);
     [[nodiscard]] ControllerUpdate set_character_settings(
         std::string_view character_id,
@@ -139,6 +144,8 @@ public:
     bool record_configuration_notice(std::string text, std::string error_code = {});
     void prune_folder_associations(std::span<const std::int64_t> folder_ids);
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
+    // Reads the selected note for note detection. A missing note, or no Jev, means none.
+    [[nodiscard]] std::optional<CurrentNote> current_note(std::optional<std::int64_t> id) const;
     [[nodiscard]] std::chrono::steady_clock::time_point next_deadline() const noexcept;
     enum class SubmissionOutcome { accepted, cancelled, expired, failed };
     struct SubmissionResult {
@@ -208,17 +215,25 @@ private:
     void record_monologue(
         std::string_view author_id,
         std::string text,
-        ControllerUpdate& update);
+        ControllerUpdate& update,
+        std::optional<std::int64_t> note_id,
+        const std::shared_ptr<SubmissionState>& submission);
+    std::optional<std::string> attach_note(
+        std::int64_t note_id, bool skip_unchanged,
+        const std::shared_ptr<SubmissionState>& submission, ControllerUpdate& update);
     void start_generation(
         EntryIdentity author,
         std::string text,
         std::vector<CharacterMetadata> targets,
         SharedModelHistory history,
-        ControllerUpdate& update);
+        ControllerUpdate& update,
+        const std::optional<std::string>& current_note_name);
     [[nodiscard]] ControllerUpdate start_resolved_multicast(
         std::string_view author_id,
         std::string text,
-        std::vector<CharacterMetadata> targets);
+        std::vector<CharacterMetadata> targets,
+        std::optional<std::int64_t> note_id = {},
+        const std::shared_ptr<SubmissionState>& submission = {});
     void activate_run(const RunSpec& run, std::size_t foreground_index,
                       ControllerUpdate& update);
     void finish_generation_run(ControllerUpdate& update);
@@ -241,10 +256,15 @@ private:
     TranscriptEntry response_entry(EntryStatus status) const;
     bool matches(RequestId request_id) const;
 
-    ControllerUpdate dispatch_target(std::string_view author, std::string text, std::string_view target);
+    ControllerUpdate dispatch_target(
+        std::string_view author, std::string text, std::string_view target,
+        std::optional<std::int64_t> note_id = {},
+        const std::shared_ptr<SubmissionState>& submission = {});
     [[nodiscard]] std::vector<CharacterMetadata> forum_characters(const Workspace& current) const;
+    using FixedRecipients = std::variant<std::monostate, CharacterId, std::vector<CharacterMetadata>>;
     ControllerUpdate start_classification(std::string_view author, std::string text,
-        std::shared_ptr<SubmissionState> submission);
+        std::shared_ptr<SubmissionState> submission, std::optional<CurrentNote> current_note,
+        FixedRecipients recipients = {});
     ControllerUpdate finish_classification();
     void start_session_name(ControllerUpdate& update, std::string_view prompt = {});
     void accept_session_name(std::string title, ControllerUpdate& update);
@@ -260,6 +280,8 @@ private:
         std::chrono::steady_clock::time_point deadline;
         std::shared_ptr<JevRequest> request;
         std::optional<JevResult> result;
+        std::optional<std::int64_t> note_id;
+        FixedRecipients recipients;
     };
     std::optional<PendingClassification> pending_classification_;
     std::optional<SubmissionResult> submission_result_;

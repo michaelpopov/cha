@@ -40,5 +40,16 @@
   {"roster": [{"name": "Seneca", "nicknames": ["Teacher"]}, "Marcus"], "prompt": "Teacher, explain this.", "expected": {"recipient": "character_1"}},
   {"roster": [{"name": "Seneca", "nicknames": ["Teacher"]}, "Marcus"], "prompt": "My teacher said I should read more.", "expected": {"recipient": "undefined"}},
   {"roster": [{"name": "Сенека"}, {"name": "Марк Аврелий", "nicknames": ["Император"]}], "prompt": "Император, что ты думаешь о долге?", "expected": {"recipient": "character_2"}},
-  {"roster": [{"name": "Сенека"}, {"name": "Марк Аврелий", "nicknames": ["Император"]}], "prompt": "Расскажи об Императоре.", "expected": {"recipient": "undefined"}}
+  {"roster": [{"name": "Сенека"}, {"name": "Марк Аврелий", "nicknames": ["Император"]}], "prompt": "Расскажи об Императоре.", "expected": {"recipient": "undefined"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "Pull the deadlines out of the note I just opened.", "expected": {"recipient": "undefined", "use_current_note": "yes"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "Seneca, quote the cancellation clause in my current note.", "expected": {"recipient": "character_1", "use_current_note": "yes"}},
+  {"roster": [], "current_note_name": "Trip plan", "prompt": "quote the cancellation clause in my current note.", "expected": {"use_current_note": "yes"}},
+  {"roster": [], "current_note_name": "Trip plan", "prompt": "What do you think of my current note?", "expected": {"use_current_note": "yes"}},
+  {"roster": [], "current_note_name": "Trip plan", "prompt": "Keep my current note in this chat for later.", "expected": {"use_current_note": "yes"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "When can I cancel the hotel according to Trip plan?", "expected": {"recipient": "undefined", "use_current_note": "yes"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "What does Packing list say about shoes?", "expected": {"recipient": "undefined", "use_current_note": "no"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "Write a thank-you note to the hotel.", "expected": {"recipient": "undefined", "use_current_note": "no"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "Note to self: call the hotel.", "expected": {"recipient": "self_note", "use_current_note": "no"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "Make that answer shorter.", "expected": {"recipient": "undefined", "use_current_note": "no"}},
+  {"roster": ["Seneca", "Marcus"], "current_note_name": "Trip plan", "prompt": "Summarize this.", "expected": {"recipient": "undefined", "use_current_note": "no"}}
 ]

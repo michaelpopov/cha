@@ -713,12 +713,17 @@ void SessionJournal::record_entry(const TranscriptEntry& entry) {
     transaction.commit();
 }
 
-TranscriptEntry SessionJournal::add_note(const NoteText& note, EntryId entry_id) {
+std::optional<TranscriptEntry> SessionJournal::add_note(
+    const NoteText& note, EntryId entry_id, bool skip_unchanged) {
     Transaction transaction(impl_->database);
     Statement existing = impl_->database.prepare(
-        "SELECT 1 FROM session_notes WHERE session_key = ?1 AND note_id = ?2",
+        "SELECT name, text FROM session_notes WHERE session_key = ?1 AND note_id = ?2",
         impl_->session_key, note.id);
     const bool refresh = existing.step();
+    if (skip_unchanged && refresh && existing.text(0) == note.name && existing.text(1) == note.text) {
+        transaction.commit();
+        return std::nullopt;
+    }
     Statement copy = impl_->database.prepare(
         "INSERT INTO session_notes (session_key, note_id, name, text) VALUES (?1, ?2, ?3, ?4) "
         "ON CONFLICT (session_key, note_id) DO UPDATE SET name = excluded.name, text = excluded.text",

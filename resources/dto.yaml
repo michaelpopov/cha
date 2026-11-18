@@ -360,6 +360,8 @@ components:
           $ref: "#/components/schemas/Identifier"
         initial_session_id:
           $ref: "#/components/schemas/Identifier"
+        current_note_id:
+          $ref: "#/components/schemas/NoteId"
         entrance_forum_id:
           $ref: "#/components/schemas/Identifier"
         personas:
@@ -1914,6 +1916,13 @@ components:
       type: integer
       minimum: 0
       maximum: 9007199254740991
+
+    NotesSelectRequest:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: {$ref: "#/components/schemas/NoteId"}
 
     NoteId:
       type: integer

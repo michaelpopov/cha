@@ -631,7 +631,54 @@ ApplicationBootstrap Application::bootstrap() {
         initial,
         std::move(vault.name),
         std::move(names));
+    if (const auto note = impl_->current_note(result.context_epoch))
+        result.presentation.current_note_id = note->id;
     return result;
+}
+
+std::optional<CurrentNote> Application::Impl::current_note(std::uint64_t epoch) {
+    std::optional<std::int64_t> id;
+    {
+        const std::lock_guard lock(current_note_mutex);
+        id = current_note_id;
+    }
+    if (!id || published_epoch.load() != epoch || state.load() != ApplicationState::running)
+        return std::nullopt;
+    // Vault replacement can clear the selection while holding the store lock.
+    const auto item = store->get_note_item(*id);
+    if (published_epoch.load() != epoch || state.load() != ApplicationState::running)
+        return std::nullopt;
+    if (item) return CurrentNote{item->id, item->name};
+    {
+        const std::lock_guard lock(current_note_mutex);
+        if (published_epoch.load() == epoch && current_note_id == id)
+            current_note_id.reset();
+    }
+    return std::nullopt;
+}
+
+std::optional<std::int64_t> Application::Impl::selected_note_id(std::uint64_t epoch) {
+    const std::lock_guard lock(current_note_mutex);
+    if (published_epoch.load() != epoch) return std::nullopt;
+    return current_note_id;
+}
+
+void Application::Impl::clear_current_note() {
+    const std::lock_guard lock(current_note_mutex);
+    current_note_id.reset();
+}
+
+void Application::select_note(std::int64_t id, std::uint64_t epoch) {
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    if (id < 1 || id > note_id_limit)
+        throw ApplicationError(ErrorCode::invalid_argument, "The item id is not valid.");
+    const auto item = impl_->store->get_note_item(id);
+    if (!item) throw ApplicationError(ErrorCode::not_found, "That note was not found.");
+    if (item->kind == NoteItemKind::folder)
+        throw ApplicationError(ErrorCode::invalid_argument, "That item is not a note.");
+    const std::lock_guard lock(impl_->current_note_mutex);
+    impl_->current_note_id = id;
 }
 
 CreateSessionSuccess Application::create_session(
@@ -718,7 +765,11 @@ CommandSubmitResult Application::submit(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         denied = impl_->admit_locked(epoch);
-        if (!denied) session = impl_->live_sessions->lookup(key);
+        if (!denied) {
+            session = impl_->live_sessions->lookup(key);
+            if (auto* raw = std::get_if<RawCommand>(&command); session && raw)
+                raw->current_note_id = impl_->selected_note_id(epoch);
+        }
     }
     if (denied) return *denied;
     if (!session) return ErrorCode::session_not_live;
@@ -737,6 +788,8 @@ Application::submit_async(
     // The manager checks the epoch and maintenance gate with the lookup.
     // Stop must not wait for a transfer holding the application lifecycle lock.
     auto session = impl_->live_sessions->lookup(key, epoch);
+    if (auto* raw = std::get_if<RawCommand>(&command); session && raw)
+        raw->current_note_id = impl_->selected_note_id(epoch);
     if (const auto denied = check_context(epoch)) return *denied;
     if (!session) return ErrorCode::session_not_live;
     return session->enqueue(std::move(command), deadline);

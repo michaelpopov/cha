@@ -1,5 +1,6 @@
 #pragma once
 
+#include "chat/current_note.h"
 #include "runtime/protocol.h"
 #include "session/submission.h"
 #include <memory>
@@ -64,6 +65,7 @@ using MulticastParseResult =
     std::string_view author_id,
     std::string input,
     std::shared_ptr<SubmissionState> submission = {},
-    bool attach_paths = false);
+    bool attach_paths = false,
+    std::optional<CurrentNote> current_note = {});
 
 } // namespace cha

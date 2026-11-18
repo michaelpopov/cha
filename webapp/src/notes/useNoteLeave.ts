@@ -6,7 +6,7 @@ import type { NoteSaveHandle } from './useNoteSave';
 
 export type LeaveNoteThen = <T>(
   action: () => T | Promise<T>,
-  options?: { previousUrl?: string },
+  options?: { previousUrl?: string; holdAction?: boolean },
 ) => Promise<T | false>;
 
 export type PendingOperationKind = 'leave' | 'action' | null;
@@ -236,7 +236,15 @@ export function useNoteLeave(
       return false;
     }
     const save = getSaveRef.current();
-    if (!save?.isOpen) return await invokeAction(action);
+    if (!save?.isOpen) {
+      if (!leaveOptions?.holdAction) return await invokeAction(action);
+      if (!beginNoteAction()) return false;
+      try {
+        return await invokeAction(action);
+      } finally {
+        endNoteAction();
+      }
+    }
     const intent: LeaveIntent = {
       kind: 'navigate',
       action,
@@ -256,7 +264,7 @@ export function useNoteLeave(
       }
       throw error;
     }
-  }, [invokeAction, release, resolveLeave, setSlot]);
+  }, [beginNoteAction, endNoteAction, invokeAction, release, resolveLeave, setSlot]);
 
   const currentChoice = useCallback(() => {
     const intent = intentRef.current;

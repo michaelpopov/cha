@@ -523,10 +523,10 @@ TEST(TextInput, KeepsNotesScopedToTheirChatInTheSameDatabase) {
     SessionJournal first(temporary.path, 1);
     SessionJournal second(temporary.path, 2);
     const auto copy = note_get_text(database, note.id);
-    EXPECT_EQ(first.add_note(copy, 1).text, "Added note “Reference” to this chat.");
+    EXPECT_EQ(first.add_note(copy, 1)->text, "Added note “Reference” to this chat.");
     EXPECT_FALSE(first.notes_prompt().empty());
     EXPECT_TRUE(second.notes_prompt().empty());
-    EXPECT_EQ(second.add_note(copy, 1).text, "Added note “Reference” to this chat.");
+    EXPECT_EQ(second.add_note(copy, 1)->text, "Added note “Reference” to this chat.");
     EXPECT_EQ(second.notes_prompt(), first.notes_prompt());
 }
 

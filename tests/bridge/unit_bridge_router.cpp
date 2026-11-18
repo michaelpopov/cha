@@ -13,6 +13,7 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace_config_store.h"
 #include "util/base64.h"
+#include "util/logging.h"
 #include "util/path_name.h"
 
 #include <gtest/gtest.h>
@@ -893,6 +894,81 @@ TEST_F(BridgeRouterTest, RecipientDetectionSettingsApplyToExistingSessionAndMiss
     EXPECT_EQ(fallback["result"]["notice"], "Recipient detection failed. Sent to all characters.");
     ASSERT_TRUE(call("jev.disable")["ok"]);
     EXPECT_TRUE(call("jev.get")["result"].is_null());
+}
+
+TEST_F(BridgeRouterTest, DesktopSubmitCapturesTheCurrentNoteAndRetainsDraftOnMissingSource) {
+    bootstrap_epoch();
+    const auto key = call("apiKey.create",
+        {{"display_name", "OpenRouter"}, {"value", "test-secret"}, {"cloud_store", "none"}});
+    ASSERT_TRUE(key["ok"]);
+    const auto create_note = [&](std::string_view name) {
+        return call("notes.create",
+            {{"parent_id", nullptr}, {"kind", "note"}, {"name", name}})["result"]["id"];
+    };
+    const auto trip = create_note("Trip plan");
+    const auto packing = create_note("Packing list");
+    const auto created = call("session.create", {{"forum_id", "lobby"}, {"label", "Travel"}});
+    const nlohmann::json identity{{"forum_id", "lobby"}, {"session_id", created["result"]["id"]}};
+    ASSERT_TRUE(call("session.open", identity)["ok"]);
+    const std::string body = R"({"answers":{"use_current_note":{"type":"choice","choice":"yes"}}})";
+    const std::string response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+        + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
+    MockHttpServer server({response, response});
+    server.pause_before_response(1);
+    server.start();
+    ASSERT_TRUE(call("jev.save", {
+        {"url", "http://127.0.0.1:" + std::to_string(server.port()) + "/api/alpha/decisions"},
+        {"model", "typesafe/jev-1.13"}, {"api_key", key["result"]["id"]},
+    })["ok"]);
+    ASSERT_TRUE(call("notes.select", {{"id", trip}})["ok"]);
+    const auto start_submit = [&] {
+        const auto id = next_id_++;
+        auto submit = identity;
+        submit["input"] = {{"text", "@- Keep my current note in this chat for later."}};
+        router_->handle_request(connection_,
+            request_json(connection_, id, epoch_, "session.submit", std::move(submit)).dump());
+        router_->run_tasks();
+        return id;
+    };
+    const auto finish_submit = [&](std::uint64_t id) {
+        server.resume_responses();
+        while (auto batch = wait_delivery(*router_, connection_)) {
+            ack_delivery(*router_, connection_, *batch);
+            auto reply = reply_with_id(*batch, id);
+            if (!reply.empty()) return reply;
+        }
+        return nlohmann::json::object();
+    };
+
+    const auto first = start_submit();
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    ASSERT_TRUE(call("notes.select", {{"id", packing}})["ok"]);
+    const auto accepted = finish_submit(first);
+    ASSERT_EQ(accepted["ok"], true) << accepted;
+    EXPECT_EQ(accepted["result"]["clear_input"], true);
+    const auto transcript = call("session.snapshot", identity)["result"]["transcript"];
+    ASSERT_EQ(transcript.size(), 2u) << transcript;
+    EXPECT_EQ(transcript[0]["text"], "Added note “Trip plan” to this chat.");
+    EXPECT_EQ(transcript[1]["text"], "Keep my current note in this chat for later.");
+
+    ASSERT_TRUE(call("notes.select", {{"id", trip}})["ok"]);
+    server.pause_before_response(2);
+    const auto second = start_submit();
+    ASSERT_TRUE(server.wait_for_requests(2, 2s));
+    ASSERT_TRUE(call("notes.delete", {{"id", trip}})["ok"]);
+    const auto rejected = finish_submit(second);
+    EXPECT_EQ(rejected["ok"], false);
+    EXPECT_EQ(rejected["error"]["code"], "invalid_argument");
+    EXPECT_EQ(rejected["error"]["message"], "That note was not found.");
+    EXPECT_EQ(call("session.snapshot", identity)["result"]["transcript"], transcript);
+    EXPECT_FALSE(call("app.bootstrap")["result"]["bootstrap"].contains("current_note_id"));
+    server.join();
+    for (const auto& request : server.requests()) {
+        const auto payload = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
+        EXPECT_EQ(payload["state"]["current_note_name"], "Trip plan");
+        EXPECT_EQ(payload["questions"].size(), 1u);
+        EXPECT_TRUE(payload["questions"].contains("use_current_note"));
+    }
 }
 
 TEST_F(BridgeRouterTest, SavesSessionNamingSettings) {
@@ -4146,7 +4222,10 @@ protected:
     std::atomic_int attempts_{0};
 };
 
-TEST_F(NoteSummaryCostTest, RecordsOneEstimatePerNoteWithCacheUsageAndServedTier) {
+TEST_F(NoteSummaryCostTest, LogsOneEstimatePerNoteWithCacheUsageAndServedTier) {
+    const auto log_path = workspace_.root() / "summary-cost.log";
+    initialize_diagnostic_logging(log_path, "info");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
     bootstrap_epoch();
     const auto key = application_->create_api_key({.display_name = "OpenAI", .value = "fake-key"}, epoch_);
     auto config = application_->store().snapshot()->find_provider("test")->config;
@@ -4184,17 +4263,22 @@ TEST_F(NoteSummaryCostTest, RecordsOneEstimatePerNoteWithCacheUsageAndServedTier
     ASSERT_EQ(call("notes.summaryGenerate",
         {{"id", folder.id}, {"part", "l3_overview"}, {"text", "Sections"}})["ok"], true);
 
-    // A cancelled line has no completion event.
+    // A cancelled line has no completion log.
     ASSERT_EQ(line(second.id, false)["ok"], true);
     ASSERT_EQ(call("notes.summaryCancel")["ok"], true);
     ASSERT_EQ(line(second.id, true)["ok"], true);
 
     EXPECT_EQ(attempts_, 8);
-    EXPECT_EQ(summary_events("Summary line completed for"), 2U);
-    EXPECT_EQ(summary_events("Summary line completed for “Source” (note " + std::to_string(first.id)
-        + "). Estimated OpenAI token cost: $0.0067 USD (incomplete). Elapsed time: "), 1U);
-    EXPECT_EQ(summary_events("Summary line completed for “Second” (note " + std::to_string(second.id)
-        + "). Estimated OpenAI Flex token cost: $0.001675 USD. Elapsed time: "), 1U);
+    EXPECT_EQ(summary_events("Summary line completed for"), 0U);
+    std::ifstream input(log_path);
+    std::vector<std::string> logged;
+    for (std::string entry; std::getline(input, entry);)
+        if (entry.find("Summary line completed for") != std::string::npos) logged.push_back(entry);
+    ASSERT_EQ(logged.size(), 2U);
+    EXPECT_NE(logged[0].find("[info] Summary line completed for “Source” (note " + std::to_string(first.id)
+        + "). Estimated OpenAI token cost: $0.0067 USD (incomplete). Elapsed time: "), std::string::npos);
+    EXPECT_NE(logged[1].find("[info] Summary line completed for “Second” (note " + std::to_string(second.id)
+        + "). Estimated OpenAI Flex token cost: $0.001675 USD. Elapsed time: "), std::string::npos);
 }
 
 class GeminiSummaryCostTest : public BridgeRouterTest {
@@ -4221,7 +4305,10 @@ protected:
     std::atomic_int attempts_{0};
 };
 
-TEST_F(GeminiSummaryCostTest, RecordsEachFlexLineWithCacheThinkingAndElapsedTime) {
+TEST_F(GeminiSummaryCostTest, LogsEachFlexLineWithCacheThinkingAndElapsedTime) {
+    const auto log_path = workspace_.root() / "summary-cost.log";
+    initialize_diagnostic_logging(log_path, "info");
+    struct StopLogging { ~StopLogging() { shutdown_diagnostic_logging(); } } stop;
     bootstrap_epoch();
     const auto key = application_->create_api_key({.display_name = "Gemini", .value = "fake-key"}, epoch_);
     auto config = application_->store().snapshot()->find_provider("test")->config;
@@ -4258,15 +4345,19 @@ TEST_F(GeminiSummaryCostTest, RecordsEachFlexLineWithCacheThinkingAndElapsedTime
         {{"id", folder.id}, {"part", "l3_overview"}, {"text", "Sections"}})["ok"], true);
 
     EXPECT_EQ(attempts_, 7);
-    EXPECT_EQ(summary_events("Summary line completed for"), 2U);
-    EXPECT_EQ(summary_events("Summary line completed for “Second” (note " + std::to_string(second.id)
-        + "). Estimated Gemini Flex token cost: unavailable (incomplete). Elapsed time: "), 1U);
-    const auto prefix = "Summary line completed for “Source” (note " + std::to_string(first.id)
+    EXPECT_EQ(summary_events("Summary line completed for"), 0U);
+    std::ifstream input(log_path);
+    std::vector<std::string> logged;
+    for (std::string entry; std::getline(input, entry);)
+        if (entry.find("Summary line completed for") != std::string::npos) logged.push_back(entry);
+    ASSERT_EQ(logged.size(), 2U);
+    EXPECT_NE(logged[1].find("[info] Summary line completed for “Second” (note " + std::to_string(second.id)
+        + "). Estimated Gemini Flex token cost: unavailable (incomplete). Elapsed time: "), std::string::npos);
+    const auto prefix = "[info] Summary line completed for “Source” (note " + std::to_string(first.id)
         + "). Estimated Gemini Flex token cost: $0.00131 USD. Elapsed time: ";
-    const auto events = application_->list_events(epoch_);
-    const auto event = std::ranges::find_if(events, [&](const auto& item) { return item.message.starts_with(prefix); });
-    ASSERT_NE(event, events.end());
-    EXPECT_GE(std::stod(event->message.substr(prefix.size())), 0.030);
+    const auto start = logged[0].find(prefix);
+    ASSERT_NE(start, std::string::npos) << logged[0];
+    EXPECT_GE(std::stod(logged[0].substr(start + prefix.size())), 0.030);
 }
 
 TEST_F(BridgeRouterTest, NoteSummaryRetriesAndReportsSafeProviderErrors) {
@@ -5666,6 +5757,53 @@ TEST_F(BridgeRouterTest, NotesWireContract) {
     EXPECT_GE(listed["result"]["items"].size(), 1);
 }
 
+TEST_F(BridgeRouterTest, NotesSelectionValidatesSourceIdsAndAppearsInBootstrap) {
+    const auto epoch = bootstrap_epoch();
+    const auto selected = [&] { return call("app.bootstrap")["result"]["bootstrap"]; };
+    EXPECT_FALSE(selected().contains("current_note_id"));
+    const auto folder = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "folder"}, {"name", "Travel"},
+    })["result"]["id"];
+    const auto trip = call("notes.create", {
+        {"parent_id", folder}, {"kind", "note"}, {"name", "Trip plan"},
+    })["result"]["id"];
+    const auto sibling = call("notes.create", {
+        {"parent_id", nullptr}, {"kind", "note"}, {"name", "Packing list"},
+    })["result"]["id"];
+    const auto saved = call("notes.select", {{"id", trip}});
+    ASSERT_TRUE(saved["ok"]) << saved;
+    EXPECT_EQ(saved["result"], nlohmann::json::object());
+    EXPECT_EQ(selected()["current_note_id"], trip);
+    expect_note_error(call("notes.select", {{"id", folder}}),
+        "invalid_argument", "That item is not a note.");
+    expect_note_error(call("notes.select", {{"id", 0}}),
+        "invalid_argument", "The item id is not valid.");
+    expect_note_error(call("notes.select", {{"id", 70000}}),
+        "not_found", "That note was not found.");
+    const auto trip_id = trip.get<std::int64_t>();
+    {
+        storage::SqliteDatabase database(database_, storage::SqliteDatabase::Mode::read_write);
+        note_save_compressed(database, trip_id, "Compressed travel plan");
+    }
+    const auto document = call("notes.get", {{"id", trip}, {"mode", "compressed"}})["result"]["document_id"];
+    ASSERT_NE(document, trip);
+    expect_note_error(call("notes.select", {{"id", document}}),
+        "not_found", "That note was not found.");
+    epoch_ = epoch + 1;
+    expect_note_error(call("notes.select", {{"id", sibling}}),
+        "vault_changed", "The vault context has changed.");
+    epoch_ = epoch;
+    EXPECT_EQ(selected()["current_note_id"], trip);
+
+    const auto renamed = call("notes.rename", {{"id", trip}, {"name", "Hotel plan"}});
+    ASSERT_TRUE(renamed["ok"]) << renamed;
+    EXPECT_EQ(selected()["current_note_id"], trip);
+    ASSERT_TRUE(call("notes.delete", {{"id", folder}})["ok"]);
+    EXPECT_FALSE(selected().contains("current_note_id"));
+    EXPECT_TRUE(call("notes.select", {{"id", sibling}})["ok"]);
+    EXPECT_EQ(selected()["current_note_id"], sibling);
+}
+
 TEST_F(BridgeRouterTest, NotesRejectOneByteOverTheDocumentLimit) {
     bootstrap_epoch();
     const auto created = call("notes.create", {
@@ -5806,6 +5944,8 @@ TEST_F(BridgeRouterTest, AnnotationWireContractGuardsAndChatText) {
     const auto items = ordinary_note_items(call("notes.list")["result"]["items"]);
     ASSERT_EQ(items.size(), 2u);
     const auto id = items[1]["id"];
+    EXPECT_TRUE(call("notes.select", {{"id", id}})["ok"]);
+    EXPECT_EQ(call("app.bootstrap")["result"]["bootstrap"]["current_note_id"], id);
     EXPECT_EQ(items[1]["kind"], "annotation");
     EXPECT_TRUE(call("notes.get", {{"id", id}})["ok"]);
     EXPECT_TRUE(call("notes.saveScrollPosition", {{"id", id}, {"scroll_top", 17}})["ok"]);
@@ -5829,6 +5969,7 @@ TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     const auto id = created_note["result"]["id"].get<std::int64_t>();
     const auto original = nlohmann::json::parse(R"({"type":"doc","text":"original"})");
     ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", original}})["ok"]);
+    ASSERT_TRUE(call("notes.select", {{"id", id}})["ok"]);
     const auto original_bytes = stored_note_content(database_, id);
 
     const auto created = application_->create_vault(VaultCreate{
@@ -5842,6 +5983,7 @@ TEST_F(BridgeRouterTest, NotesRejectStaleVaultContext) {
     ack_delivery(*router_, connection_, *notification);
 
     epoch_ = switched.context_epoch;
+    EXPECT_FALSE(call("app.bootstrap")["result"]["bootstrap"].contains("current_note_id"));
     const auto changed = nlohmann::json::parse(R"({"type":"doc","text":"copy"})");
     ASSERT_TRUE(call("notes.save", {{"id", id}, {"document", changed}})["ok"]);
     epoch_ = old_epoch;
@@ -6083,6 +6225,11 @@ TEST_F(BridgeRouterTest, D1StorageBridgeSavesDisconnectsAndNotifiesNotes) {
             {"record", record.dump()},
         });
     }
+    const nlohmann::json deleted{{"kind", "note.delete"}, {"path", {"Current note"}}};
+    incoming.push_back({
+        {"rowid", incoming.size() + 1}, {"piece", 1}, {"pieces", 1},
+        {"record", deleted.dump()},
+    });
     std::atomic_bool fail_drop{false};
     D1Client::Transport transport =
         [&incoming, &fail_drop](const std::string&, const std::string& body,
@@ -6107,6 +6254,8 @@ TEST_F(BridgeRouterTest, D1StorageBridgeSavesDisconnectsAndNotifiesNotes) {
     BridgeRouter router(*application, {.command_deadline = 1s, .clock = [&] { return now; }});
     const std::string connection = router.open_connection();
     const auto epoch = application->context_epoch();
+    const auto selected = application->create_note_item({}, NoteItemKind::note, "Current note", epoch);
+    application->select_note(selected.id, epoch);
     std::uint64_t next_id = 1;
     int note_events = 0;
     auto receive = [&] {
@@ -6150,6 +6299,7 @@ TEST_F(BridgeRouterTest, D1StorageBridgeSavesDisconnectsAndNotifiesNotes) {
     EXPECT_FALSE(saved["result"].contains("api_token"));
     if (note_events == 0) ASSERT_TRUE(receive());
     EXPECT_EQ(note_events, 1);
+    EXPECT_FALSE(application->bootstrap().presentation.current_note_id);
     const auto notes = application->list_note_items(epoch);
     EXPECT_NE(std::ranges::find(notes, "Incoming folder", &NoteItem::name), notes.end());
     EXPECT_NE(std::ranges::find(notes, "Another incoming folder", &NoteItem::name), notes.end());

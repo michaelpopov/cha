@@ -857,13 +857,13 @@ void NotesService::summary_line(std::string connection_id, std::int64_t id, bool
             if (!providers.empty()) providers += " and ";
             providers += "Gemini Flex";
         }
-        std::ostringstream event;
-        event.imbue(std::locale::classic());
-        event << "Summary line completed for " << target << ". Estimated " << providers
+        std::ostringstream message;
+        message.imbue(std::locale::classic());
+        message << "Summary line completed for " << target << ". Estimated " << providers
             << " token cost: " << amount << (cost.incomplete ? " (incomplete)." : ".")
             << " Elapsed time: " << std::fixed << std::setprecision(3) << elapsed.count() << " s.";
-        impl_->store->append_event(EventSeverity::info, event.str());
-    } catch (...) { log_warn("Could not record summary line cost."); }
+        log_info(message.str());
+    } catch (...) { log_warn("Could not log summary line cost."); }
 }
 
 std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string connection_id,

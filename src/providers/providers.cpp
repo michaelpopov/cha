@@ -478,7 +478,9 @@ std::shared_ptr<JevRequest> Providers::make_jev_request(
     auto request = std::shared_ptr<JevRequest>(new JevRequest(std::move(input), std::move(notifier)));
     try {
         validate_jev_config(request->input_.config);
-        if (request->input_.prompt.empty() || request->input_.characters.empty())
+        if (request->input_.prompt.empty()
+            || (request->input_.ask_recipient && request->input_.characters.empty())
+            || (!request->input_.ask_recipient && !request->input_.current_note_name))
             throw std::invalid_argument("Invalid Jev input");
         std::unordered_set<std::string> keys, ids;
         for (const auto& option : request->input_.characters) {

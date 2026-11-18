@@ -147,6 +147,8 @@ struct RawCommand {
     // Only the desktop app reads paths on its own computer.
     bool attach_paths{};
     std::vector<VoiceInputUsage> voice_input_usage;
+    // The session thread reads the note; the bridge path does no database I/O.
+    std::optional<std::int64_t> current_note_id;
 };
 
 struct AttachTextFileCommand {
@@ -252,6 +254,7 @@ struct Bootstrap {
     std::vector<RecentSession> recent_sessions;
     std::string vault_name;
     std::vector<std::string> vaults;
+    std::optional<std::int64_t> current_note_id;
 };
 
 struct ProviderOption {

@@ -493,13 +493,20 @@ std::optional<EntryIdentity> SessionController::resolve_author(
 void SessionController::record_monologue(
     std::string_view author_id,
     std::string text,
-    ControllerUpdate& update) {
+    ControllerUpdate& update,
+    std::optional<std::int64_t> note_id,
+    const std::shared_ptr<SubmissionState>& submission) {
     if (trim_view(text).empty()) {
         update.notice = "Message to @- is empty";
         return;
     }
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return;
+    if (submission && submission->expired()) {
+        update.notice = "Submission expired";
+        return;
+    }
+    if (note_id && !attach_note(*note_id, true, submission, update)) return;
     TranscriptEntry entry = make_human_entry({
         .id = next_entry_id_++,
         .author = std::move(*author),
@@ -574,30 +581,41 @@ ControllerUpdate SessionController::add_note(
     if (submission && submission->expired()) return {.notice = "Submission expired"};
     if (shutdown_) return {.notice = "Request could not be dispatched"};
     if (is_generating()) return busy_notice();
-    TranscriptEntry entry;
-    try {
-        const NoteText note = read_note_(note_id);
-        if (submission && submission->expired()) return {.notice = "Submission expired"};
-        // Every request sends each note copy in the system prompt.
-        if (note.text.size() > 256 * 1024) {
-            return {.notice = "This note is too large to add to a chat. The limit is 256 KiB of text."};
-        }
-        entry = journal_.add_note(note, next_entry_id_);
-    } catch (const NoteError& error) {
-        return {.notice = error.what()};
-    } catch (const std::exception& error) {
-        log_warn("Could not add note to chat: " + std::string(error.what()));
-        return {.notice = "The note could not be added to this chat. Try again."};
-    }
-    ++next_entry_id_;
-    transcript_.add_entry(std::move(entry));
-    ControllerUpdate update{
-        .state = SnapshotRequired{},
-        .input_consumed = true,
-        .notice = "",
-    };
+    ControllerUpdate update;
+    if (!attach_note(note_id, false, submission, update)) return update;
+    update.input_consumed = true;
+    update.notice = "";
     publish_recent(update);
     return update;
+}
+
+std::optional<std::string> SessionController::attach_note(
+    std::int64_t note_id, bool skip_unchanged,
+    const std::shared_ptr<SubmissionState>& submission, ControllerUpdate& update) {
+    try {
+        NoteText note = read_note_(note_id);
+        if (submission && submission->expired()) {
+            update.notice = "Submission expired";
+            return std::nullopt;
+        }
+        // Every request sends each note copy in the system prompt.
+        if (note.text.size() > 256 * 1024) {
+            update.notice = "This note is too large to add to a chat. The limit is 256 KiB of text.";
+            return std::nullopt;
+        }
+        if (auto entry = journal_.add_note(note, next_entry_id_, skip_unchanged)) {
+            ++next_entry_id_;
+            transcript_.add_entry(std::move(*entry));
+            require_snapshot(update);
+        }
+        return std::move(note.name);
+    } catch (const NoteError& error) {
+        update.notice = error.what();
+    } catch (const std::exception& error) {
+        log_warn("Could not add note to chat: " + std::string(error.what()));
+        update.notice = "The note could not be added to this chat. Try again.";
+    }
+    return std::nullopt;
 }
 
 ControllerUpdate SessionController::add_text_file(
@@ -634,82 +652,73 @@ ControllerUpdate SessionController::add_text_file(
     return update;
 }
 
+std::optional<CurrentNote> SessionController::current_note(std::optional<std::int64_t> id) const {
+    if (!id || !workspace()->jev()) return std::nullopt;
+    try {
+        const auto item = read_item_(*id);
+        if (item && item->kind != NoteItemKind::folder) return CurrentNote{item->id, item->name};
+    } catch (const std::exception& error) {
+        log_warn("Could not read the current note: " + std::string(error.what()));
+    }
+    return std::nullopt;
+}
+
 ControllerUpdate SessionController::submit_prompt(
     std::string_view author_id,
     std::string text,
     std::string handle,
-    std::shared_ptr<SubmissionState> submission) {
+    std::shared_ptr<SubmissionState> submission,
+    std::optional<CurrentNote> current_note) {
     if (submission && submission->expired()) return {.notice = "Submission expired"};
-    if (shutdown_) {
-        return {.notice = "Request could not be dispatched"};
-    }
-    if (is_generating()) {
-        return busy_notice();
-    }
-    if (trim_view(text).empty() && handle.empty()) {
-        return {};
-    }
+    if (shutdown_) return {.notice = "Request could not be dispatched"};
+    if (is_generating()) return busy_notice();
 
-    ControllerUpdate update;
-    const std::shared_ptr<const Workspace> current = workspace();
-    const CharacterMetadata* target = nullptr;
+    const auto current = workspace();
     if (handle.empty()) {
+        if (trim_view(text).empty()) return {};
         if (current->jev()) {
-            return start_classification(author_id, std::move(text), std::move(submission));
+            return start_classification(author_id, std::move(text),
+                std::move(submission), std::move(current_note));
         }
-        return dispatch_target(author_id, std::move(text), default_character_id_);
+        return dispatch_target(author_id, std::move(text), default_character_id_, {}, submission);
+    }
+
+    CharacterId target;
+    if (handle == null_agent_handle) {
+        if (trim_view(text).empty()) return {.notice = "Message to @- is empty"};
+        target = null_agent_handle;
     } else {
-        if (handle == null_agent_handle) {
-            record_monologue(author_id, std::move(text), update);
-            return update;
-        }
-        const HandleResolution resolution =
-            current->resolve_forum_handle(identity_.forum_id, handle);
+        const auto resolution = current->resolve_forum_handle(identity_.forum_id, handle);
         if (resolution.match != HandleMatch::resolved) {
-            update.notice = format_handle_resolution_notice(
-                handle, resolution, *current, identity_.forum_id);
-            return update;
+            return {.notice = format_handle_resolution_notice(handle, resolution, *current, identity_.forum_id)};
         }
-        target = resolution.character;
+        if (trim_view(text).empty()) {
+            return {.notice = "Prompt for @" + resolution.character->display_name + " is empty"};
+        }
+        target = resolution.character->id;
     }
-    if (!target) {
-        throw std::logic_error("Default character is not among the forum characters");
+    if (current_note && current->jev()) {
+        return start_classification(author_id, std::move(text),
+            std::move(submission), std::move(current_note), std::move(target));
     }
-    if (trim_view(text).empty()) {
-        update.notice = "Prompt for @" + target->display_name + " is empty";
-        return update;
-    }
-
-    std::optional<EntryIdentity> author = resolve_author(author_id, update);
-    if (!author) return update;
-
-    SharedModelHistory history =
-        std::make_shared<const ModelHistory>(
-            transcript_.model_history());
-    update.input_consumed = true;
-    start_generation(
-        std::move(*author),
-        std::move(text),
-        std::vector<CharacterMetadata>{*target},
-        std::move(history),
-        update);
-    return update;
+    return dispatch_target(author_id, std::move(text), target, {}, submission);
 }
 
 ControllerUpdate SessionController::dispatch_target(
-    std::string_view author, std::string text, std::string_view target_id) {
+    std::string_view author, std::string text, std::string_view target_id,
+    std::optional<std::int64_t> note_id, const std::shared_ptr<SubmissionState>& submission) {
     if (target_id == null_agent_handle) {
         ControllerUpdate update;
-        record_monologue(author, std::move(text), update);
+        record_monologue(author, std::move(text), update, note_id, submission);
         return update;
     }
     const auto current = workspace();
     if (target_id == all_characters_target) {
-        return start_resolved_multicast(author, std::move(text), forum_characters(*current));
+        return start_resolved_multicast(author, std::move(text), forum_characters(*current), note_id, submission);
     }
     const auto* target = current->find_forum_character(identity_.forum_id, target_id);
     if (!target) return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
-    return start_resolved_multicast(author, std::move(text), {*target});
+    return start_resolved_multicast(author, std::move(text), {*target}, note_id, submission);
 }
 
 std::vector<CharacterMetadata> SessionController::forum_characters(const Workspace& current) const {
@@ -726,28 +735,40 @@ std::vector<CharacterMetadata> SessionController::forum_characters(const Workspa
 
 ControllerUpdate SessionController::start_classification(
     std::string_view author, std::string text,
-    std::shared_ptr<SubmissionState> submission) {
+    std::shared_ptr<SubmissionState> submission, std::optional<CurrentNote> current_note,
+    FixedRecipients recipients) {
     ControllerUpdate update;
     if (!resolve_author(author, update)) return update;
     if (!submission) submission = std::make_shared<SubmissionState>();
     if (submission->expired()) return {.notice = "Submission expired"};
     const auto current = workspace();
     std::vector<JevOption> options;
-    for (const auto& character : forum_characters(*current)) {
-        options.push_back({"character_" + std::to_string(options.size() + 1),
-            character.id, character.display_name,
-            current->find_character(character.id)->nicknames});
+    const bool ask_recipient = std::holds_alternative<std::monostate>(recipients);
+    if (ask_recipient) {
+        for (const auto& character : forum_characters(*current)) {
+            options.push_back({"character_" + std::to_string(options.size() + 1),
+                character.id, character.display_name,
+                current->find_character(character.id)->nicknames});
+        }
     }
     const auto deadline = std::min(submission->deadline,
         std::chrono::steady_clock::now() + jev_request_timeout);
     log_debug("Jev classification started: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id);
-    auto request = providers_.make_jev_request(
-        {*current->jev(), text, options, deadline}, notifier_);
+    auto request = providers_.make_jev_request({
+        .config = *current->jev(),
+        .prompt = text,
+        .characters = options,
+        .deadline = deadline,
+        .ask_recipient = ask_recipient,
+        .current_note_name = current_note ? std::optional{std::move(current_note->name)} : std::nullopt,
+    }, notifier_);
     pending_classification_ = PendingClassification{
         std::string(author), std::move(text), default_character_id_,
         std::move(options), std::move(submission),
-        deadline, std::move(request)};
+        deadline, std::move(request), std::nullopt,
+        current_note ? std::optional{current_note->id} : std::nullopt,
+        std::move(recipients)};
     update.state = SnapshotRequired{};
     update.notice = "";
     start_session_name(update, pending_classification_->text);
@@ -804,24 +825,28 @@ ControllerUpdate SessionController::finish_classification() {
         submission_result_ = SubmissionResult{SubmissionOutcome::cancelled, update};
         return update;
     }
-    const bool self_note = result.outcome == JevOutcome::success
-        && result.choice == "self_note";
+    const bool asked_recipient = std::holds_alternative<std::monostate>(input.recipients);
     log_debug("Jev classification finished: forum_id=" + identity_.forum_id
         + " session_id=" + identity_.session_id
         + " success=" + (result.outcome == JevOutcome::success ? "true" : "false"));
     log_debug_payload("Jev recipient decision", result.choice);
     log_debug_payload("Jev classification diagnostic", result.message);
     std::string target = input.fallback;
-    bool failed = result.outcome == JevOutcome::failure;
-    if (!failed && result.choice == "all_characters") target = std::string(all_characters_target);
-    else if (self_note) target = std::string(null_agent_handle);
-    else if (!failed && result.choice != "undefined") {
-        const auto selected = std::ranges::find(input.options, result.choice, &JevOption::key);
-        if (selected == input.options.end()
-            || !workspace()->find_forum_character(identity_.forum_id, selected->character_id)) {
-            failed = true;
-            result.message = "Selected recipient is no longer available";
-        } else target = selected->character_id;
+    bool failed = asked_recipient && result.outcome == JevOutcome::failure;
+    const bool selected_recipient = asked_recipient && !failed && result.choice != "undefined";
+    if (selected_recipient) {
+        if (result.choice == "all_characters") target = all_characters_target;
+        else if (result.choice == "self_note") target = null_agent_handle;
+        else {
+            const auto selected = std::ranges::find(input.options, result.choice, &JevOption::key);
+            if (selected == input.options.end()
+                || !workspace()->find_forum_character(identity_.forum_id, selected->character_id)) {
+                failed = true;
+                result.message = "Selected recipient is no longer available";
+            } else target = selected->character_id;
+        }
+    } else if (const auto* fixed = std::get_if<CharacterId>(&input.recipients)) {
+        target = *fixed;
     }
     if (input.submission->expired()) {
         ready_name_.reset();
@@ -831,8 +856,12 @@ ControllerUpdate SessionController::finish_classification() {
     if (failed) log_warn("Recipient detection failed; using captured fallback target: " + result.message);
     // One owner-thread handoff: no idle publication and no classifier re-entry.
     const auto previous_target = default_character_id_;
-    if (!failed && result.choice != "undefined") default_character_id_ = target;
-    auto dispatched = dispatch_target(input.author, std::move(input.text), target);
+    if (selected_recipient && !failed) default_character_id_ = target;
+    const auto note_id = result.use_current_note ? input.note_id : std::nullopt;
+    auto* multicast = std::get_if<std::vector<CharacterMetadata>>(&input.recipients);
+    auto dispatched = multicast
+        ? start_resolved_multicast(input.author, std::move(input.text), std::move(*multicast), note_id, input.submission)
+        : dispatch_target(input.author, std::move(input.text), target, note_id, input.submission);
     if (dispatched.input_consumed) {
         if (failed) {
             std::string notice;
@@ -853,8 +882,10 @@ ControllerUpdate SessionController::finish_classification() {
     merge(update, std::move(dispatched));
     save_name_after_acceptance();
     submission_result_ = SubmissionResult{
-        update.input_consumed ? SubmissionOutcome::accepted : SubmissionOutcome::failed, update};
-    if (update.input_consumed && !failed && result.choice != "undefined"
+        update.input_consumed ? SubmissionOutcome::accepted
+            : input.submission->expired() ? SubmissionOutcome::expired : SubmissionOutcome::failed,
+        update};
+    if (update.input_consumed && selected_recipient && !failed
         && target != all_characters_target && target != null_agent_handle) {
         submission_result_->persist_default_character_id = target;
     }
@@ -868,7 +899,8 @@ void SessionController::start_generation(
     std::string text,
     std::vector<CharacterMetadata> targets,
     SharedModelHistory history,
-    ControllerUpdate& update) {
+    ControllerUpdate& update,
+    const std::optional<std::string>& current_note_name) {
     if (!history || targets.empty()) {
         throw std::invalid_argument(
             "Generation requires history and at least one target");
@@ -974,6 +1006,7 @@ void SessionController::start_generation(
                     .prompt_text = text,
                     .prompt_cache_key = cache_key,
                     .created_at = unix_now(),
+                    .current_note_name = current_note_name,
                 },
                 .summary_tool = summaries ? summary_tool_ : SummaryTool{},
                 .library_store_ids = std::move(library_store_ids),
@@ -1207,7 +1240,8 @@ ControllerUpdate SessionController::start_multicast(
     std::string_view author_id,
     std::string text,
     std::vector<std::string> handles,
-    std::shared_ptr<SubmissionState> submission) {
+    std::shared_ptr<SubmissionState> submission,
+    std::optional<CurrentNote> current_note) {
     if (submission && submission->expired()) return {.notice = "Submission expired"};
     if (shutdown_) {
         return {.notice = "Request could not be dispatched"};
@@ -1241,13 +1275,19 @@ ControllerUpdate SessionController::start_multicast(
             targets.push_back(*resolution.character);
         }
     }
-    return start_resolved_multicast(author_id, std::move(text), std::move(targets));
+    if (current_note && current->jev() && !targets.empty() && !trim_view(text).empty()) {
+        return start_classification(author_id, std::move(text),
+            std::move(submission), std::move(current_note), std::move(targets));
+    }
+    return start_resolved_multicast(author_id, std::move(text), std::move(targets), {}, submission);
 }
 
 ControllerUpdate SessionController::start_resolved_multicast(
     std::string_view author_id,
     std::string text,
-    std::vector<CharacterMetadata> targets) {
+    std::vector<CharacterMetadata> targets,
+    std::optional<std::int64_t> note_id,
+    const std::shared_ptr<SubmissionState>& submission) {
     if (trim_view(text).empty()) {
         return {.notice = "Multicast prompt is empty"};
     }
@@ -1258,6 +1298,19 @@ ControllerUpdate SessionController::start_resolved_multicast(
     ControllerUpdate update;
     std::optional<EntryIdentity> author = resolve_author(author_id, update);
     if (!author) return update;
+
+    if (submission && submission->expired()) return {.notice = "Submission expired"};
+    const auto current = workspace();
+    if (std::ranges::any_of(targets, [&](const auto& target) {
+            return !current->find_forum_character(identity_.forum_id, target.id);
+        })) {
+        return {.notice = "The selected recipient is no longer in this forum. Choose a target and send again."};
+    }
+    std::optional<std::string> note_name;
+    if (note_id) {
+        note_name = attach_note(*note_id, true, submission, update);
+        if (!note_name) return update;
+    }
 
     // Capture once so every child uses the same model history.
     SharedModelHistory history =
@@ -1270,7 +1323,8 @@ ControllerUpdate SessionController::start_resolved_multicast(
         std::move(text),
         std::move(targets),
         std::move(history),
-        update);
+        update,
+        note_name);
     return update;
 }
 

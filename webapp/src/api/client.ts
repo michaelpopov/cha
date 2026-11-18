@@ -202,6 +202,7 @@ export interface NotesClient {
     kind: 'folder' | 'note',
     name: string,
   ) => Promise<NoteItem>;
+  selectNote: (id: number) => Promise<void>;
   getNote: (id: number, mode?: NoteTextMode) => Promise<NoteContent>;
   saveNote: (id: number, document: Record<string, unknown>) => Promise<components['schemas']['NoteSaveResult']>;
   saveNoteScrollPosition: (id: number, scrollTop: number) => Promise<void>;

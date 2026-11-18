@@ -148,8 +148,8 @@ async function nativeParity() {
     setValue(field('Name, URL, or file path', dialog), 'UI smoke note');
     await click('Create', dialog);
     let note = await screen('Note');
-    const prompt = await until('Notes composer', () => note.querySelector('textarea[aria-label="Prompt"]'));
     await until('note editor', () => note.querySelector('.ProseMirror[contenteditable="true"]'));
+    const prompt = await until('Notes composer', () => note.querySelector('textarea[aria-label="Prompt"]'));
     const notes = composerLayout();
     check(Math.abs(notes.left - chat.left) <= 1 && Math.abs(notes.width - chat.width) <= 1,
       'Notes composer does not align with Chat');
@@ -413,18 +413,15 @@ async function nativeParity() {
       completed.push('Prompt list, literal text, edit cancel, upload review, save and reopen');
     }
 
-    step = 'note persistence';
-    const row = Array.from(document.querySelectorAll('.cha-notes-row')).find((node) => (
-      node.querySelector('.cha-notes-label')?.textContent === 'UI smoke note'
-    ));
-    check(row, 'Created note is missing from the tree');
-    row.click();
+    step = 'current note after Settings';
+    await until('current note in the Settings title', () => document.title === 'CHA: Welcome — UI smoke note');
+    await click('Notes');
     await screen('Note');
     await until('saved note content', () => (
       document.querySelector('.ProseMirror')?.textContent.includes('Saved by the UI smoke test.')
     ));
     composerLayout();
-    completed.push('Note persistence after navigation');
+    completed.push('Current note title and editor restored after navigation');
     return { ok: true, width: innerWidth, completed };
   } catch (error) {
     return { ok: false, width: innerWidth, step, completed, reason: String(error.message || error) };

@@ -300,6 +300,7 @@ void to_json(nlohmann::json& json, const Bootstrap& value) {
             {"personas", value.personas},
             {"characters", value.characters}, {"forums", value.forums},
             {"recent_sessions", value.recent_sessions}};
+    if (value.current_note_id) json["current_note_id"] = *value.current_note_id;
 }
 
 void to_json(nlohmann::json& json, const ProviderOption& value) {

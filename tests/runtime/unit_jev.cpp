@@ -3,6 +3,7 @@
 #include "providers/api_key_store.h"
 #include "runtime/live_session_manager.h"
 #include "runtime/text_input.h"
+#include "storage/folder_store_storage.h"
 #include "storage/sqlite_storage.h"
 #include "support/test_live_session.h"
 #include "support/test_notifier.h"
@@ -60,6 +61,40 @@ TEST(JevProtocol, DescribesNicknamesInCharacterCriteria) {
     EXPECT_EQ(criteria["character_2"], "Marcus (also called \"Emperor\", \"The \\\"Stoic\\\"\"): "
         "the user addresses Marcus, by name or nickname, as the single intended recipient "
         "and requests a response, rather than merely mentioning this character.");
+}
+
+TEST(JevProtocol, ParsesRecipientAndCurrentNoteDecisionsIndependently) {
+    auto input = jev_input();
+    input.current_note_name = "Trip plan";
+    const auto body = make_jev_body(input);
+    EXPECT_EQ(body["state"], (nlohmann::ordered_json{
+        {"prompt", input.prompt}, {"current_note_name", "Trip plan"}}));
+    EXPECT_EQ(body["questions"].size(), 2u);
+    nlohmann::json response = {{"answers", {
+        {"recipient", {{"type", "choice"}, {"choice", "character_2"}}},
+        {"use_current_note", {{"type", "choice"}, {"choice", "yes"}}},
+    }}};
+    EXPECT_TRUE(parse_jev_result(response, input).use_current_note);
+    EXPECT_EQ(parse_jev_result(response, input).choice, "character_2");
+    for (const auto& invalid : {nlohmann::json(nullptr), nlohmann::json("yes"),
+             nlohmann::json{{"type", "text"}, {"choice", "yes"}},
+             nlohmann::json{{"type", "choice"}, {"choice", "YES"}}}) {
+        auto malformed = response;
+        malformed["answers"]["use_current_note"] = invalid;
+        EXPECT_EQ(parse_jev_result(malformed, input).choice, "character_2");
+        EXPECT_FALSE(parse_jev_result(malformed, input).use_current_note);
+    }
+    auto recipient_only = input;
+    recipient_only.current_note_name.reset();
+    EXPECT_FALSE(parse_jev_result(response, recipient_only).use_current_note);
+    response["answers"].erase("recipient");
+    EXPECT_EQ(parse_jev_result(response, input).outcome, JevOutcome::failure);
+    EXPECT_TRUE(parse_jev_result(response, input).use_current_note);
+    input.ask_recipient = false;
+    EXPECT_FALSE(make_jev_body(input)["questions"].contains("recipient"));
+    EXPECT_EQ(parse_jev_result(response, input).outcome, JevOutcome::success);
+    EXPECT_TRUE(parse_jev_result(response, input).use_current_note);
+    EXPECT_FALSE(parse_jev_result(nullptr, input).use_current_note);
 }
 
 TEST(JevConfiguration, ValidatesAtomicallyRoundTripsAndDisablesWithoutDeletingKey) {
@@ -314,6 +349,252 @@ protected:
     }
     CommandResult send(std::string text) { return handle_text_input(*controller, "reader", std::move(text)); }
 };
+
+class CurrentNoteRouting : public JevRouting {
+protected:
+    struct AnswerBackend final : ModelBackend {
+        std::vector<GenerationRequest>& requests;
+        explicit AnswerBackend(std::vector<GenerationRequest>& requests) : requests(requests) {}
+        RequestPayload prepare(const GenerationRequest& input) override {
+            requests.push_back(input);
+            return {};
+        }
+        GenerationResult perform(RequestPayload, const GenerationDeltaSink& sink,
+            const std::atomic_bool&) override {
+            sink({GenerationDeltaKind::answer, "Answer"});
+            return {};
+        }
+    };
+
+    std::vector<GenerationRequest> requests;
+    std::vector<std::string> system_prompts;
+    CurrentNote trip{};
+
+    void SetUp() override {
+        JevRouting::SetUp();
+        controller.reset();
+        providers->shutdown();
+        providers = std::make_shared<Providers>(
+            [this](SharedCharacterDefinition definition) {
+                system_prompts.push_back(definition->system_prompt);
+                return std::make_unique<AnswerBackend>(requests);
+            },
+            [this](auto worker) { workers.push_back(std::move(worker)); },
+            [this](const auto& input, const auto&) { classified.push_back(input); return decision; });
+        reopen();
+        const auto note = store->create_note_item({}, NoteItemKind::note, "Trip plan");
+        trip = {note.id, note.name};
+        store->save_note(trip.id, note_document_from_text("Full plan"));
+        decision.use_current_note = true;
+    }
+
+    void reopen() {
+        controller.reset();
+        controller = SessionController::from_workspace(
+            [this] { return store->snapshot(); },
+            [this](auto id) { return store->get_note_text(id, true); },
+            [this](auto id) { return store->get_note_item(id); },
+            "guide", "reader", journal.path(), 1, {}, *providers, notifier,
+            load_session_state(journal.path()), {"lobby", "session"});
+    }
+
+    CommandResult send_current(std::string text) {
+        return handle_text_input(*controller, "reader", std::move(text), {}, false, trip);
+    }
+
+    std::size_t note_notices() {
+        return std::ranges::count_if(controller->view().transcript.entries, [](const auto& entry) {
+            return entry.kind == EntryKind::notice
+                && (entry.text.starts_with("Added note") || entry.text.starts_with("Updated this chat’s copy"));
+        });
+    }
+};
+
+TEST_F(CurrentNoteRouting, FixedRecipientsAskOnlyAboutTheNoteAndKeepTheDefault) {
+    decision.choice = "all_characters"; // An unsolicited recipient choice cannot change routing.
+    const auto packing = store->create_note_item({}, NoteItemKind::note, "Packing list");
+    store->save_note(packing.id, note_document_from_text("Shoes"));
+    ASSERT_TRUE(controller->add_note(packing.id).input_consumed);
+    ASSERT_TRUE(controller->add_note(trip.id).input_consumed);
+    store->save_compressed_note(trip.id, "Cancellation is free on Friday.");
+    const CurrentNote selected_at_send = trip;
+    ASSERT_FALSE(send_current("@Marcus Quote the cancellation clause.").clear_input);
+    ASSERT_EQ(workers.size(), 1u);
+    trip = {packing.id, packing.name};
+    (void)store->rename_note_item(selected_at_send.id, "Hotel plan");
+    finish();
+    auto result = controller->take_submission_result();
+    ASSERT_TRUE(result);
+    EXPECT_TRUE(result->update.input_consumed);
+    EXPECT_EQ(result->update.notice.value_or(""), "");
+    EXPECT_FALSE(result->persist_default_character_id);
+    EXPECT_EQ(controller->view().default_character_id, "guide");
+    ASSERT_EQ(classified.size(), 1u);
+    EXPECT_FALSE(classified[0].ask_recipient);
+    EXPECT_EQ(classified[0].current_note_name, "Trip plan");
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests[0].run.target.id, "marcus");
+    const auto projected = project_model_context(requests[0], system_prompts[0]);
+    EXPECT_NE(projected.front().content.find("# Note: Hotel plan\n\nCancellation is free on Friday."), std::string::npos);
+    EXPECT_NE(projected.front().content.find("# Note: Packing list\n\nShoes"), std::string::npos);
+    EXPECT_EQ(projected.front().content.find("Full plan"), std::string::npos);
+    EXPECT_TRUE(projected.back().content.ends_with("\nThe user refers to the note “Hotel plan”."));
+    const auto entries = controller->view().transcript.entries;
+    ASSERT_GE(entries.size(), 3u);
+    EXPECT_EQ(entries[entries.size() - 3].text, "Updated this chat’s copy of note “Hotel plan”.");
+    EXPECT_EQ(entries[entries.size() - 2].text, "Quote the cancellation clause.");
+
+    trip = selected_at_send;
+    const auto notices = note_notices();
+    (void)send_current("/mcast What do you think of this note?");
+    finish();
+    ASSERT_EQ(requests.size(), 3u);
+    EXPECT_EQ(note_notices(), notices);
+    EXPECT_EQ(requests[1].run.current_note_name, "Hotel plan");
+    EXPECT_EQ(requests[2].run.current_note_name, "Hotel plan");
+    EXPECT_EQ(controller->view().default_character_id, "guide");
+    EXPECT_FALSE(classified.back().ask_recipient);
+
+    store->save_compressed_note(trip.id, "Cancellation terms changed.");
+    (void)send_current("@- Keep my current note in this chat for later.");
+    finish();
+    ASSERT_EQ(classified.size(), 3u);
+    EXPECT_FALSE(classified.back().ask_recipient);
+    EXPECT_EQ(requests.size(), 3u);
+    EXPECT_EQ(note_notices(), notices + 1);
+    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, null_agent_handle);
+
+    // Reopening and deleting the original keep both copies usable.
+    store->delete_note_item(trip.id);
+    reopen();
+    EXPECT_TRUE(send("@Marcus Make that answer shorter.").clear_input);
+    finish();
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_FALSE(requests.back().run.current_note_name);
+    EXPECT_NE(system_prompts.back().find("Cancellation terms changed."), std::string::npos);
+    const auto followup = project_model_context(requests.back(), system_prompts.back());
+    for (const auto& message : followup)
+        EXPECT_EQ(message.content.find("The user refers to the note"), std::string::npos);
+    EXPECT_TRUE(send_current("/clear").clear_input);
+    EXPECT_EQ(classified.size(), 3u);
+    EXPECT_TRUE(send("@Marcus Follow up.").clear_input);
+    finish();
+    EXPECT_EQ(system_prompts.back().find("# Note:"), std::string::npos);
+}
+
+TEST_F(CurrentNoteRouting, SessionThreadReadsTheSelectedNoteName) {
+    const auto note = controller->current_note(trip.id);
+    ASSERT_TRUE(note);
+    EXPECT_EQ(note->id, trip.id);
+    EXPECT_EQ(note->name, "Trip plan");
+    EXPECT_FALSE(controller->current_note(std::nullopt));
+    const auto folder = store->create_note_item({}, NoteItemKind::folder, "Trips");
+    EXPECT_FALSE(controller->current_note(folder.id));
+    store->delete_note_item(trip.id);
+    EXPECT_FALSE(controller->current_note(trip.id));
+}
+
+TEST_F(CurrentNoteRouting, ImplicitFallbackCanAttachAndSelfNoteCanAttach) {
+    const auto l1 = store->commit_note_level(trip.id, 1, note_document_from_text("Level one"), "Saved L1");
+    const auto l2 = store->commit_note_level(trip.id, 2, note_document_from_text("Level two"), "Saved L2");
+    EXPECT_EQ(store->get_note(trip.id, NoteTextMode::l1).document_id, l1);
+    EXPECT_EQ(store->get_note(trip.id, NoteTextMode::l2).document_id, l2);
+    decision = {JevOutcome::failure, {}, "Invalid recipient decision", true};
+    (void)send_current("What does the current note say?");
+    finish();
+    ASSERT_EQ(classified.size(), 1u);
+    EXPECT_TRUE(classified.front().ask_recipient);
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_EQ(requests.front().run.target.id, "guide");
+    EXPECT_EQ(requests.front().run.current_note_name, "Trip plan");
+    EXPECT_NE(system_prompts.front().find("# Note: Trip plan\n\nFull plan"), std::string::npos);
+    EXPECT_EQ(system_prompts.front().find("Level one"), std::string::npos);
+    EXPECT_EQ(system_prompts.front().find("Level two"), std::string::npos);
+    EXPECT_EQ(controller->take_submission_result()->update.notice,
+        "Recipient detection failed. Sent to Guide.");
+
+    decision = {JevOutcome::success, "self_note", {}, true};
+    store->save_note(trip.id, note_document_from_text("Updated plan"));
+    (void)send_current("Note to self: keep my current note with this message.");
+    finish();
+    EXPECT_EQ(requests.size(), 1u);
+    EXPECT_EQ(note_notices(), 2u);
+    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, null_agent_handle);
+    EXPECT_EQ(controller->view().default_character_id, null_agent_handle);
+
+    decision = {JevOutcome::success, "undefined", {}, true};
+    (void)store->rename_note_item(trip.id, "New title");
+    (void)send_current("Keep my current note here.");
+    finish();
+    EXPECT_EQ(requests.size(), 1u);
+    EXPECT_EQ(note_notices(), 3u);
+    EXPECT_EQ(controller->view().transcript.entries.back().addressed_to, null_agent_handle);
+}
+
+TEST_F(CurrentNoteRouting, MissingAndOversizedSourcesCannotUseAnOlderCopy) {
+    constexpr std::size_t limit = 256 * 1024;
+    const std::string exact = std::string(limit - 2, 'x') + "é";
+    store->save_note(trip.id, note_document_from_text(exact));
+    (void)send_current("@- Keep this note.");
+    finish();
+    ASSERT_TRUE(controller->take_submission_result()->update.input_consumed);
+    auto before = controller->view().transcript.entries.size();
+    decision = {JevOutcome::success, "character_2", {}, true};
+    (void)send_current("Read my current note.");
+    store->save_note(trip.id, note_document_from_text(exact + "x"));
+    finish();
+    auto oversize = controller->take_submission_result();
+    ASSERT_TRUE(oversize);
+    EXPECT_FALSE(oversize->update.input_consumed);
+    EXPECT_EQ(oversize->update.notice, "This note is too large to add to a chat. The limit is 256 KiB of text.");
+    EXPECT_EQ(controller->view().transcript.entries.size(), before);
+    EXPECT_EQ(controller->view().default_character_id, "guide");
+    EXPECT_TRUE(requests.empty());
+
+    (void)send_current("/mcast Read my current note.");
+    store->delete_note_item(trip.id);
+    finish();
+    auto missing = controller->take_submission_result();
+    ASSERT_TRUE(missing);
+    EXPECT_FALSE(missing->update.input_consumed);
+    EXPECT_EQ(missing->update.notice, "That note was not found.");
+    EXPECT_EQ(controller->view().transcript.entries.size(), before);
+    EXPECT_TRUE(requests.empty());
+    SessionJournal copy(journal.path(), 1);
+    EXPECT_EQ(copy.notes_prompt(), "# Note: Trip plan\n\n" + exact);
+}
+
+TEST_F(CurrentNoteRouting, SkipsNonMessagesAndIgnoresUnavailableNoteDetection) {
+    const auto ref = note_item_ref_id(trip.id);
+    ASSERT_TRUE(send_current(ref).clear_input);
+    ASSERT_TRUE(send_current(ref).clear_input);
+    EXPECT_EQ(note_notices(), 2u);
+    EXPECT_TRUE(classified.empty());
+    EXPECT_FALSE(send_current("@Unknown Read this note.").clear_input);
+    EXPECT_TRUE(classified.empty());
+
+    decision = {JevOutcome::failure, {}, "Recipient detection timed out"};
+    (void)send_current("@Marcus Read this note.");
+    finish();
+    ASSERT_EQ(requests.size(), 1u);
+    EXPECT_FALSE(requests.back().run.current_note_name);
+    EXPECT_EQ(controller->take_submission_result()->update.notice.value_or(""), "");
+    EXPECT_EQ(note_notices(), 2u);
+
+    (void)send_current("@Marcus Read this note.");
+    (void)controller->request_stop();
+    run_workers();
+    (void)controller->receive_events(100);
+    EXPECT_EQ(requests.size(), 1u);
+    EXPECT_EQ(note_notices(), 2u);
+
+    store->apply_jev_update(std::nullopt);
+    EXPECT_TRUE(send_current("@Marcus Read this note.").clear_input);
+    finish();
+    EXPECT_EQ(classified.size(), 1u);
+    ASSERT_EQ(requests.size(), 2u);
+    EXPECT_FALSE(requests.back().run.current_note_name);
+}
 
 class SessionNaming : public JevRouting {
 protected:

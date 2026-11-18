@@ -150,6 +150,7 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::notes_create, "notes.create"},
     {Method::notes_import_book, "notes.importBook"},
     {Method::notes_get, "notes.get"},
+    {Method::notes_select, "notes.select"},
     {Method::session_summary_generate, "sessionSummary.generate"},
     {Method::session_summary_commit, "sessionSummary.commit"},
     {Method::session_summary_abandon, "sessionSummary.abandon"},

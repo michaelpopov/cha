@@ -70,6 +70,7 @@ function client(overrides: Partial<NotesClient> = {}): NotesClient {
     storeClose: async () => undefined,
     importEpub: async () => { throw new Error('notes.importBook'); },
     createNoteItem: async () => { throw new Error('notes.create'); },
+    selectNote: async () => undefined,
     getNote: async () => { throw new Error('notes.get'); },
     readNotePicture: async () => new Uint8Array(),
     readNotePage: async () => { throw new Error('notes.readPage'); },

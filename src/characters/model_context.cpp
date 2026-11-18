@@ -189,6 +189,10 @@ std::vector<ModelMessage> project_model_context(
             input.run.created_at,
             input.run.prompt_text),
     });
+    if (input.run.current_note_name) {
+        messages.back().content += "\nThe user refers to the note “"
+            + *input.run.current_note_name + "”.";
+    }
     return messages;
 }
 

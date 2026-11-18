@@ -3,6 +3,7 @@ import {
 } from './noteGuards';
 import { prepareEpubImport } from '../notes/epubImport';
 import { readFileBytes } from '../notes/pictures';
+import type { components } from './schema';
 
 import {
   backgroundAudioStartRejected,
@@ -1025,6 +1026,11 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { parent_id: parentId, kind, name },
       isNoteItem,
     ),
+    selectNote: async (id) => {
+      const params: components['schemas']['NotesSelectRequest'] = { id };
+      await call('notes.select', params, (value): value is Record<string, never> =>
+        isRecord(value) && hasExactKeys(value, []));
+    },
     getNote: (id, mode) => call('notes.get', { id, ...(mode === undefined ? {} : { mode }) },
       (value): value is NoteContent => isNoteContent(value) && value.id === id
         && (value.document_id === id || (mode !== undefined && mode !== 'full_text'))),

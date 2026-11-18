@@ -2912,10 +2912,9 @@ bool WorkspaceConfigStore::register_note_audio(std::int64_t id, std::string_view
     const std::lock_guard lock(impl_->mutex);
     return note_audio_register(*impl_->database, id, batch_id, voice);
 }
-bool WorkspaceConfigStore::finish_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips,
-    std::string_view event_details) {
+bool WorkspaceConfigStore::finish_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips) {
     const std::lock_guard lock(impl_->mutex);
-    return note_audio_finish(*impl_->database, id, clips, event_details);
+    return note_audio_finish(*impl_->database, id, clips);
 }
 bool WorkspaceConfigStore::retire_note_audio(std::int64_t id, EventSeverity severity, std::string_view message) {
     const std::lock_guard lock(impl_->mutex);
@@ -3055,6 +3054,7 @@ std::vector<std::int64_t> WorkspaceConfigStore::folder_ids_in_subtree(
 
 std::optional<NoteItem> WorkspaceConfigStore::get_note_item(std::int64_t id) const {
     const std::lock_guard lock(impl_->mutex);
+    if (!impl_->database) return std::nullopt;
     return note_find_item(*impl_->database, id);
 }
 
