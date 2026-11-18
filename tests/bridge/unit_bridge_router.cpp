@@ -729,6 +729,74 @@ TEST_F(BridgeRouterTest, NoteAudioListsVoicesFromTheConfiguredServiceAcrossPages
         EXPECT_NE(request.find("x-goog-api-key: audio-secret\r\n"), std::string::npos);
 }
 
+TEST_F(BridgeRouterTest, NoteAudioCachesOnlyCompleteVoiceCatalogsForTheCurrentCredential) {
+    bootstrap_epoch();
+    MockHttpServer server({
+        http_response("application/json", R"({
+            "voices":[{"id":"partial","displayName":"Partial"}],"nextPageToken":"next"
+        })"),
+        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        http_response("application/json", R"({"voices":[{"id":"kore","displayName":"Kore"}]})"),
+        http_response("application/json", R"({"voices":[{"id":"achernar","displayName":"Achernar"}]})"),
+    });
+    const auto key = application_->create_api_key({.display_name = "Audio", .value = "old-secret"}, epoch_);
+    (void)application_->save_notes_settings({.audio_url = "http://127.0.0.1:" + std::to_string(server.port()),
+        .audio_api_key = key.id}, epoch_);
+    server.start();
+    EXPECT_EQ(call("noteAudio.listVoices")["error"]["code"], "internal_error");
+    const nlohmann::json original{{"voices", nlohmann::json::array({{{"id", "kore"}, {"display_name", "Kore"}}})}};
+    EXPECT_EQ(call("noteAudio.listVoices")["result"], original);
+    EXPECT_EQ(call("noteAudio.listVoices")["result"], original);
+
+    (void)application_->replace_api_key_value(key.id, {.value = "new-secret"}, epoch_);
+    const nlohmann::json updated{{"voices", nlohmann::json::array({{{"id", "achernar"}, {"display_name", "Achernar"}}})}};
+    EXPECT_EQ(call("noteAudio.listVoices")["result"], updated);
+    server.join();
+    EXPECT_EQ(call("noteAudio.listVoices")["result"], updated);
+
+    const auto& requests = server.requests();
+    ASSERT_EQ(requests.size(), 4u);
+    EXPECT_TRUE(requests[2].starts_with("GET /v1beta/voices?page_size=1000 "));
+    EXPECT_NE(requests[2].find("x-goog-api-key: old-secret\r\n"), std::string::npos);
+    EXPECT_NE(requests[3].find("x-goog-api-key: new-secret\r\n"), std::string::npos);
+}
+
+TEST_F(BridgeRouterTest, NoteAudioPreviewReturnsTheServiceWavAsAReleasableResource) {
+    bootstrap_epoch();
+    const nlohmann::json params{{"voice", "kore"}, {"text", "Hello"}};
+    EXPECT_EQ(call("noteAudio.preview", params)["error"]["code"], "invalid_argument");
+    const auto wav = "RIFF" + std::string(4, '\0') + "WAVE" + std::string(32, '\0');
+    MockHttpServer server({http_response("application/json", nlohmann::json{{"candidates", nlohmann::json::array({
+        {{"content", {{"parts", nlohmann::json::array({{{"inlineData", {
+            {"mimeType", "audio/wav"}, {"data", encode_base64(wav)}}}}})}}}}})}}.dump())});
+    const auto key = application_->create_api_key({.display_name = "Audio", .value = "audio-secret"}, epoch_);
+    (void)application_->save_notes_settings({.audio_url = "http://127.0.0.1:" + std::to_string(server.port()),
+        .audio_api_key = key.id}, epoch_);
+    EXPECT_EQ(call("noteAudio.preview", {{"voice", "kore"}, {"text", " "}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("noteAudio.preview", {{"voice", ""}, {"text", "Hello"}})["error"]["code"], "invalid_argument");
+    EXPECT_EQ(call("noteAudio.preview", {{"voice", "kore"}, {"text", std::string(513, 'a')}})["error"]["code"],
+        "invalid_argument");
+    server.start();
+    const auto reply = call("noteAudio.preview", params);
+    server.join();
+    ASSERT_TRUE(reply["ok"].get<bool>()) << reply;
+    EXPECT_EQ(reply["result"]["mime_type"], "audio/wav");
+    const auto resource_id = reply["result"]["resource_id"].get<std::string>();
+    const auto resource = application_->read_resource(connection_, resource_id);
+    ASSERT_TRUE(resource);
+    EXPECT_EQ(resource->body, wav);
+    EXPECT_TRUE(call("speech.release", {{"resource_id", resource_id}})["ok"]);
+    EXPECT_FALSE(application_->read_resource(connection_, resource_id));
+
+    ASSERT_EQ(server.requests().size(), 1u);
+    const auto& request = server.requests()[0];
+    EXPECT_TRUE(request.starts_with("POST /v1beta/models/gemini-3.8-flash-tts:generateContent "));
+    EXPECT_NE(request.find("x-goog-api-key: audio-secret\r\n"), std::string::npos);
+    const auto body = nlohmann::json::parse(request_body(request));
+    EXPECT_EQ(body["contents"][0]["parts"][0]["text"], "Hello");
+    EXPECT_EQ(body["generationConfig"]["speechConfig"]["voiceConfig"]["voice"], "kore");
+}
+
 TEST_F(BridgeRouterTest, NoteAudioValidatesBlockPayloadAndKeepsOfflineLookupIndependentOfSettings) {
     bootstrap_epoch();
     const auto note = application_->create_note_item({}, NoteItemKind::note, "Narration", epoch_);

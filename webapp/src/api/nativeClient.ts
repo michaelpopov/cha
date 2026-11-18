@@ -362,6 +362,14 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       return bridge.contextEpoch();
     },
     listVoices: async () => (await callInContext('noteAudio.listVoices', {}, contextEpoch(), isAudioVoiceList)).voices,
+    async previewVoice(voice, text, signal) {
+      const epoch = contextEpoch();
+      requireContext(epoch);
+      const result = await bridge.invoke('noteAudio.preview', { voice, text }, { signal, cancelMethod: 'speech.cancel' });
+      requireContext(epoch);
+      if (!isMediaResource(result)) throw new ChaProtocolError();
+      return result;
+    },
     backgroundStatus,
     startBackground,
     info: (id: number) => call('noteAudio.info', { id }, (value): value is NoteAudioInfo =>

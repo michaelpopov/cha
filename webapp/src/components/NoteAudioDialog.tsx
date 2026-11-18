@@ -181,15 +181,15 @@ function FolderNoteAudioDialog({ client, targets, epoch, resolveDocumentId, prep
 
   return createPortal(<dialog ref={element} className="cha-dialog cha-note-audio-dialog" aria-label="Generate note audio"
     onCancel={event => { event.preventDefault(); if (!submitting.current) onClose(); }}>
-    {!empty && <NoteAudioVoicePicker client={client} value={voice} onChange={setVoice}
-      disabled={loading || documents === null || pending || blocked} />}
-    {loading && <p role="status">Checking notes…</p>}
-    {empty && !error && <p role="status">No notes need audio</p>}
-    {error && <p className="cha-error-message" role="alert">{error}</p>}
-    <div className="cha-dialog-actions">
-      <button className="cha-button" type="button" disabled={pending} onClick={() => { if (!submitting.current) onClose(); }}>Close</button>
-      {!empty && <button className="cha-button cha-button-primary" type="button" disabled={loading || documents === null || pending || blocked || !voice}
-        onClick={() => void generate()}>Generate</button>}
-    </div>
+    <NoteAudioVoicePicker client={client} value={voice} onChange={setVoice} hidePicker={empty}
+      disabled={loading || documents === null || pending || blocked} actions={<>
+        <button className="cha-button" type="button" disabled={pending} onClick={() => { if (!submitting.current) onClose(); }}>Close</button>
+        {!empty && <button className="cha-button cha-button-primary" type="button" disabled={loading || documents === null || pending || blocked || !voice}
+          onClick={() => void generate()}>Generate</button>}
+      </>}>
+      {loading && <p role="status">Checking notes…</p>}
+      {empty && !error && <p role="status">No notes need audio</p>}
+      {error && <p className="cha-error-message" role="alert">{error}</p>}
+    </NoteAudioVoicePicker>
   </dialog>, document.body);
 }

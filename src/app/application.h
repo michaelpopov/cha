@@ -330,6 +330,8 @@ public:
     using NoteAudioChanged = cha::app::NoteAudioChanged;
     void set_note_audio_changed(NoteAudioChanged callback);
     [[nodiscard]] std::shared_ptr<OperationReply> list_note_audio_voices(std::uint64_t epoch);
+    [[nodiscard]] std::shared_ptr<OperationReply> preview_note_audio(std::string_view connection_id,
+        std::uint64_t request_id, std::string voice, std::string text, std::uint64_t epoch);
     nlohmann::json start_background_note_audio(std::int64_t id, std::string voice,
         std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing = false);
     nlohmann::json background_note_audio_status(std::int64_t id, std::uint64_t epoch);

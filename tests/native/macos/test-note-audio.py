@@ -26,6 +26,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 REPOSITORY = Path(__file__).resolve().parents[3]
 
 
+def sample_audio(frames, frequency):
+    data = io.BytesIO()
+    with wave.open(data, "wb") as audio:
+        audio.setparams((1, 2, 24000, frames, "NONE", "not compressed"))
+        audio.writeframes(b"".join(struct.pack("<h", int(1500 * math.sin(
+            2 * math.pi * frequency * frame / 24000))) for frame in range(frames)))
+    return {"candidates": [{"content": {"parts": [{"inlineData": {
+        "mimeType": "audio/wav", "data": base64.b64encode(data.getvalue()).decode(),
+    }}]}}]}
+
+
 @contextmanager
 def temporary_vault():
     directory = tempfile.TemporaryDirectory(prefix="cha-note-audio-")
@@ -47,6 +58,7 @@ def main():
     first_waiting = threading.Event()
     requests = []
     catalog_requests = []
+    preview_requests = []
     submitted = []
     batches = {}
     outputs = {}
@@ -70,8 +82,17 @@ def main():
                 pass  # Stop can close an in-flight local download.
 
         def do_POST(self):
-            requests.append(self.path)
             data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            if self.path == "/v1beta/models/gemini-3.8-flash-tts:generateContent":
+                assert self.headers.get("x-goog-api-key") == "fake-audio-key"
+                preview = json.loads(data)
+                config = preview["generationConfig"]
+                assert config["responseModalities"] == ["AUDIO"]
+                voice = config["speechConfig"]["voiceConfig"]["voice"]
+                preview_requests.append((voice, preview["contents"][0]["parts"][0]["text"]))
+                self.respond(sample_audio(24000, 200 if voice == "kore" else 250))
+                return
+            requests.append(self.path)
             if self.path == "/upload/v1beta/files":
                 assert self.headers.get("x-goog-api-key") == "fake-audio-key"
                 # Fail before any remote batch exists. The accepted native job
@@ -117,7 +138,8 @@ def main():
                 catalog_requests.append(self.path)
                 self.respond({"voices": [{"id": "kore", "display_name": "Kore", "language_code": "en-US"},
                                          {"id": "achernar", "display_name": "Achernar", "language_code": "en-US",
-                                          "gender": "female", "accent": "General American"}]})
+                                          "gender": "female", "accent": "General American"},
+                                         {"id": "podcaster", "display_name": "Podcaster", "language_code": "ru-RU"}]})
                 return
             requests.append(self.path)
             if self.path.startswith("/v1beta/batches/"):
@@ -135,14 +157,7 @@ def main():
             lines = []
             for index, record in enumerate(current):
                 frames = int((0.6 if index == 0 else 2) * 24000)
-                data = io.BytesIO()
-                with wave.open(data, "wb") as audio:
-                    audio.setparams((1, 2, 24000, frames, "NONE", "not compressed"))
-                    audio.writeframes(b"".join(struct.pack("<h", int(1500 * math.sin(
-                        2 * math.pi * (300 + index * 120) * frame / 24000))) for frame in range(frames)))
-                lines.append(json.dumps({"key": record["key"], "response": {"candidates": [{"content": {
-                    "parts": [{"inlineData": {"mimeType": "audio/wav", "data": base64.b64encode(data.getvalue()).decode()}}]
-                }}]}}))
+                lines.append(json.dumps({"key": record["key"], "response": sample_audio(frames, 300 + index * 120)}))
             self.respond(("\n".join(reversed(lines)) + "\n").encode(), "application/jsonl")
 
     with temporary_vault() as directory:
@@ -197,7 +212,11 @@ def main():
 
         try:
             run_host()
-            assert len(catalog_requests) == 2, catalog_requests
+            assert len(catalog_requests) == 1, catalog_requests
+            assert preview_requests == [
+                ("kore", "The chief task in life is simply this: to identify and separate matters so that I can say clearly to myself which are externals not under my control."),
+                ("podcaster", "Мороз и солнце, день чудесный, ещё ты дремлешь, друг прелестный."),
+            ], preview_requests
             assert len(requests) == 5, requests
             assert requests[:2] == ["/upload/v1beta/files"] * 2, requests
             assert [record["request"]["contents"][0]["parts"][0]["text"] for record in next(iter(records.values()))] == [

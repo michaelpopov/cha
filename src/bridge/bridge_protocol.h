@@ -188,6 +188,7 @@ enum class Method {
     notes_rename,
     notes_delete,
     note_audio_list_voices,
+    note_audio_preview,
     note_audio_start_background,
     note_audio_background_status,
     note_audio_info,

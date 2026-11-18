@@ -92,23 +92,52 @@ void NotesService::set_note_audio_changed(NoteAudioChanged callback) {
     else impl_->interrupt_note_audio();
 }
 
+NoteAudioService NotesService::note_audio_service_locked(std::string voice) const {
+    return configured_note_audio(impl_->store->snapshot()->notes(), *impl_->api_keys, std::move(voice));
+}
+
 std::shared_ptr<OperationReply> NotesService::list_note_audio_voices(std::uint64_t epoch) {
-    const auto service = [&] {
+    auto [service, cache] = [&] {
         const std::lock_guard lock(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
         if (!impl_->native_host)
             throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to load audio voices.");
-        return configured_note_audio(impl_->store->snapshot()->notes(), *impl_->api_keys);
+        auto configured = note_audio_service_locked();
+        const auto credential = sha256_digest(configured.key);
+        auto& entry = impl_->note_audio_voice_cache;
+        if (!entry || entry->epoch != epoch || entry->url != configured.url || entry->credential != credential) {
+            entry = std::make_shared<Impl::NoteAudioVoiceCache>();
+            entry->epoch = epoch;
+            entry->url = configured.url;
+            entry->credential = credential;
+        }
+        return std::pair{std::move(configured), entry};
     }();
     auto reply = std::make_shared<OperationReply>();
-    if (!impl_->background_jobs.launch([reply, service](std::atomic_bool& cancel) {
+    if (!impl_->background_jobs.launch([owner = impl_.get(), reply, service = std::move(service),
+            cache = std::move(cache)](std::atomic_bool& cancel) {
             try {
-                auto catalog = cha::list_note_audio_voices([&] { return service; }, cancel);
-                if (cancel.load()) {
-                    reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
-                    return;
+                const auto check_configuration = [&] {
+                    const std::lock_guard lock(owner->lifecycle_mutex);
+                    owner->require_admitted(cache->epoch);
+                    if (cancel.load() || reply->abandoned())
+                        throw ApplicationError(ErrorCode::operation_cancelled, "The operation was cancelled.");
+                    const auto current = configured_note_audio(owner->store->snapshot()->notes(), *owner->api_keys);
+                    if (current.url != service.url || current.key != service.key)
+                        throw ApplicationError(ErrorCode::operation_cancelled, "The audio service settings changed. Reopen the dialog.");
+                };
+                std::unique_lock lock(cache->mutex);
+                check_configuration();
+                if (!cache->catalog) {
+                    auto catalog = cha::list_note_audio_voices([&] { check_configuration(); return service; }, cancel);
+                    check_configuration();
+                    cache->catalog = std::move(catalog);
                 }
+                auto catalog = *cache->catalog;
+                lock.unlock();
                 reply->complete(std::move(catalog));
+            } catch (const ApplicationError& error) {
+                reply->fail(error.code, error.what());
             } catch (const std::exception&) {
                 reply->fail(ErrorCode::internal_error, "Could not load voices. Check the audio service in Notes settings.");
             }

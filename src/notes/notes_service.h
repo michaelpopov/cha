@@ -24,6 +24,7 @@ class ApiKeyStore;
 class OpenAiOAuth;
 struct RuntimeSettings;
 struct GenerationResult;
+struct NoteAudioService;
 }
 
 namespace cha::app {
@@ -101,6 +102,7 @@ public:
     std::shared_ptr<OperationReply> read_note_picture(std::string url, std::uint64_t epoch);
 
     void set_note_audio_changed(NoteAudioChanged callback);
+    NoteAudioService note_audio_service_locked(std::string voice = {}) const;
     std::shared_ptr<OperationReply> list_note_audio_voices(std::uint64_t epoch);
     nlohmann::json start_background_note_audio(std::int64_t id, std::string voice,
         std::vector<std::string> blocks, std::uint64_t epoch, bool only_if_missing = false);

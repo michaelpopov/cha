@@ -2684,6 +2684,7 @@ select.cha-form-control {
 .cha-note-audio-dialog { width: min(440px, calc(100vw - 32px)); }
 .cha-note-audio-dialog > label { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.5rem; }
 .cha-note-audio-dialog > p { margin: 1rem 0; }
+.cha-note-audio-listen { min-width: 4rem; margin-inline-end: auto; }
 .cha-note-audio-details:not(:empty) {
   display: grid;
   gap: 0.3rem;

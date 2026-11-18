@@ -39,9 +39,35 @@ async function nativeParity({ offline = false, catalogOffline = false, summary }
       await until('loaded voice selector', () => !voice.disabled);
       check(voice.value === '', 'voice was preselected');
       check([...voice.options].slice(1).map(option => option.text).join(',')
-        === 'Achernar · Female · en-US · General American,Kore · en-US', 'unexpected voice labels');
+        === 'Achernar · Female · en-US · General American,Kore · en-US,Podcaster · ru-RU', 'unexpected voice labels');
       check(!dialog.querySelector('h1,h2,h3'), 'redundant dialog heading');
-      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, 'kore'); voice.dispatchEvent(new Event('change', { bubbles: true }));
+      check(button('Listen', dialog).disabled, 'Listen was enabled without a voice');
+      const selectVoice = value => {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(voice, value);
+        voice.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      const play = HTMLMediaElement.prototype.play;
+      let preview;
+      HTMLMediaElement.prototype.play = async function () {
+        await play.call(this);
+        preview = this;
+      };
+      try {
+        selectVoice('kore');
+        await click('Listen', dialog);
+        await until('English sample playback', () => preview && !preview.paused);
+        await click('Stop', dialog);
+        check(preview.paused, 'Stop did not pause the preview');
+        preview = undefined;
+        selectVoice('podcaster');
+        await click('Listen', dialog);
+        await until('Russian sample playback', () => preview && !preview.paused);
+        await until('sample completion', () => button('Listen', dialog));
+      } finally {
+        HTMLMediaElement.prototype.play = play;
+      }
+      completed.push('English and Russian voice previews and Stop');
+      selectVoice('kore');
       await click('Generate', dialog);
       await until('accepted setup closed', () => !dialog.isConnected);
       check(!document.querySelector('dialog[aria-label="Generate note audio"]'), 'setup remained open');

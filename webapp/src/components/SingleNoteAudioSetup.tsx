@@ -67,13 +67,13 @@ export function SingleNoteAudioSetup({ client, id, resolveDocumentId, prepare, o
   return createPortal(<dialog ref={element} className="cha-dialog cha-note-audio-dialog" aria-label="Generate note audio"
     onCancel={event => { event.preventDefault(); onClose(); }}>
     <NoteAudioVoicePicker client={client} value={voice} onChange={setVoice}
-      disabled={loading || documentId === null || pending || unknown} />
-    {existing && <p>Existing audio will be replaced after successful generation.</p>}
-    {error && <p className="cha-error-message" role="alert">{error}</p>}
-    <div className="cha-dialog-actions">
-      <button className="cha-button" type="button" onClick={onClose}>Close</button>
-      <button className="cha-button cha-button-primary" type="button" disabled={loading || documentId === null || pending || unknown || !voice}
-        onClick={() => void generate()}>Generate</button>
-    </div>
+      disabled={loading || documentId === null || pending || unknown} actions={<>
+        <button className="cha-button" type="button" onClick={onClose}>Close</button>
+        <button className="cha-button cha-button-primary" type="button" disabled={loading || documentId === null || pending || unknown || !voice}
+          onClick={() => void generate()}>Generate</button>
+      </>}>
+      {existing && <p>Existing audio will be replaced after successful generation.</p>}
+      {error && <p className="cha-error-message" role="alert">{error}</p>}
+    </NoteAudioVoicePicker>
   </dialog>, document.body);
 }

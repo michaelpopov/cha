@@ -13,6 +13,7 @@
 namespace cha {
 namespace {
 using Json = nlohmann::json;
+constexpr auto note_audio_model_path = "/v1beta/models/gemini-3.8-flash-tts";
 constexpr auto submission_unknown = "Submission status unknown. Starting again may generate audio twice.";
 constexpr auto audiobook_style = "Read like a warm audiobook narrator. Use a steady, unhurried pace, clear diction, "
     "natural pauses at punctuation, and subtle emphasis.";
@@ -153,6 +154,20 @@ bool google_note_audio_service(std::string_view origin) {
         || folded == "https://generativelanguage.googleapis.com:443";
 }
 
+namespace {
+Json note_audio_request(std::string_view text, const std::string& voice, bool google) {
+    Json part{{"text", text}};
+    if (google) part["speechMetadata"] = {{"style", audiobook_style}};
+    return {{"contents", Json::array({{{"role", "user"}, {"parts", Json::array({std::move(part)})}}})},
+        {"generationConfig", {{"responseModalities", Json::array({"AUDIO"})},
+            {"speechConfig", {{"voiceConfig", {{"voice", voice}}}}}}}};
+}
+
+bool valid_note_audio_wav(std::string_view wav) {
+    return wav.size() <= max_wav && wav.size() >= 44 && wav.substr(0, 4) == "RIFF" && wav.substr(8, 4) == "WAVE";
+}
+}
+
 std::string prepare_note_audio(NoteAudioService& service, const std::vector<std::string>& blocks) {
     validate_service(service);
     if (trim_view(service.voice).empty()) throw std::runtime_error("Select an audio voice.");
@@ -164,16 +179,23 @@ std::string prepare_note_audio(NoteAudioService& service, const std::vector<std:
         const auto chars = std::count_if(blocks[i].begin(), blocks[i].end(), [](unsigned char c) { return (c & 0xc0) != 0x80; });
         if (chars < 1) throw std::runtime_error("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
         if (chars > 5000) throw NoteAudioSizeError("Text block " + std::to_string(i + 1) + " must contain 1–5,000 Unicode code points.");
-        Json part{{"text", blocks[i]}};
-        if (google) part["speechMetadata"] = {{"style", audiobook_style}};
-        Json item = {{"key", std::to_string(i)}, {"request", {
-            {"contents", Json::array({{{"role", "user"}, {"parts", Json::array({std::move(part)})}}})},
-            {"generationConfig", {{"responseModalities", Json::array({"AUDIO"})},
-                {"speechConfig", {{"voiceConfig", {{"voice", service.voice}}}}}}}}}};
+        Json item{{"key", std::to_string(i)}, {"request", note_audio_request(blocks[i], service.voice, google)}};
         jsonl += item.dump() + '\n';
         if (jsonl.size() > 8 * 1024 * 1024) throw NoteAudioSizeError("The note exceeds the 8 MiB JSONL batch limit.");
     }
     return jsonl;
+}
+
+std::string synthesize_note_audio_preview(NoteAudioService service, std::string_view text, const std::atomic_bool& cancel) {
+    validate_service(service);
+    const auto body = note_audio_request(text, service.voice, google_note_audio_service(service.url)).dump();
+    const auto response = Json::parse(request(service, service.url + note_audio_model_path + ":generateContent",
+        cancel, {"Content-Type: application/json"}, &body, nullptr, 4 * 1024 * 1024).body);
+    const auto& data = response.at("candidates").at(0).at("content").at("parts").at(0).at("inlineData");
+    auto wav = decode_base64(data.at("data").get_ref<const std::string&>());
+    if (data.at("mimeType") != "audio/wav" || !valid_note_audio_wav(wav))
+        throw NoteAudioError(NoteAudioFailure::invalid, "Expected WAV audio for the voice preview.");
+    return wav;
 }
 
 Json list_note_audio_voices(const NoteAudioCredentials& credentials, const std::atomic_bool& cancel) {
@@ -260,7 +282,7 @@ Json create_note_audio_batch(const NoteAudioCredentials& credentials, const std:
         {"inputConfig", {{"fileName", input}}}}}}).dump();
     const auto service = credentials();
     try {
-        auto operation = Json::parse(request(service, service.url + "/v1beta/models/gemini-3.8-flash-tts:batchGenerateContent",
+        auto operation = Json::parse(request(service, service.url + note_audio_model_path + ":batchGenerateContent",
             cancel, {"Content-Type: application/json"}, &body, nullptr, 65536, true, true).body);
         (void)note_audio_batch_id(operation);
         return operation;
@@ -345,7 +367,7 @@ std::vector<std::filesystem::path> process_note_audio(std::size_t block_count,
         std::string wav;
         try { wav = decode_base64(data.at("data").get_ref<const std::string&>()); }
         catch (const std::runtime_error&) { throw NoteAudioError(NoteAudioFailure::invalid, "Invalid Base64 audio for " + block + ". Check the service."); }
-        if (wav.size() > max_wav || wav.size() < 44 || wav.substr(0, 4) != "RIFF" || wav.substr(8, 4) != "WAVE")
+        if (!valid_note_audio_wav(wav))
             throw NoteAudioError(NoteAudioFailure::invalid, "Invalid WAV audio for " + block + ". Check the service.");
         const auto source = temporary / "clip.wav";
         { std::ofstream file(source, std::ios::binary); file.write(wav.data(), static_cast<std::streamsize>(wav.size()));

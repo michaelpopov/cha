@@ -1453,6 +1453,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 require_only_keys(params, {});
                 start_background(connection_id, id, application.list_note_audio_voices(epoch));
                 return;
+            case Method::note_audio_preview:
+                require_only_keys(params, {"voice", "text"});
+                start_background(connection_id, id, application.preview_note_audio(connection_id, id,
+                    require_string(params, "voice"), require_string(params, "text"), epoch));
+                return;
             case Method::note_audio_source: {
                 require_only_keys(params, {"id", "ordinal"});
                 const auto ordinal = params.contains("ordinal") ? as_safe_uint(params.at("ordinal")) : std::nullopt;
@@ -2082,6 +2087,7 @@ void BridgeRouter::expire_timeouts() {
             if (found->second.operation) found->second.operation->abandon();
             const auto epoch = found->second.context_epoch;
             if (found->second.method == Method::speech_start
+                || found->second.method == Method::note_audio_preview
                 || found->second.method == Method::voice_input_connect) {
                 try {
                     impl_->application.cancel_speech(connection->id, request_id, epoch);

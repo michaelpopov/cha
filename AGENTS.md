@@ -27,8 +27,7 @@ maintainability and readability. Do not overcomplicate it.
 - First look for an existing code path or source of data that can solve the
   problem. Extend or use it before adding a separate subsystem.
 - Before adding state, identify the concrete requirement that cannot be met
-  without it. Do not add a second store, buffer, cache, or index for data that
-  is already available unless a demonstrated need requires it.
+  without it.
 - Do not invent expiry periods, timers, background work, automatic resets,
   or other lifecycle policies. Add them only when the requested behavior or
   correctness requires them.

@@ -165,6 +165,7 @@ export type NoteAudioBackgroundStatus = components['schemas']['NoteAudioBackgrou
 export interface NoteAudioClient {
   contextEpoch(): number;
   listVoices(): Promise<NoteAudioVoice[]>;
+  previewVoice(voice: string, text: string, signal: AbortSignal): Promise<MediaResource>;
   startBackground(id: number, voice: string, blocks: string[]): Promise<NoteAudioAccepted>;
   startBackground(id: number, voice: string, blocks: string[], onlyIfMissing: true): Promise<NoteAudioStartResult>;
   backgroundStatus(id: number): Promise<NoteAudioBackgroundStatus>;

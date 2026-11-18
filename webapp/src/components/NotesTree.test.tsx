@@ -28,6 +28,7 @@ const plan: NoteItem = noteItem({ id: 4, parent_id: 3, name: 'Plan' });
 const noteAudio: NonNullable<NotesClient['noteAudio']> = {
   contextEpoch: () => 1,
   listVoices: async () => [],
+  previewVoice: vi.fn(),
   startBackground: vi.fn(),
   backgroundStatus: async () => ({ pending: false }),
   info: vi.fn(),
