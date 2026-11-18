@@ -141,6 +141,12 @@ def main():
         print('PASS save failure preserves live choices and disk data; next change saves the full snapshot', flush=True)
 
         preferences.write_text(json.dumps(DEFAULTS))
+        # The hosts share view preferences but must own different databases.
+        shutil.copy2(config / 'test.sqlite3', config / 'other.sqlite3')
+        (config / 'other.toml').write_text('vault_name = "Other"\ndata = "other.sqlite3"\n')
+        app_config = config / 'app.toml'
+        original_config = app_config.read_text()
+        other_config = original_config.replace('vault = "Test"', 'vault = "Other"', 1)
         env = dict(os.environ, CHA_PERSISTENCE_CONFIG=str(config),
                    CHA_PERSISTENCE_SCRIPT=str(REPOSITORY / 'tests/native/persistence.js'),
                    CHA_PERSISTENCE_MODE='hold', CHA_PERSISTENCE_EXPECT=json.dumps(DEFAULTS))
@@ -149,6 +155,7 @@ def main():
             try:
                 assert select.select([held.stdout], [], [], 20)[0], 'Unchanged instance did not become ready'
                 assert held.stdout.readline() == b'PERSISTENCE_READY\n'
+                app_config.write_text(other_config)
                 launch('change', DEFAULTS, inverted)
                 stamp = preferences.stat().st_mtime_ns
                 held.stdin.write(b'\n')
@@ -160,11 +167,12 @@ def main():
                 assert json.loads(preferences.read_bytes()) == inverted
                 assert preferences.stat().st_mtime_ns == stamp, 'Unchanged instance overwrote a newer save'
             finally:
+                app_config.write_text(original_config)
                 if held.poll() is None:
                     held.kill()
                     held.wait()
         observe(inverted)
-        print('PASS concurrent instances keep live choices; unchanged reports and close preserve the newer save', flush=True)
+        print('PASS hosts on different vaults keep live choices and preserve the newer save', flush=True)
 
         preferences.write_text(json.dumps(menu_state(DEFAULTS)))
         larger = dict(DEFAULTS, notes_font_size=16)

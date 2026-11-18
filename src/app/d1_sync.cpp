@@ -3,7 +3,6 @@
 #include "characters/character_config.h"
 #include "runtime/live_session_manager.h"
 #include "storage/note_storage.h"
-#include "storage/session_repository.h"
 #include "storage/sync_chat.h"
 #include "storage/sqlite_storage.h"
 #include "util/logging.h"
@@ -322,10 +321,6 @@ ApplyOutcome apply_complete_record(
                 reservation.emplace(
                     std::move(std::get<LiveSessionMaintenanceReservation>(reserved)));
             }
-            // The runtime reservation covers this process. The existing
-            // session lease also excludes a controller in another process.
-            const auto lease = config.sessions
-                ? config.sessions->reserve_for_sync(identity) : nullptr;
             sync_apply_chat_record(database, envelope);
             if (kind == "chat.delete") chats_changed.erase(identity);
             else chats_changed[identity] = chat.label;
@@ -333,8 +328,6 @@ ApplyOutcome apply_complete_record(
         }
         log_warn("Skipped incoming sync record with unknown kind.");
         return ApplyOutcome::skipped;
-    } catch (const SessionBusyError&) {
-        return ApplyOutcome::reservation_failed;
     } catch (const std::exception& error) {
         log_warn(std::string("Skipped incoming sync record: ") + error.what());
         return ApplyOutcome::skipped;

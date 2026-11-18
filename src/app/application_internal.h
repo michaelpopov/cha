@@ -96,7 +96,6 @@ struct Application::Impl {
         WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
 
         void publish_vault_names();
-        void delete_forum(std::string_view forum_id, std::uint64_t epoch);
     private:
         void run_welcome_command(bool download, bool confirmed, std::string target,
             std::uint64_t epoch);
@@ -127,7 +126,7 @@ struct Application::Impl {
         // Caller holds lifecycle_mutex. False keeps the previous vault selected.
         bool drain_for_maintenance(
             PendingContextNotice& notice,
-            bool cancel_audio = true, bool require_main = true);
+            bool cancel_audio = true);
         void cancel_maintenance_locked(PendingContextNotice& notice);
         void end_maintenance_locked(
             bool available, PendingContextNotice& notice,

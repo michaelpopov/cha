@@ -477,7 +477,6 @@ TEST_F(ChatSyncTest, ClosedChatRenameAndDeleteEmit) {
         journal.start_turn(1, human_entry(1, "Hi", 1));
         journal.complete_turn(1, reply_entry(2, "Hello", 1));
     }
-    repository.release_pending();
     (void)repository.rename(chat.identity, "Renamed Closed");
     repository.delete_session(chat.identity);
 

@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -404,6 +405,20 @@ TEST_F(NativeRuntimeTest, VaultSwitchPublishesANewEpochAndRejectsStaleWork) {
     ASSERT_TRUE(rejected.contains("ok"));
     EXPECT_FALSE(rejected["ok"]);
     EXPECT_EQ(rejected["error"]["code"], "vault_changed");
+}
+
+TEST_F(NativeRuntimeTest, FailsStartupWhileAnotherRuntimeOwnsTheVault) {
+    char* error = nullptr;
+    int32_t password_error = -1;
+    std::unique_ptr<ChaRuntime, decltype(&cha_runtime_destroy)> contender(
+        cha_runtime_create(
+            cha::utf8_path(config_).c_str(), cha::utf8_path(resources_).c_str(),
+            "", &password_error, &error),
+        cha_runtime_destroy);
+    EXPECT_EQ(contender, nullptr);
+    EXPECT_EQ(password_error, 0);
+    EXPECT_STREQ(error, "Close other CHA processes using this vault, then try again.");
+    cha_string_free(error);
 }
 
 TEST_F(NativeRuntimeTest, VaultSwitchPersistsAcrossRestart) {

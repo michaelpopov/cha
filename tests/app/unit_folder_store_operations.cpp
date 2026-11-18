@@ -1340,19 +1340,6 @@ TEST_F(FolderStoreOperationsTest, UploadFailureWithFinishedCleanupLeavesNoCleanu
     EXPECT_EQ(status.result, "error"); EXPECT_FALSE(status.known_cleanup_remains);
 }
 
-TEST_F(FolderStoreOperationsTest, SecondaryProcessCannotMutateOperations) {
-    auto secondary = Application::open(make_command(workspace_, database_));
-    const auto epoch = secondary->context_epoch();
-    EXPECT_NO_THROW((void)secondary->folder_store_choices(epoch));
-    EXPECT_FALSE(secondary->folder_store_operation_status(folder_.id, epoch).present);
-    EXPECT_THROW((void)secondary->start_folder_store_upload(folder_.id, "openai", key_, "", epoch), SecondaryProcessError);
-    EXPECT_THROW((void)secondary->retry_folder_store_cleanup(1, epoch), SecondaryProcessError);
-    EXPECT_THROW(secondary->cancel_folder_store_upload(1, epoch), SecondaryProcessError);
-    EXPECT_THROW(secondary->close_folder_store_operation(1, epoch), SecondaryProcessError);
-    secondary->request_shutdown();
-    EXPECT_TRUE(secondary->join_shutdown(2s));
-}
-
 TEST_F(FolderStoreOperationsTest, FailedIndexingKeepsNotFoundCleanupWarningInStatus) {
     application_->set_folder_store_transport_for_tests(openai_transport(true, true));
     (void)application_->start_folder_store_upload(folder_.id, "openai", key_, "", epoch_);

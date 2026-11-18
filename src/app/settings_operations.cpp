@@ -513,7 +513,7 @@ PromptDetail get_prompt(const WorkspaceConfigStore& store, std::string_view id) 
     const auto workspace = store.snapshot();
     const auto* prompt = workspace->find_prompt(id);
     if (!prompt) fail(ErrorCode::not_found, "That prompt was not found.");
-    return {prompt->id, prompt->display_name, prompt->text, store.is_main()};
+    return {prompt->id, prompt->display_name, prompt->text, true};
 }
 
 PromptDetail update_prompt(WorkspaceConfigStore& store, std::string_view id, const PromptUpdate& update) {

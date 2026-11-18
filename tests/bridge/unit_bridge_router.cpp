@@ -1827,72 +1827,23 @@ TEST_F(BridgeRouterTest, ContextNotificationNamesOnlyTheOriginatingRequest) {
     ack_delivery(*router_, observer, *observer_batch);
 }
 
-TEST_F(BridgeRouterTest, SecondaryProcessCannotChangeForumLibrary) {
+TEST_F(BridgeRouterTest, ForumDeletionKeepsTheContext) {
     bootstrap_epoch();
-    const auto key = application_->create_api_key(
-        {.display_name = "Library", .value = "test-secret", .cloud_store = "openai"}, epoch_);
-    const ForumLibrary library{key.id, {"vs_original"}, std::nullopt};
-    (void)application_->update_forum_library("lobby", library, epoch_);
-    auto secondary = app::Application::open(make_command(workspace_, database_));
-    BridgeRouter router(*secondary);
-    const auto connection = router.open_connection();
-    for (const auto& replacement : {nlohmann::json(nullptr), nlohmann::json{
-            {"api_key_id", key.id}, {"store_ids", {"vs_replacement"}}, {"provider_id", nullptr}, {"catalogue", nlohmann::json::object()}}}) {
-        const auto id = next_id_++;
-        router.handle_request(connection, request_json(connection, id, secondary->context_epoch(),
-            "forum.library.update", {{"forum_id", "lobby"}, {"library", replacement}}).dump());
-        const auto batch = wait_delivery(router, connection);
-        ASSERT_TRUE(batch);
-        const auto reply = reply_with_id(*batch, id);
-        ASSERT_FALSE(reply.empty());
-        EXPECT_EQ(reply["ok"], false);
-        EXPECT_EQ(reply["error"]["message"], "Settings can be changed only in the main CHA process.");
-        ack_delivery(router, connection, *batch);
-        const auto saved = application_->get_forum("lobby", epoch_).library;
-        ASSERT_TRUE(saved);
-        EXPECT_EQ(saved->api_key_id, library.api_key_id);
-        EXPECT_EQ(saved->store_ids, library.store_ids);
+    epoch_ = application_->context_epoch();
+    const auto id = next_id_++;
+    router_->handle_request(connection_, request_json(connection_, id, epoch_,
+        "forum.delete", {{"forum_id", "lobby"}}).dump());
+    const auto batch = wait_delivery(*router_, connection_);
+    ASSERT_TRUE(batch);
+    for (const auto& message : batch->at("messages")) {
+        EXPECT_NE(message.value("event", ""), "app.contextChanged");
     }
-    router.shutdown();
-}
-
-TEST_F(BridgeRouterTest, ForumDeletionPreservesItsReplyAcrossMaintenanceAndReportsOtherUsers) {
-    bootstrap_epoch();
-    for (const bool blocked : {true, false}) {
-        SCOPED_TRACE(blocked);
-        auto secondary = blocked ? WorkspaceConfigStore::open(database_) : nullptr;
-        epoch_ = application_->context_epoch();
-        const auto id = next_id_++;
-        router_->handle_request(connection_, request_json(connection_, id, epoch_,
-            "forum.delete", {{"forum_id", "lobby"}}).dump());
-        nlohmann::json reply;
-        bool context_seen = false;
-        for (int i = 0; i < 4 && reply.empty(); ++i) {
-            const auto batch = wait_delivery(*router_, connection_);
-            ASSERT_TRUE(batch);
-            for (const auto& message : batch->at("messages")) {
-                if (message.value("event", "") == "app.contextChanged") {
-                    EXPECT_EQ(message["causing_request_id"], id);
-                    context_seen = true;
-                }
-            }
-            reply = reply_with_id(*batch, id);
-            ack_delivery(*router_, connection_, *batch);
-        }
-        ASSERT_FALSE(reply.empty());
-        EXPECT_TRUE(context_seen);
-        EXPECT_GT(reply["context_epoch"].get<std::uint64_t>(), epoch_);
-        EXPECT_EQ(reply["ok"], !blocked);
-        if (blocked) {
-            EXPECT_EQ(reply["error"]["code"], "invalid_argument");
-            EXPECT_EQ(reply["error"]["message"],
-                "Close other CHA processes using this vault, then try again.");
-            EXPECT_NE(application_->store().snapshot()->find_forum("lobby"), nullptr);
-        } else {
-            EXPECT_EQ(application_->store().snapshot()->find_forum("lobby"), nullptr);
-        }
-        EXPECT_EQ(application_->state(), app::ApplicationState::running);
-    }
+    const auto reply = reply_with_id(*batch, id);
+    ack_delivery(*router_, connection_, *batch);
+    ASSERT_FALSE(reply.empty());
+    EXPECT_EQ(reply["ok"], true);
+    EXPECT_EQ(application_->context_epoch(), epoch_);
+    EXPECT_EQ(application_->store().snapshot()->find_forum("lobby"), nullptr);
 }
 
 TEST_F(BridgeRouterTest, CompletedReplyHoldsAdmissionUntilDeliveryAck) {

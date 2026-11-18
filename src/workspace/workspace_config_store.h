@@ -24,12 +24,6 @@
 #include <vector>
 
 namespace cha {
-class SecondaryProcessError : public std::runtime_error {
-public:
-    SecondaryProcessError() : std::runtime_error(
-        "Settings can be changed only in the main CHA process.") {}
-};
-
 class Workspace;
 struct VoiceSettings;
 struct WorkspaceVoiceInput;
@@ -196,14 +190,11 @@ public:
         MaintenanceGuard(const MaintenanceGuard&) = delete;
         MaintenanceGuard& operator=(const MaintenanceGuard&) = delete;
 
-        // Releases the SQLite handle while keeping the process lease, store,
-        // and session storage alive. An exclusive close requires the main role
-        // and exclusive vault use; if another process uses the vault, it throws
-        // SessionBusyError and leaves the store open. reopen() validates and
-        // publishes whichever database is present at the same path; it throws
+        // Releases the SQLite handle while keeping the vault lease. reopen()
+        // validates and publishes the database at the current path; it throws
         // WorkspaceRestartRequiredError if that fails, leaving the store closed
         // and the process unable to serve.
-        void close(bool exclusive = true);
+        void close();
         void reopen();
         void set_password(std::string database_password);
         // Points the closed store at a database whose lease was acquired before
@@ -232,8 +223,6 @@ public:
     WorkspaceConfigStore& operator=(WorkspaceConfigStore&&) = delete;
 
     [[nodiscard]] std::shared_ptr<const Workspace> snapshot() const;
-    [[nodiscard]] bool is_main() const;
-    void require_main() const;
 
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
     // Logical root for snapshot/session identity and configuration diagnostics.

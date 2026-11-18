@@ -225,7 +225,7 @@ bool changes_context(Method method) noexcept {
     return method == Method::vault_switch || method == Method::vault_merge
         || method == Method::vault_update || method == Method::vault_upload
         || method == Method::vault_download || method == Method::vault_import
-        || method == Method::vault_export || method == Method::forum_delete;
+        || method == Method::vault_export;
 }
 
 std::string_view method_name(Method method) noexcept {

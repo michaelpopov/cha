@@ -17,7 +17,6 @@ namespace cha {
 
 class WorkspaceConfigStore;
 class LiveSessionManager;
-class SessionRepository;
 // Minimal Worker for D1 sync. Owns one thread for the 30-second loop.
 // Tests call run_once() directly without sleeping. Production starts the
 // thread after the first synchronous loop at vault open.
@@ -31,7 +30,6 @@ public:
         D1Client::Transport transport;
         // Reservation and store access; null in raw-DB tests.
         WorkspaceConfigStore* store = nullptr;
-        SessionRepository* sessions = nullptr;
         // Live sessions for per-chat and global reservations; null skips reservation.
         LiveSessionManager* live_sessions = nullptr;
         std::function<bool()> application_stopping;

@@ -211,61 +211,27 @@ TEST(ApplicationVault, WelcomeOpensLocalVaultAndRefusesDesktopCommands) {
     EXPECT_EQ(on_a.find("Opened vault 'B'."), std::string::npos);
 }
 
-TEST(ApplicationVault, SecondarySharesNotesAndSwitchesWithoutAcquiringMainRole) {
+TEST(ApplicationVault, OpenVaultsExcludeChangesFromAnotherVaultOwner) {
     TwoVaults pair;
-    auto main = Application::open(pair.command);
-    auto secondary = Application::open(pair.command);
-    const auto epoch = secondary->context_epoch();
-    ASSERT_FALSE(secondary->store().is_main());
-    const auto note = secondary->create_note_item({}, NoteItemKind::note, "Shared", epoch);
-    auto document = secondary->get_note(note.id, epoch).document;
-    document["revision"] = 1;
-    secondary->save_note(note.id, document, epoch);
-    EXPECT_EQ(main->get_note(note.id, main->context_epoch()).document, document);
-    document["revision"] = 2;
-    main->save_note(note.id, document, main->context_epoch());
-    EXPECT_EQ(secondary->get_note(note.id, epoch).document, document);
-    main->delete_note_item(note.id, main->context_epoch());
-    EXPECT_THROW(secondary->save_note(note.id, document, epoch), ApplicationError);
-    EXPECT_EQ(secondary->list_note_items(epoch).size(), 2u);
+    auto first = Application::open(pair.command);
+    auto other_command = pair.command;
+    other_command.vault = other_command.vaults.back();
+    auto other = Application::open(std::move(other_command));
+    const auto epoch = first->context_epoch();
+    EXPECT_EQ(first->current_vault().get().name, "A");
+    EXPECT_EQ(other->current_vault().get().name, "B");
 
-    EXPECT_THROW((void)secondary->update_persona("alpha", {.display_name = "Refused"}, epoch),
-        SecondaryProcessError);
-    EXPECT_THROW((void)secondary->disconnect_openai_auth(epoch), SecondaryProcessError);
-    EXPECT_THROW((void)main->update_vault("A", {.display_name = "Renamed"}, main->context_epoch()),
+    EXPECT_THROW((void)first->update_vault("B", {.display_name = "Renamed"}, epoch),
         SessionBusyError);
-    EXPECT_EQ(main->state(), ApplicationState::running);
-    EXPECT_EQ(main->current_vault().get().name, "A");
+    EXPECT_THROW(first->delete_vault("B", epoch), SessionBusyError);
+    EXPECT_EQ(first->state(), ApplicationState::running);
+    EXPECT_EQ(first->context_epoch(), epoch);
+    EXPECT_EQ(first->current_vault().get().name, "A");
 
-    const auto switched = secondary->switch_vault("B", {}, epoch);
-    EXPECT_TRUE(secondary->store().is_main());
-    EXPECT_THROW((void)main->update_vault("B", {.display_name = "Renamed"}, main->context_epoch()),
-        SessionBusyError);
-    EXPECT_THROW(main->delete_vault("B", main->context_epoch()), SessionBusyError);
-    (void)secondary->switch_vault("A", {}, switched.context_epoch);
-    EXPECT_FALSE(secondary->store().is_main());
-}
-
-TEST(ApplicationVault, SecondaryDoesNotWriteTheConfiguredMirror) {
-    TwoVaults pair;
-    const auto mirror = pair.workspace_a.root() / "mirror";
-    pair.command.vault.mirror = mirror;
-    pair.command.vaults.front() = pair.command.vault;
-    auto main = Application::open(pair.command);
-    {
-        auto secondary = Application::open(pair.command);
-        (void)secondary->create_session("lobby", "Secondary session", secondary->context_epoch());
-        for (const auto& item : std::filesystem::recursive_directory_iterator(mirror)) {
-            EXPECT_EQ(item.path().filename().string().find("Secondary session"), std::string::npos);
-        }
-    }
-    auto switched = main->switch_vault("B", {}, main->context_epoch());
-    (void)main->switch_vault("A", {}, switched.context_epoch);
-    bool found = false;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(mirror)) {
-        if (item.path().filename().string().find("Secondary session") != std::string::npos) found = true;
-    }
-    EXPECT_TRUE(found);
+    other.reset();
+    const auto switched = first->switch_vault("B", {}, epoch);
+    EXPECT_GT(switched.context_epoch, epoch);
+    EXPECT_EQ(first->current_vault().get().name, "B");
 }
 
 // Include opaque damaged content: whole-vault and configuration operations
@@ -819,7 +785,6 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndRefusesMaintenanceU
             {"switch", [&] { (void)application->switch_vault("B", {}, application->context_epoch()); }},
             {"download", [&] { (void)application->download_database(application->context_epoch()); }},
             {"upload", [&] { (void)application->start_database_upload({}, application->context_epoch()); }},
-            {"forum delete", [&] { application->delete_forum("lobby", application->context_epoch()); }},
         };
         for (const auto& [name, operation] : maintenance) {
             SCOPED_TRACE(name);

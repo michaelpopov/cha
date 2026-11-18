@@ -916,13 +916,8 @@ TEST_F(NoteAudioBackground, RecoversL1AudioAndReportsTheOriginalNote) {
     EXPECT_EQ(completions.load(), 2);
 }
 
-TEST_F(NoteAudioBackground, UnknownSubmissionRetiresOnceAndSecondaryProcessLeavesItIntact) {
-    const auto attempt = saved_attempt(1, false);
-    auto secondary = Application::open(make_command(workspace, path));
-    secondary->set_note_audio_changed([](auto, auto) {});
-    EXPECT_EQ(secondary->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
-    EXPECT_THROW(secondary->start_background_note_audio(note.id, "Kore", {"Text"}, secondary->context_epoch()), ApplicationError);
-    secondary.reset();
+TEST_F(NoteAudioBackground, UnknownSubmissionRetiresOnce) {
+    saved_attempt(1, false);
     activate(); activate();
     ASSERT_TRUE(finished());
     const auto events = application->list_events(epoch);
@@ -1105,39 +1100,32 @@ TEST_F(NoteAudioBackground, PermanentSubmissionRejectionsRetireWithoutRetrying) 
 }
 
 TEST_F(NoteAudioBackground, SuccessfulMaintenanceResumesTheRegisteredBatchOnce) {
-    for (const bool delete_forum : {false, true}) {
-        std::string forum;
-        if (delete_forum) {
-            forum = application->create_forum({.display_name = "Disposable", .persona_id = "reader"}, epoch).summary.id;
-        }
-        MockHttpServer server({audio_json(audio_operation()), audio_json(audio_operation()),
-            http_response("application/jsonl", audio_results())});
-        server.pause_before_response(1);
-        const auto attempt = saved_attempt(server.port());
-        server.start(); activate();
-        ASSERT_TRUE(server.wait_for_requests(1, 2s));
-        const auto old_epoch = epoch;
-        if (delete_forum) application->delete_forum(forum, epoch);
-        else (void)application->update_vault("Test", {.display_name = "Test"}, epoch);
-        epoch = application->context_epoch();
-        EXPECT_GT(epoch, old_epoch);
-        EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
-        ASSERT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
-        EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
-        server.resume_responses();
-        ASSERT_TRUE(finished()); server.join();
-        ASSERT_EQ(server.requests().size(), 3u);
-        EXPECT_TRUE(server.requests()[0].starts_with("GET /v1beta/" + audio_batch));
-        EXPECT_TRUE(server.requests()[1].starts_with("GET /v1beta/" + audio_batch));
-        EXPECT_TRUE(server.requests()[2].starts_with("GET /download/"));
-        EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
-        EXPECT_EQ(completed_epoch.load(), epoch);
-    }
-    EXPECT_EQ(completions.load(), 2);
+    MockHttpServer server({audio_json(audio_operation()), audio_json(audio_operation()),
+        http_response("application/jsonl", audio_results())});
+    server.pause_before_response(1);
+    const auto attempt = saved_attempt(server.port());
+    server.start(); activate();
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    const auto old_epoch = epoch;
+    (void)application->update_vault("Test", {.display_name = "Test"}, epoch);
+    epoch = application->context_epoch();
+    EXPECT_GT(epoch, old_epoch);
+    EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
+    ASSERT_TRUE(application->store().get_note_audio_attempt_for_note(note.id));
+    EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
+    server.resume_responses();
+    ASSERT_TRUE(finished()); server.join();
+    ASSERT_EQ(server.requests().size(), 3u);
+    EXPECT_TRUE(server.requests()[0].starts_with("GET /v1beta/" + audio_batch));
+    EXPECT_TRUE(server.requests()[1].starts_with("GET /v1beta/" + audio_batch));
+    EXPECT_TRUE(server.requests()[2].starts_with("GET /download/"));
+    EXPECT_EQ(application->get_note_audio_info(note.id, epoch)["count"], 1);
+    EXPECT_EQ(completed_epoch.load(), epoch);
+    EXPECT_EQ(completions.load(), 1);
     const auto events = application->list_events(epoch);
-    EXPECT_EQ(events.size(), 4u);
-    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.severity == EventSeverity::info; }), 2);
-    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.severity == EventSeverity::success; }), 2);
+    EXPECT_EQ(events.size(), 2u);
+    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.severity == EventSeverity::info; }), 1);
+    EXPECT_EQ(std::count_if(events.begin(), events.end(), [](const auto& event) { return event.severity == EventSeverity::success; }), 1);
 }
 
 TEST_F(NoteAudioBackground, SuccessfulMaintenanceRetiresAnInterruptedSubmissionWithoutAnotherPost) {
@@ -1661,7 +1649,7 @@ TEST(Application, SubscribeInstallsInitialSnapshotAtSequenceZero) {
     session->acknowledge_output();
 }
 
-TEST(Application, BackgroundGenerationRetainsSessionOwnershipUntilRetirement) {
+TEST(Application, BackgroundGenerationFinishesAfterSelectingAnotherSession) {
     test::TestWorkspace workspace;
     MockHttpServer server({http_response(
         "application/json", R"({"choices":[{"message":{"content":"Finished"}}]})")});
@@ -1670,27 +1658,18 @@ TEST(Application, BackgroundGenerationRetainsSessionOwnershipUntilRetirement) {
         + "\nhttps = false\nmode = \"net\"\nmodel = \"fake\"\n"
           "api = \"chat_completions\"\nstream = false\ntimeout_s = 20\n");
     const auto command = make_command(workspace, test::import_test_database(workspace.root()));
-    auto main = Application::open(command);
-    const auto epoch = main->context_epoch();
-    const auto first = main->create_session("lobby", "Background", epoch);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(main->open_session("lobby", first.id, epoch)));
-    auto handle = main->subscription_handle("lobby", first.id);
+    auto application = Application::open(command);
+    const auto epoch = application->context_epoch();
+    const auto first = application->create_session("lobby", "Background", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", first.id, epoch)));
+    auto handle = application->subscription_handle("lobby", first.id);
     ASSERT_TRUE(handle);
-    ASSERT_TRUE(std::holds_alternative<CommandResult>(main->submit(
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(application->submit(
         "lobby", first.id, RawCommand{"Hello"}, epoch)));
-    ASSERT_TRUE(std::get<SessionSnapshot>(main->snapshot("lobby", first.id, epoch)).generation.active);
-    const auto second = main->create_session("lobby", "Selected", epoch);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(main->open_session("lobby", second.id, epoch)));
-    auto secondary = Application::open(command);
-    try {
-        (void)secondary->open_session("lobby", first.id, secondary->context_epoch());
-        FAIL() << "Expected session ownership refusal";
-    } catch (const ApplicationError& error) {
-        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
-        EXPECT_STREQ(error.what(), "This session is open in another CHA process.");
-    }
-    // Saved history can still be exported while another process owns the controller.
-    EXPECT_NE(secondary->export_session("lobby", first.id, secondary->context_epoch()).markdown.find("Hello"),
+    ASSERT_TRUE(std::get<SessionSnapshot>(application->snapshot("lobby", first.id, epoch)).generation.active);
+    const auto second = application->create_session("lobby", "Selected", epoch);
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", second.id, epoch)));
+    EXPECT_NE(application->export_session("lobby", first.id, epoch).markdown.find("Hello"),
         std::string::npos);
     server.start();
     server.join();
@@ -1698,10 +1677,10 @@ TEST(Application, BackgroundGenerationRetainsSessionOwnershipUntilRetirement) {
     while (handle->lifecycle() != LiveSessionState::finished
         && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(1ms);
     ASSERT_EQ(handle->lifecycle(), LiveSessionState::finished);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(secondary->open_session(
-        "lobby", first.id, secondary->context_epoch())));
-    const auto restored = std::get<SessionSnapshot>(secondary->snapshot(
-        "lobby", first.id, secondary->context_epoch()));
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session(
+        "lobby", first.id, epoch)));
+    const auto restored = std::get<SessionSnapshot>(application->snapshot(
+        "lobby", first.id, epoch));
     EXPECT_FALSE(restored.generation.active);
     EXPECT_EQ(restored.transcript.back().text, "Finished");
 }

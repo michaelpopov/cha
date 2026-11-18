@@ -602,7 +602,6 @@ TEST_F(SessionRepositoryTest, LinkedSummaryKeepsNameOnClosedRenameAndAllSessionC
         storage::SqliteDatabase database(database_path(), storage::SqliteDatabase::Mode::read_write);
         database.prepare("UPDATE sessions SET archived_at=1 WHERE session_id=?", archived.identity.session_id).run();
     }
-    repository.release_pending();
     // Use the real startup recovery path for archived and unpublished empty sessions.
     const auto restarted_welcome = fixture_.root() / "summary-restarted-welcome";
     create_private_directory(restarted_welcome);

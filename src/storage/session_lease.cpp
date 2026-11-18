@@ -1,7 +1,6 @@
 #include "storage/session_lease.h"
 
 #include "util/path_name.h"
-#include "util/crypto.h"
 
 #include <system_error>
 #include <string>
@@ -22,8 +21,7 @@ class SessionLease::Impl {
 public:
     Impl(
         const std::filesystem::path& path,
-        std::string busy_message, Mode mode)
-        : path_(path), busy_message_(std::move(busy_message)), mode_(mode) {
+        std::string busy_message) {
 #ifdef _WIN32
         handle = CreateFileW(
             path.c_str(),
@@ -37,10 +35,21 @@ public:
             fail("open or create", path, GetLastError());
         }
 
-        try { lock(mode); } catch (...) {
+        OVERLAPPED lock_region{};
+        if (!LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                MAXDWORD,
+                MAXDWORD,
+                &lock_region)) {
+            const DWORD error = GetLastError();
             CloseHandle(handle);
             handle = INVALID_HANDLE_VALUE;
-            throw;
+            if (error == ERROR_LOCK_VIOLATION) {
+                throw SessionBusyError(std::move(busy_message));
+            }
+            fail("lock", path, error);
         }
 #else
         descriptor = open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
@@ -52,55 +61,17 @@ public:
         // the open file description, so another descriptor in this process
         // cannot acquire or inadvertently release this lease. On NFS, flock
         // may be implemented with process-owned fcntl locks instead.
-        try { lock(mode); } catch (...) {
+        if (flock(descriptor, LOCK_EX | LOCK_NB) == -1) {
+            const int error = errno;
             close(descriptor);
             descriptor = -1;
-            throw;
-        }
-#endif
-    }
-
-    void lock(Mode mode) {
-#ifdef _WIN32
-        OVERLAPPED region{};
-        const DWORD flags = LOCKFILE_FAIL_IMMEDIATELY
-            | (mode == Mode::exclusive ? LOCKFILE_EXCLUSIVE_LOCK : 0);
-        if (!LockFileEx(handle, flags, 0, MAXDWORD, MAXDWORD, &region)) {
-            const DWORD error = GetLastError();
-            if (error == ERROR_LOCK_VIOLATION) throw SessionBusyError(busy_message_);
-            fail("lock", path_, error);
-        }
-#else
-        if (flock(descriptor, (mode == Mode::exclusive ? LOCK_EX : LOCK_SH) | LOCK_NB) == -1) {
-            const int error = errno;
-            if (error == EWOULDBLOCK || error == EAGAIN) throw SessionBusyError(busy_message_);
-            fail("lock", path_, error);
-        }
-#endif
-        mode_ = mode;
-        locked = true;
-    }
-
-    void change_mode(Mode mode) {
-        if (locked && mode == mode_) return;
-        if (locked) {
-#ifdef _WIN32
-            OVERLAPPED region{};
-            if (!UnlockFileEx(handle, 0, MAXDWORD, MAXDWORD, &region)) {
-                fail("unlock", path_, GetLastError());
+            if (error == EWOULDBLOCK) {
+                throw SessionBusyError(std::move(busy_message));
             }
-#else
-            if (flock(descriptor, LOCK_UN) == -1) fail("unlock", path_, errno);
-#endif
-            locked = false;
+            fail("lock", path, error);
         }
-        lock(mode);
+#endif
     }
-
-    bool locked{};
-    std::filesystem::path path_;
-    std::string busy_message_;
-    Mode mode_;
 
     ~Impl() {
 #ifdef _WIN32
@@ -156,38 +127,9 @@ SessionLease& SessionLease::operator=(SessionLease&& other) noexcept = default;
 
 SessionLease SessionLease::acquire(
     const std::filesystem::path& database_path,
-    std::string busy_message, Mode mode) {
-    return acquire_file(companion_path(database_path), std::move(busy_message), mode);
-}
-
-SessionLease SessionLease::acquire_file(
-    const std::filesystem::path& path, std::string busy_message, Mode mode) {
-    return SessionLease(std::make_unique<Impl>(path, std::move(busy_message), mode));
-}
-
-SessionLease SessionLease::acquire_main(const std::filesystem::path& database_path) {
-    auto path = std::filesystem::weakly_canonical(database_path);
-    path += ".cha-main-lock";
-    return acquire_file(path, vault_in_use_message);
-}
-
-std::filesystem::path SessionLease::session_path(
-    const std::filesystem::path& database_path,
-    std::string_view forum_id, std::string_view session_id) {
-    auto directory = std::filesystem::weakly_canonical(database_path);
-    directory += ".cha-sessions";
-    std::filesystem::create_directories(directory);
-    std::string identity(forum_id);
-    identity.push_back('\0');
-    identity.append(session_id);
-    const auto digest = sha256_digest(identity);
-    constexpr char hex[] = "0123456789abcdef";
-    std::string name;
-    for (unsigned char byte : digest) {
-        name.push_back(hex[byte >> 4]);
-        name.push_back(hex[byte & 15]);
-    }
-    return directory / (name + ".lock");
+    std::string busy_message) {
+    const std::filesystem::path path = companion_path(database_path);
+    return SessionLease(std::make_unique<Impl>(path, std::move(busy_message)));
 }
 
 std::filesystem::path SessionLease::companion_path(
@@ -201,10 +143,7 @@ std::filesystem::path SessionLease::companion_path(
 }
 
 bool SessionLease::active() const noexcept {
-    return impl_ && impl_->locked;
+    return static_cast<bool>(impl_);
 }
-
-void SessionLease::change_mode(Mode mode) { impl_->change_mode(mode); }
-SessionLease::Mode SessionLease::mode() const noexcept { return impl_->mode_; }
 
 } // namespace cha

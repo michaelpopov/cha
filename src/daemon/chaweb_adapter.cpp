@@ -861,8 +861,6 @@ void handle_chaweb_request(
         write_code(fd, ErrorCode::not_found, stop, "The request was not found.");
     } catch (const app::ApplicationError& error) {
         write_error(fd, status_for(error.code), from_application(error), stop);
-    } catch (const SecondaryProcessError& error) {
-        write_code(fd, ErrorCode::invalid_argument, stop, error.what());
     } catch (const SessionBusyError& error) {
         write_code(fd, ErrorCode::invalid_argument, stop, error.what());
     } catch (const std::invalid_argument&) {

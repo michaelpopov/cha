@@ -214,7 +214,7 @@ struct NotesService::Impl {
         FolderStoreClient&, CloudStoreCache&, const std::atomic_bool& cancel)>;
     // Caller holds lifecycle_mutex. Network work runs after releasing it.
     std::shared_ptr<OperationReply> launch_cloud_store(
-        std::string_view api_key_id, std::uint64_t epoch, bool writing, CloudStoreWork work);
+        std::string_view api_key_id, std::uint64_t epoch, CloudStoreWork work);
     bool launch_folder_store_control(
         const std::shared_ptr<FolderStoreControl>& control, std::function<void()> work);
 

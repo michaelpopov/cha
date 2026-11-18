@@ -6,14 +6,12 @@
 #include "chat/session_identity.h"
 #include "storage/session_database.h"
 #include "storage/stored_session.h"
-#include "storage/session_lease.h"
 
 #include <nlohmann/json_fwd.hpp>
 
 #include <filesystem>
 #include <functional>
 #include <mutex>
-#include <map>
 #include <optional>
 #include <set>
 #include <shared_mutex>
@@ -45,7 +43,6 @@ struct TemporarySessionSeed {
 };
 
 struct PreparedSession {
-    std::shared_ptr<SessionLease> lease;
     FullSessionId identity;
     std::string label;
     std::filesystem::path database_path;
@@ -123,15 +120,12 @@ public:
     // Fences new repository operations and waits for existing ones. Live
     // actors write through SessionJournal and must be stopped separately.
     [[nodiscard]] MaintenanceGuard reserve_maintenance();
-    [[nodiscard]] std::shared_ptr<SessionLease> reserve_for_sync(const FullSessionId& identity) const;
     void synchronize_forums() const;
     void synchronize_forums(const Workspace& workspace) const;
 
     [[nodiscard]] std::filesystem::path database_path() const;
     [[nodiscard]] std::shared_ptr<const Workspace> workspace() const;
     void set_sync_machine(std::string machine);
-    void release_pending();
-    void release_pending(const FullSessionId& identity) const;
 
 private:
     [[nodiscard]] std::filesystem::path prepare_temporary_database(
@@ -141,8 +135,6 @@ private:
     void require_persistent_forum(std::string_view forum_id) const;
     void synchronize_forums_unlocked(const Workspace& workspace) const;
     void recover_sessions() const;
-    std::shared_ptr<SessionLease> acquire_session(
-        const FullSessionId& identity, bool opening = false, bool skip_local = false) const;
 
     WorkspaceReader read_workspace_;
     mutable std::shared_mutex operation_mutex_;
@@ -155,9 +147,6 @@ private:
     std::filesystem::path welcome_directory_;
     std::filesystem::path temporary_database_path_;
     std::string sync_machine_;
-    mutable std::mutex leases_mutex_;
-    mutable std::map<FullSessionId, std::weak_ptr<SessionLease>> leases_;
-    mutable std::map<FullSessionId, std::shared_ptr<SessionLease>> pending_;
 };
 
 // Test-only seam for a simulated forum-table synchronization failure.

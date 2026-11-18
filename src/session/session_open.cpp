@@ -30,7 +30,6 @@ OpenedSession open_session(
     const std::string sync_machine = config.sync_machine();
     return {
         .label = prepared.label,
-        .lease = std::move(prepared.lease),
         .controller = SessionController::from_workspace(
             [&config] { return config.snapshot(); },
             [&config](std::int64_t id) { return config.get_note_text(id, /*prefer_compressed=*/ true); },
@@ -49,10 +48,7 @@ OpenedSession open_session(
             sync_machine),
         .persist_default_character = [&config, forum_id = forum->id](
                                          std::string_view character_id) {
-            try { (void)config.apply_forum_default_character(forum_id, character_id); }
-            catch (const SecondaryProcessError&) {
-                log_warn("Secondary process did not save the forum default character");
-            }
+            (void)config.apply_forum_default_character(forum_id, character_id);
         },
         .cached_audio_entries = [&sessions, identity] {
             return sessions.cached_audio_entries(identity);

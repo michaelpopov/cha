@@ -353,7 +353,7 @@ Application::Impl::Impl(
         active_password);
     sessions->set_sync_machine(command.machine);
     mirror = std::make_shared<SessionMirror>();
-    if (const auto root = session_mirror_root(command.vault); root && store->is_main()) {
+    if (const auto root = session_mirror_root(command.vault)) {
         try {
             mirror->rebuild(root, *sessions);
         } catch (const std::exception& error) {
@@ -362,8 +362,6 @@ Application::Impl::Impl(
                 + std::string(error.what()));
             mirror->rebuild(std::nullopt, *sessions);
         }
-    } else if (root) {
-        log_warn("Secondary process does not write the Markdown mirror");
     }
 
     maintenance_prompt = std::make_shared<const std::string>(
@@ -411,7 +409,7 @@ Application::Impl::Impl(
 void Application::Impl::start_sync_worker(SyncStart mode) {
     if (mode == SyncStart::resume && sync_worker && sync_worker->stopped()) return;
     sync_worker.reset();
-    if (command.machine.empty() || stopping_flag || !store->is_main()) return;
+    if (command.machine.empty() || stopping_flag) return;
     const auto saved = api_keys->d1();
     if (!saved || !saved->usable()) return;
     try {
@@ -422,7 +420,6 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
         config.machine = command.machine;
         config.transport = d1_test_transport;
         config.store = store.get();
-        config.sessions = sessions.get();
         config.live_sessions = live_sessions.get();
         config.application_stopping = [this] { return stopping_flag.load(); };
         config.on_notes_changed = [this] {
@@ -726,18 +723,11 @@ Application::open_session(
             }
             return *error;
         }
-        if (const auto* failure = std::get_if<LiveSessionOpenFailure>(&outcome);
-            failure && *failure != LiveSessionOpenFailure::open_timeout
-                && *failure != LiveSessionOpenFailure::manager_stopping) {
-            impl_->sessions->release_pending(key);
-        }
     }
     if (std::holds_alternative<LiveSessionReady>(outcome)) {
         return OpenSessionSuccess{key.forum_id, key.session_id};
     }
     switch (std::get<LiveSessionOpenFailure>(outcome)) {
-    case LiveSessionOpenFailure::busy:
-        throw ApplicationError(ErrorCode::invalid_argument, session_in_use_message);
     case LiveSessionOpenFailure::not_found:
         return ErrorCode::not_found;
     case LiveSessionOpenFailure::stopping:
@@ -1223,7 +1213,9 @@ ForumDetail Application::update_forum(
 void Application::delete_forum(
     std::string_view forum_id,
     std::uint64_t epoch) {
-    impl_->vault_maintenance.delete_forum(forum_id, epoch);
+    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
+    impl_->require_admitted(epoch);
+    workspace::delete_forum(*impl_->store, *impl_->live_sessions, forum_id);
 }
 
 ForumDetail Application::update_forum_library(
@@ -1651,7 +1643,6 @@ D1StorageDetail Application::save_d1_storage(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     const auto& machine = impl_->command.machine;
     if (machine.empty()) {
         throw ApplicationError(
@@ -1699,7 +1690,6 @@ D1StorageDetail Application::save_d1_storage(
 void Application::disconnect_d1_storage(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     const auto old = impl_->api_keys->d1();
     if (!old) {
         throw ApplicationError(
@@ -1744,7 +1734,6 @@ std::shared_ptr<OperationReply> Application::start_openai_auth(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        impl_->store->require_main();
         oauth = impl_->openai_auth.get();
     }
     if (!impl_->background_jobs.launch(
@@ -1778,7 +1767,6 @@ std::shared_ptr<OperationReply> Application::poll_openai_auth(
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        impl_->store->require_main();
         oauth = impl_->openai_auth.get();
     }
     if (!impl_->background_jobs.launch(
@@ -1808,7 +1796,6 @@ std::shared_ptr<OperationReply> Application::poll_openai_auth(
 OpenAiAuth Application::disconnect_openai_auth(std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     return settings::disconnect_openai_auth(*impl_->openai_auth);
 }
 
@@ -1923,7 +1910,6 @@ bool Application::join_shutdown(std::chrono::milliseconds grace) {
     std::unique_ptr<D1SyncWorker> worker;
     if (joined) {
         worker = std::move(impl_->sync_worker);
-        impl_->sessions->release_pending();
     }
     lifecycle.unlock();
     if (worker) {

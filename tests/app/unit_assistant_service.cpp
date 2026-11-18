@@ -107,7 +107,6 @@ public:
     ~ServiceHarness() {
         service_.reset();
         oauth_.reset();
-        secondary_.reset();
         store_.reset();
         shutdown_diagnostic_logging();
         std::error_code ignored;
@@ -147,12 +146,6 @@ public:
         bind();
     }
 
-    // The first store keeps the main role, so this second store is secondary.
-    void use_secondary() {
-        secondary_ = WorkspaceConfigStore::open(database_);
-        bind();
-    }
-
     Json run(std::string_view name, const Json& arguments) {
         return run_raw(name, arguments.dump());
     }
@@ -164,7 +157,7 @@ public:
 private:
     void bind() {
         service_ = std::make_unique<AssistantService>(AssistantService::Links{
-            .store = secondary_ ? secondary_.get() : store_.get(),
+            .store = store_.get(),
             .oauth = oauth_.get(),
             .api_keys = keys_.get(),
             .lifecycle = &lifecycle_,
@@ -188,7 +181,6 @@ private:
     std::filesystem::path log_directory_;
     std::filesystem::path oauth_path_;
     std::unique_ptr<WorkspaceConfigStore> store_;
-    std::unique_ptr<WorkspaceConfigStore> secondary_;
     std::unique_ptr<ApiKeyStore> keys_;
     std::unique_ptr<OpenAiOAuth> oauth_;
     std::unique_ptr<AssistantService> service_;
@@ -1100,7 +1092,6 @@ TEST(AssistantService, ReadsEventsAndCurrentPendingNotesWithoutChangingTheVault)
         {"audio", {{"pending", true}, {"attempt_id", 7}}},
         {"compression", {{"pending", true}}},
     }});
-    harness.use_secondary();
     const auto result = harness.run("assistant_events", Json::object());
     EXPECT_EQ(result["events"], events);
     EXPECT_EQ(result["pending_notes"], harness.pending_notes);
@@ -1222,16 +1213,6 @@ TEST(AssistantService, ReportsMissingLogAndRejectsInvalidLogArguments) {
     EXPECT_EQ(harness.run("assistant_logging", {{"level", "verbose"}})["error"], "invalid_argument");
     EXPECT_EQ(harness.run("assistant_logging", {{"verbose", true}})["error"], "invalid_argument");
     EXPECT_EQ(diagnostic_log_level(), "off");
-}
-
-TEST(AssistantService, SecondaryChangesItsOwnLogLevelButNotSettings) {
-    ServiceHarness harness;
-    harness.use_secondary();
-    EXPECT_EQ(harness.run("assistant_logging", {{"level", "debug"}})["level"], "debug");
-    const Json refused = harness.run("host_config_write",
-        {{"path", "app.toml"}, {"content", ""}, {"expected_content", nullptr}});
-    EXPECT_EQ(refused["error"], "validation_failure");
-    EXPECT_EQ(refused["message"], "Settings can be changed only in the main CHA process.");
 }
 
 TEST(AssistantService, RedactsSecretsAndEscapesMultilineLogRecords) {

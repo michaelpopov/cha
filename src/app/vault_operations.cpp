@@ -1,7 +1,6 @@
 #include "app/vault_operations.h"
 
 #include "app/application_internal.h"
-#include "app/workspace_operations.h"
 #include "storage/sqlite_storage.h"
 #include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
@@ -284,7 +283,6 @@ void Application::Impl::VaultMaintenance::run_welcome_command(
             app.require_admitted(epoch);
             if (download) {
                 const auto active = app.current_vault_.get();
-                app.store->require_main();
                 if (active.password_protected)
                     throw VaultPasswordError("Welcome cannot download a protected vault.");
                 (void)require_r2_key();
@@ -301,7 +299,6 @@ void Application::Impl::VaultMaintenance::run_welcome_command(
                 }
                 switch_vault_locked(*local, {}, notice, true);
             } else {
-                app.store->require_main();
                 const auto key = require_r2_key();
                 target = save_r2_vault_locked(target, key, true).name;
                 saved = true;
@@ -394,8 +391,7 @@ std::uint64_t Application::Impl::VaultMaintenance::publish_epoch(
 
 bool Application::Impl::VaultMaintenance::drain_for_maintenance(
     PendingContextNotice& notice,
-    bool cancel_audio, bool require_main) {
-    if (require_main) app.store->require_main();
+    bool cancel_audio) {
     if (app.unusable) {
         throw WorkspaceRestartRequiredError(
             "The workspace database could not be reopened after an earlier "
@@ -454,7 +450,6 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         cancel_maintenance_locked(notice);
         return false;
     }
-    app.sessions->release_pending();
     // Controllers have finished; outgoing hooks had database access.
     // Collect flags and attempt the final send before the database closes.
     // Failures retain unsent work; maintenance still proceeds.
@@ -533,38 +528,12 @@ void Application::Impl::VaultMaintenance::reopen_after_failure(
 
 void Application::Impl::VaultMaintenance::rebuild_mirror(const std::optional<std::filesystem::path>& root) {
     try {
-        const bool main = app.store->is_main();
-        if (root && !main) log_warn("Secondary process does not write the Markdown mirror");
-        app.mirror->rebuild(main ? root : std::nullopt, *app.sessions);
+        app.mirror->rebuild(root, *app.sessions);
     } catch (const std::exception& error) {
         log_warn(
             "Session mirror rebuild failed: " + std::string(error.what()));
         app.mirror->rebuild(std::nullopt, *app.sessions);
     }
-}
-
-void Application::Impl::VaultMaintenance::delete_forum(
-    std::string_view forum_id, std::uint64_t epoch) {
-    PendingContextNotice notice;
-    try {
-        const std::lock_guard lifecycle(app.lifecycle_mutex);
-        app.require_admitted(epoch);
-        if (!drain_for_maintenance(notice)) {
-            throw std::runtime_error(
-                "Could not pause active sessions for database maintenance");
-        }
-        try {
-            workspace::delete_forum(*app.store, *app.live_sessions, forum_id);
-            end_maintenance_locked(true, notice);
-        } catch (const WorkspaceRestartRequiredError&) {
-            end_maintenance_locked(false, notice);
-            throw;
-        } catch (...) {
-            cancel_maintenance_locked(notice);
-            throw;
-        }
-    } catch (...) { notice.dispatch(); throw; }
-    notice.dispatch();
 }
 
 template<typename Operation>
@@ -582,9 +551,8 @@ auto Application::Impl::VaultMaintenance::maintain_database(
     try {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
-        app.store->require_main();
         if (before_drain) before_drain();
-        if (!drain_for_maintenance(notice, cancel_audio, false)) {
+        if (!drain_for_maintenance(notice, cancel_audio)) {
             throw std::runtime_error(
                 "Could not pause active sessions for database maintenance");
         }
@@ -630,7 +598,6 @@ VaultRegistrySnapshot Application::Impl::VaultMaintenance::vault_snapshot() cons
 VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate create, std::uint64_t epoch) {
     const std::lock_guard lifecycle(app.lifecycle_mutex);
     app.require_admitted(epoch);
-    app.store->require_main();
     const VaultDefinition* copied = nullptr;
     if (create.copy_from) {
         copied = find_vault(app.command.vaults, *create.copy_from);
@@ -665,9 +632,8 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
     std::optional<SessionLease> source_use;
     if (copied && copied->data != app.current_vault_.get().data) {
         source_use.emplace(SessionLease::acquire(
-            copied->data, vault_in_use_message, SessionLease::Mode::shared));
+            copied->data, vault_in_use_message));
     }
-    auto target_main = SessionLease::acquire_main(candidate.data);
     auto target_use = SessionLease::acquire(candidate.data, vault_in_use_message);
     vault::require_available_database_path(candidate.data);
     write_toml_file(candidate.source, vault::vault_definition_table(candidate));
@@ -745,7 +711,6 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
     {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
-        app.store->require_main();
         active = same_vault_name(app.current_vault_.get().name, current_name);
     }
     const auto update_target = [&](WorkspaceConfigStore::MaintenanceGuard* database,
@@ -767,10 +732,8 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         updated[static_cast<std::size_t>(found - app.command.vaults.begin())] = candidate;
         vault::validate_candidate_vaults(app.command.config_directory, updated);
 
-        std::optional<SessionLease> target_main;
         std::optional<SessionLease> target_use;
         if (!active) {
-            target_main.emplace(SessionLease::acquire_main(previous.data));
             target_use.emplace(SessionLease::acquire(previous.data, vault_in_use_message));
         }
         std::vector<vault::VaultDirectoryMove> moved;
@@ -839,14 +802,12 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
     }
     const std::lock_guard lifecycle(app.lifecycle_mutex);
     app.require_admitted(epoch);
-    app.store->require_main();
     return update_target(nullptr, nullptr);
 }
 
 void Application::Impl::VaultMaintenance::delete_vault(std::string_view name, std::uint64_t epoch) {
     const std::lock_guard lifecycle(app.lifecycle_mutex);
     app.require_admitted(epoch);
-    app.store->require_main();
     const auto found = std::find_if(
         app.command.vaults.begin(), app.command.vaults.end(),
         [name](const VaultDefinition& vault) {
@@ -861,7 +822,6 @@ void Application::Impl::VaultMaintenance::delete_vault(std::string_view name, st
     if (same_vault_name(app.current_vault_.get().name, found->name)) {
         throw std::invalid_argument("The active vault cannot be deleted");
     }
-    auto target_main = SessionLease::acquire_main(found->data);
     auto target_use = SessionLease::acquire(found->data, vault_in_use_message);
     (void)std::filesystem::remove(found->source);
     app.command.vaults.erase(found);
@@ -908,7 +868,6 @@ VaultDefinition Application::Impl::VaultMaintenance::download_r2_vault(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(app.lifecycle_mutex);
     app.require_admitted(epoch);
-    app.store->require_main();
     const std::optional<R2StorageKey> r2 = app.api_keys->r2();
     if (!r2) {
         throw std::invalid_argument(
@@ -1015,15 +974,14 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
 
     SessionLease target_lease = SessionLease::acquire(
         selected.data,
-        vault_in_use_message,
-        SessionLease::Mode::shared);
+        vault_in_use_message);
     if (selected.password_protected) {
         require_openable_protected_database(selected.data, password);
     }
     require_switchable_database(selected.data, password);
 
     if (from_welcome) post_welcome_notice("Opening vault '" + selected.name + "'.");
-    if (!drain_for_maintenance(notice, true, false)) {
+    if (!drain_for_maintenance(notice)) {
         throw std::runtime_error(
             "Could not pause active sessions for database maintenance");
     }
@@ -1033,7 +991,7 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
             auto database = app.store->reserve_maintenance();
             SessionRepository::MaintenanceGuard repository =
                 app.sessions->reserve_maintenance();
-            database.close(false);
+            database.close();
             database_closed = true;
             database.retarget(
                 selected.data, std::move(target_lease), password);
@@ -1071,7 +1029,7 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
     }
     rebuild_mirror(session_mirror_root(selected));
     try {
-        if (app.store->is_main()) vault::write_vault_selection(
+        vault::write_vault_selection(
             app.command.config_directory, selected.name);
     } catch (const std::exception& error) {
         log_warn(
@@ -1089,7 +1047,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
     try {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
-        app.store->require_main();
         const auto current = app.current_vault_.get();
         const VaultDefinition* const source =
             find_vault(app.command.vaults, source_name);
@@ -1105,7 +1062,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
         }
 
         VaultDefinition selected = *source;
-        auto source_main = SessionLease::acquire_main(selected.data);
         SessionLease source_lease = SessionLease::acquire(
             selected.data,
             vault_in_use_message);
@@ -1128,9 +1084,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
             }
             rebuild_mirror(
                 session_mirror_root(app.current_vault_.get()));
-        } catch (const WorkspaceRestartRequiredError&) {
-            end_maintenance_locked(false, notice);
-            throw;
         } catch (const std::exception& error) {
             if (app.state.load() == ApplicationState::maintenance) {
                 if (!merged) {
@@ -1216,8 +1169,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::finish_upload(
                 return candidate.source == vault.source;
             });
         if (configured == app.command.vaults.end()
-            || app.current_vault_.get().source != vault.source
-            || !app.store->is_main()) return;
+            || app.current_vault_.get().source != vault.source) return;
         save_r2_vault_etag(vault.source, etag);
         configured->r2_etag = std::string(etag);
         app.command.vault = *configured;

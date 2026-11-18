@@ -135,9 +135,7 @@ async function nativeParity() {
       check(rejected, 'deleted file remained readable');
     }
     await rpc('character.delete', {character_id: character.id});
-    const beforeDelete = epoch;
     await rpc('forum.delete', {forum_id: forum.id});
-    check(epoch > beforeDelete, 'forum deletion did not renew context');
     await rpc('persona.delete', {persona_id: persona.id});
     await rpc('session.delete', {...identity, session_id: other.id});
     const copy = await rpc('vault.create', {display_name: 'Parity copy', copy_from: originalVault, password: null});

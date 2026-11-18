@@ -19,12 +19,10 @@
 
 #include <algorithm>
 #include <atomic>
-#include <barrier>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <future>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -1173,17 +1171,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, OpenMigratesCompressedNotesInPlainAndPro
         }
         // Open twice to exercise both the conversion and the idempotent path.
         for (int reopen = 0; reopen < 2; ++reopen) {
-            std::barrier start_open(2);
-            std::future<void> competing_open;
-            if (reopen == 0 && password.empty()) {
-                competing_open = std::async(std::launch::async, [&] {
-                    start_open.arrive_and_wait();
-                    (void)WorkspaceConfigStore::open(path);
-                });
-                start_open.arrive_and_wait();
-            }
             const auto store = WorkspaceConfigStore::open(path, std::string(password));
-            if (competing_open.valid()) competing_open.get();
             Database handle(path, Database::Mode::read_only, password);
             EXPECT_EQ(handle.pragma_integer("user_version"), workspace_session_database_version);
             EXPECT_EQ(store->get_note(2, NoteTextMode::compressed).document, note_document_from_text("  **Café**\r\n\r\nSummary\t "));
@@ -1243,11 +1231,24 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, AddsRecentVisibilityWithoutHidingExistin
     }
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheVaultLeaseUntilDestroyed) {
+    {
+        const auto store = open_store();
+#ifndef _WIN32
+        EXPECT_EQ(test::probe_lease(database()), test::LeaseProbeResult::busy);
+#else
+        EXPECT_THROW((void)open_store(), SessionBusyError);
+#endif
+    }
+#ifndef _WIN32
+    EXPECT_EQ(test::probe_lease(database()), test::LeaseProbeResult::acquired);
+#else
+    EXPECT_NO_THROW((void)open_store());
+#endif
+}
+
 TEST_F(RuntimeWorkspaceConfigStoreTest, HoldsTheLeaseAgainstRuntimeImportAndExport) {
     const auto store = open_store();
-    const auto secondary = open_store();
-    EXPECT_TRUE(store->is_main());
-    EXPECT_FALSE(secondary->is_main());
     EXPECT_THROW(
         (void)import_workspace_configuration(source(), database()),
         SessionBusyError);
@@ -1271,7 +1272,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ClosesSqliteButKeepsLeaseForMaintenance)
 
     EXPECT_EQ(store->workspace_path(), workspace_path);
     expect_session_root_identity(store->snapshot(), workspace_path);
-    EXPECT_FALSE(open_store()->is_main());
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RejectsMissingV1AndForeignDatabases) {
@@ -2106,14 +2106,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PromptInitializationIsAtomicAndRecordsSt
         Database handle(database(), Database::Mode::read_only);
         EXPECT_TRUE(sync_queue_list(handle).empty());
     }
-    {
-        auto lease = SessionLease::acquire_main(database());
-        const auto secondary = WorkspaceConfigStore::open(database(), {}, "mac");
-        EXPECT_FALSE(secondary->is_main());
-        EXPECT_EQ(secondary->snapshot()->prompts().size(), prompt_catalog.size());
-        EXPECT_THROW(secondary->apply_prompt_text("note-compression", "Changed"), SecondaryProcessError);
-        EXPECT_EQ(config_contents(database()), original);
-    }
     const auto store = WorkspaceConfigStore::open(database(), {}, "mac");
     auto initialized = config_contents(database());
     EXPECT_EQ(initialized.size(), original.size() + prompt_catalog.size());
@@ -2318,7 +2310,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTr
         std::filesystem::weakly_canonical(
             std::filesystem::absolute(other_database)));
     ASSERT_NE(store->snapshot()->find_persona("beta"), nullptr);
-    EXPECT_FALSE(WorkspaceConfigStore::open(other_database)->is_main());
+    EXPECT_THROW((void)WorkspaceConfigStore::open(other_database), SessionBusyError);
 #ifndef _WIN32
     EXPECT_EQ(
         test::probe_lease(database()), test::LeaseProbeResult::acquired);
@@ -3981,10 +3973,6 @@ TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingCo
     EXPECT_EQ(member_prompt, before->character_definition(identity, "guide").system_prompt);
     EXPECT_NE(member_prompt.find("Member instructions."), std::string::npos);
     const auto preview = store->forum_system_prompt(identity, "mentor");
-    auto secondary = WorkspaceConfigStore::open(database);
-    ASSERT_FALSE(secondary->is_main());
-    const std::vector<std::string> paths{"forums/lobby/config.toml"};
-    const auto original_config = secondary->read_config(paths).files.front().content;
     EXPECT_NE(preview.find("Saved persona instructions."), std::string::npos);
     EXPECT_NE(preview.find("Forum default voice"), std::string::npos);
     EXPECT_NE(preview.find("The Lobby"), std::string::npos);
@@ -3997,17 +3985,6 @@ TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingCo
     (void)store->apply_forum_members_and_persona(
         "lobby", std::vector<std::string>{"guide", "mentor"}, "writer");
     EXPECT_EQ(preview, store->snapshot()->character_definition(identity, "mentor").system_prompt);
-    EXPECT_EQ(secondary->forum_system_prompt(identity, "mentor"), preview);
-    EXPECT_EQ(secondary->read_config(paths).files.front().content, original_config);
-    EXPECT_EQ(secondary->snapshot()->find_forum_member("lobby", "mentor"), nullptr);
-    EXPECT_THROW((void)secondary->apply_character_definition("guide", "Changed"), SecondaryProcessError);
-    const std::vector<WorkspaceConfigChange> changes{{
-        .path = "characters/guide/CHARACTER.md",
-        .operation = WorkspaceConfigOperation::replace,
-        .content = "Changed",
-    }};
-    EXPECT_THROW((void)secondary->apply_config(secondary->config_revision(), changes), SecondaryProcessError);
-    EXPECT_THROW((void)secondary->undo_config(secondary->config_revision()), SecondaryProcessError);
 }
 
 TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {

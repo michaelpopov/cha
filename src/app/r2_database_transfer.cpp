@@ -1114,9 +1114,7 @@ R2DatabaseTransfer upload_database_to_r2(
     std::string_view expected_etag) {
     const std::filesystem::path database = normalize_database_path(database_path);
     std::optional<SessionLease> lease;
-    std::optional<SessionLease> main_lease;
     if (lease_mode == R2DatabaseLease::acquire) {
-        main_lease.emplace(SessionLease::acquire_main(database));
         lease.emplace(SessionLease::acquire(database, busy_message(database)));
     }
     R2DatabaseUpload upload(database, vault_definition_path, database_password);
@@ -1155,9 +1153,7 @@ R2DatabaseTransfer download_database_from_r2(
             "Database parent '" + utf8_path(parent) + "' does not exist");
     }
     std::optional<SessionLease> lease;
-    std::optional<SessionLease> main_lease;
     if (lease_mode == R2DatabaseLease::acquire) {
-        main_lease.emplace(SessionLease::acquire_main(database));
         lease.emplace(SessionLease::acquire(database, busy_message(database)));
     }
 
@@ -1278,7 +1274,6 @@ R2DatabaseTransfer download_new_database_from_r2(
         || !std::filesystem::is_directory(vault.parent_path())) {
         throw std::invalid_argument("The database parent directory does not exist");
     }
-    auto main_lease = SessionLease::acquire_main(database);
     auto lease = SessionLease::acquire(database, vault_in_use_message);
     if (regular_file_if_present(database) || regular_file_if_present(vault)) {
         throw std::invalid_argument("The local vault already exists");

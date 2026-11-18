@@ -1,5 +1,4 @@
 #include "runtime/live_session_manager.h"
-#include "storage/session_lease.h"
 
 #include "storage/not_found_error.h"
 #include "util/logging.h"
@@ -256,9 +255,6 @@ struct SessionRuntime::Impl {
             return LiveSessionReady{};
         } catch (const std::bad_alloc&) {
             std::terminate();
-        } catch (const SessionBusyError&) {
-            publish_released(key);
-            return LiveSessionOpenFailure::busy;
         } catch (const SessionNotFoundError&) {
             publish_released(key);
             log_warn(session_log(key, "storage_not_found"));
@@ -637,10 +633,6 @@ LiveSessionOpenResult LiveSessionManager::select(
                 candidate = impl.create_session(key, epoch);
             } catch (const std::bad_alloc&) {
                 std::terminate();
-            } catch (const SessionBusyError&) {
-                impl.publish_released(key);
-                (void)reply->complete(LiveSessionOpenFailure::busy);
-                return;
             } catch (const SessionNotFoundError&) {
                 impl.publish_released(key);
                 (void)reply->complete(LiveSessionOpenFailure::not_found);

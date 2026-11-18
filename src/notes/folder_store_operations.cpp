@@ -263,7 +263,6 @@ void NotesService::Impl::release_folder_store_control_locked(const std::shared_p
 bool NotesService::Impl::folder_store_lifetime_locked(const std::shared_ptr<FolderStoreControl>& control) {
     if (admit_locked(control->epoch) || control->cancel_all->load()) return false;
     if (folder_store_operation(control->operation_id) != control) return false;
-    store->require_main();
     return true;
 }
 
@@ -502,7 +501,6 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
     std::string service, std::string api_key_id, std::string description, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     FolderStoreService parsed;
     try { parsed = parse_folder_store_service(service); }
     catch (const FolderStoreError& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
@@ -541,7 +539,6 @@ FolderStoreStart NotesService::start_folder_store_upload(std::int64_t folder_id,
 FolderStoreStart NotesService::retry_folder_store_cleanup(std::int64_t operation_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     const auto control = impl_->folder_store_operation(operation_id);
     if (!control || !control->terminal || !control->known_cleanup_remains)
         throw ApplicationError(ErrorCode::invalid_argument, "This store cleanup cannot be retried.");
@@ -570,7 +567,6 @@ FolderStoreOperationStatus NotesService::folder_store_operation_status(std::int6
 void NotesService::cancel_folder_store_upload(std::int64_t operation_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     const auto control = impl_->folder_store_operation(operation_id);
     if (!control) throw ApplicationError(ErrorCode::invalid_argument, "That store operation is no longer current.");
     if (control->terminal) return;
@@ -582,7 +578,6 @@ void NotesService::cancel_folder_store_upload(std::int64_t operation_id, std::ui
 void NotesService::close_folder_store_operation(std::int64_t operation_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    impl_->store->require_main();
     const auto control = impl_->folder_store_operation(operation_id);
     if (!control) throw ApplicationError(ErrorCode::invalid_argument, "That store operation is no longer current.");
     if (!control->terminal) throw ApplicationError(ErrorCode::invalid_argument, "The operation is still running.");
@@ -675,9 +670,8 @@ std::vector<FolderStoreDetail> NotesService::Impl::cloud_store_snapshot(
 }
 
 std::shared_ptr<OperationReply> NotesService::Impl::launch_cloud_store(std::string_view api_key_id,
-    std::uint64_t epoch, bool writing, CloudStoreWork work) {
+    std::uint64_t epoch, CloudStoreWork work) {
     auto cache = cloud_store_cache_locked(api_key_id, epoch);
-    if (writing) store->require_main();
     auto transport = folder_store_transport ? folder_store_transport : folder_store_curl_transport;
     auto reply = std::make_shared<OperationReply>();
     if (!background_jobs.launch([reply, cache, transport = std::move(transport),
@@ -709,7 +703,7 @@ void NotesService::preload_cloud_stores_locked() {
         if ((key.cloud_store != "openai" && key.cloud_store != "google") || !key.has_value) continue;
         if (impl_->cloud_store_cache.contains(key.id)) continue;
         try {
-            (void)impl_->launch_cloud_store(key.id, epoch, false,
+            (void)impl_->launch_cloud_store(key.id, epoch,
                 [owner = impl_.get(), id = key.id](FolderStoreClient& client, Impl::CloudStoreCache& cache,
                     const std::atomic_bool& cancel) {
                     try {
@@ -728,7 +722,7 @@ void NotesService::preload_cloud_stores_locked() {
 
 std::shared_ptr<OperationReply> NotesService::list_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
-    return impl_->launch_cloud_store(api_key_id, epoch, false,
+    return impl_->launch_cloud_store(api_key_id, epoch,
         [owner = impl_.get()](FolderStoreClient& client, Impl::CloudStoreCache& cache, const std::atomic_bool& cancel) {
             return cloud_store_list(owner->cloud_store_snapshot(cache, client, cancel));
         });
@@ -736,7 +730,7 @@ std::shared_ptr<OperationReply> NotesService::list_cloud_stores(std::string_view
 
 std::shared_ptr<OperationReply> NotesService::refresh_cloud_stores(std::string_view api_key_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
-    return impl_->launch_cloud_store(api_key_id, epoch, false,
+    return impl_->launch_cloud_store(api_key_id, epoch,
         [owner = impl_.get()](FolderStoreClient& client, Impl::CloudStoreCache& cache, const std::atomic_bool& cancel) {
             return cloud_store_list(owner->cloud_store_snapshot(cache, client, cancel, true));
         });
@@ -745,7 +739,7 @@ std::shared_ptr<OperationReply> NotesService::refresh_cloud_stores(std::string_v
 std::shared_ptr<OperationReply> NotesService::get_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
-    return impl_->launch_cloud_store(api_key_id, epoch, false,
+    return impl_->launch_cloud_store(api_key_id, epoch,
         [owner = impl_.get(), id = std::string(store_id)](FolderStoreClient& client, Impl::CloudStoreCache& cache,
             const std::atomic_bool& cancel) {
             if (cache.service == FolderStoreService::openai ? !safe_component(id) : !google_store_valid(id))
@@ -760,7 +754,7 @@ std::shared_ptr<OperationReply> NotesService::get_cloud_store(
 std::shared_ptr<OperationReply> NotesService::delete_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
-    return impl_->launch_cloud_store(api_key_id, epoch, true,
+    return impl_->launch_cloud_store(api_key_id, epoch,
         [id = std::string(store_id)](FolderStoreClient& client, Impl::CloudStoreCache& cache,
             const std::atomic_bool& cancel) {
             const std::lock_guard download(cache.download_mutex);
@@ -783,7 +777,7 @@ std::shared_ptr<OperationReply> NotesService::update_cloud_store(
     std::string_view api_key_id, std::string_view store_id, std::string name,
     std::string description, std::uint64_t epoch) {
     const std::lock_guard lock(impl_->lifecycle_mutex);
-    return impl_->launch_cloud_store(api_key_id, epoch, true,
+    return impl_->launch_cloud_store(api_key_id, epoch,
         [id = std::string(store_id), name = std::move(name), description = std::move(description)](
             FolderStoreClient& client, Impl::CloudStoreCache& cache, const std::atomic_bool& cancel) {
             if (cache.service == FolderStoreService::openai) require_openai_description(description);

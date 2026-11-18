@@ -2,7 +2,6 @@
 #include "media/note_audio.h"
 #include "providers/gemini_token_cost.h"
 #include "util/private_filesystem.h"
-#include "storage/session_lease.h"
 #include "util/logging.h"
 
 #include <iomanip>
@@ -157,8 +156,6 @@ nlohmann::json NotesService::start_background_note_audio(std::int64_t id, std::s
     impl_->require_admitted(epoch);
     if (!impl_->note_audio_changed || !impl_->native_host)
         throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to generate note audio.");
-    try { impl_->store->require_main(); }
-    catch (const SecondaryProcessError&) { throw ApplicationError(ErrorCode::invalid_argument, vault_in_use_message); }
     const auto owner = impl_->store->get_note_audio_owner(id);
     const auto pending = impl_->store->get_note_audio_attempt_for_note(id);
     if (only_if_missing && (!owner
@@ -259,7 +256,7 @@ void NotesService::Impl::resume_note_audio_locked() {
 
 void NotesService::Impl::recover_note_audio() {
 #if defined(__APPLE__) || defined(_WIN32)
-    if (!note_audio_changed || !native_host || !can_recover() || !store->is_main()) return;
+    if (!note_audio_changed || !native_host || !can_recover()) return;
     try {
         for (const auto& attempt : store->get_note_audio_attempts()) {
             {
