@@ -89,29 +89,6 @@ struct NotesService::Impl {
     void run_note_audio(NoteAudioAttempt attempt, std::uint64_t epoch,
         std::shared_ptr<std::atomic_bool> cancel, std::string voice, std::string jsonl);
     void interrupt_abandoned_audio();
-    std::timed_mutex compression_mutex;
-    struct CompressionControl {
-        std::shared_ptr<std::atomic_bool> cancel = std::make_shared<std::atomic_bool>(false);
-        std::string name;
-    };
-    // All compression state and retirement use lifecycle_mutex.
-    std::map<std::int64_t, std::shared_ptr<CompressionControl>> compressions;
-    NoteAudioChanged note_compression_changed;
-    void notify_compression(std::int64_t id, std::uint64_t epoch) noexcept;
-    void retire_compression(std::int64_t id, const std::shared_ptr<CompressionControl>& control,
-        std::uint64_t epoch, EventSeverity severity, const std::string& message) noexcept;
-    // Caller holds lifecycle_mutex. Returns nothing when skip_ineligible skips the note.
-    std::optional<NoteText> compression_source_locked(std::int64_t id, bool skip_ineligible);
-    struct CompressionResult {
-        enum class Kind { saved, discarded, cancelled, failed } kind;
-        std::string failure;
-    };
-    // The worker body of both compression entry points. It records the outcome
-    // in Events and retires the reservation.
-    CompressionResult run_compression(const std::shared_ptr<CompressionControl>& control,
-        const SharedCharacterDefinition& definition, const std::string& instruction, const NoteText& note,
-        std::uint64_t epoch, std::atomic_bool& cancel, bool serialized, NoteSummaryCost* cost = nullptr);
-
     // One record for each active note line. Workers hold the original record so a
     // late reply after cancellation cannot add costs to a new run of the note.
     std::map<std::pair<std::string, std::int64_t>, std::shared_ptr<NoteSummaryLine>> note_summary_lines;
@@ -130,6 +107,8 @@ struct NotesService::Impl {
         std::uint64_t epoch;
         std::string target;
         std::string name;
+        std::string provider_id;
+        std::string reasoning_effort;
     };
     std::optional<SummaryBatch> summary_batch;
     void require_summary_batch(std::string_view connection_id, std::uint64_t epoch) const;
@@ -227,11 +206,6 @@ struct NotesService::Impl {
         std::string_view api_key_id, std::uint64_t epoch, CloudStoreWork work);
     bool launch_folder_store_control(
         const std::shared_ptr<FolderStoreControl>& control, std::function<void()> work);
-
-    // Deletion captures targets before the store commit and retires only after it.
-    std::vector<std::int64_t> collect_compressions_locked(std::int64_t root);
-    void cancel_note_compression_locked(std::int64_t id, std::uint64_t epoch);
-    void retire_deleted_compressions_locked(const std::vector<std::int64_t>& ids, std::uint64_t epoch);
 
     void require_admitted(std::uint64_t epoch) const {
         if (const auto error = admit_locked(epoch)) throw ApplicationError(*error);

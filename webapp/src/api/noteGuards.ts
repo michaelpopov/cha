@@ -1,4 +1,4 @@
-import type { NoteItem, SummaryCompressed, SummaryGenerated, SummaryStartResult, SummaryTarget } from './client';
+import type { NoteItem, SummaryGenerated, SummaryStartResult, SummaryTarget } from './client';
 import { isRecord } from './guards';
 
 export function isNoteId(value: unknown): value is number {
@@ -44,23 +44,18 @@ export function isNoteItemList(value: unknown): value is { items: NoteItem[] } {
 
 function isSummaryTarget(value: unknown): value is SummaryTarget {
   return isRecord(value)
-    && hasExactKeys(value, ['id', 'name', 'has_compressed', 'has_l1', 'has_l2'])
+    && hasExactKeys(value, ['id', 'name', 'levels'])
     && isNoteId(value.id)
     && typeof value.name === 'string' && value.name.length > 0
-    && typeof value.has_compressed === 'boolean'
-    && typeof value.has_l1 === 'boolean' && typeof value.has_l2 === 'boolean';
+    && Array.isArray(value.levels) && value.levels.length > 0
+    && new Set(value.levels).size === value.levels.length
+    && value.levels.every(level => ['compressed', 'l1', 'l2', 'l3'].includes(level));
 }
 
 export function isSummaryStartResult(value: unknown): value is SummaryStartResult {
   return isRecord(value)
     && hasExactKeys(value, ['notes'])
     && Array.isArray(value.notes) && value.notes.length > 0 && value.notes.every(isSummaryTarget);
-}
-
-export function isSummaryCompressed(value: unknown): value is SummaryCompressed {
-  return isRecord(value)
-    && hasExactKeys(value, ['compressed'])
-    && typeof value.compressed === 'boolean';
 }
 
 export function isSummaryGenerated(value: unknown): value is SummaryGenerated {

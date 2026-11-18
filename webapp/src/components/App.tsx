@@ -23,6 +23,7 @@ import {
   type NoteItem,
   type NotesClient,
   type NoteTextMode,
+  type SummaryStartRequest,
   type TextFileRequest,
   type VoiceInputUsage,
 } from '../api/client';
@@ -45,7 +46,6 @@ import { noteInSubtree } from '../notes/tree';
 import { notesExtensions } from '../notes/editor';
 import { summaryDocument, summaryConversionError } from '../notes/summaryImport';
 import { useNoteLeave } from '../notes/useNoteLeave';
-import { compressAndWait, type CompressionCancellation } from '../notes/compression';
 import { runSummaryBatch } from '../notes/summaries';
 import { useNoteImports, type NoteImports } from '../notes/useNoteImports';
 import type { NoteSaveHandle } from '../notes/useNoteSave';
@@ -95,8 +95,8 @@ import {
 } from './PersonaScreens';
 import { SessionsScreen } from './SessionsScreen';
 import { NotesScreen } from './NotesScreen';
-import { NoteCompressionDialog, type NoteCompressionProgress } from './NoteCompressionDialog';
-import { NotesTree, type CompressNote, type DeleteNoteItem, type NoteActions, type SetNoteReadOnly, type SummarizeNotes } from './NotesTree';
+import { NoteSummaryDialog } from './NoteSummaryDialog';
+import { NotesTree, type DeleteNoteItem, type NoteActions, type SetNoteReadOnly } from './NotesTree';
 import { Sidebar } from './Sidebar';
 import { TransliterationProvider } from './TransliterationMode';
 import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
@@ -139,7 +139,6 @@ interface ScreenProps extends ChatActions {
     stay(): void;
     discard(): void;
   };
-  compressionOpen: boolean;
   noteActionPending: boolean;
   onNoteTextModeChange(mode: NoteTextMode): void;
   onRegisterSave(save: NoteSaveHandle | null, documentId: number | null): void;
@@ -232,7 +231,6 @@ function ScreenContent({
   noteImports,
   editorLiveRef,
   leave,
-  compressionOpen,
   noteActionPending,
   onNoteTextModeChange,
   onRegisterSave,
@@ -540,7 +538,6 @@ function ScreenContent({
         noteTextMode={state.noteTextMode}
         noteActionPending={noteActionPending}
         onNoteTextModeChange={onNoteTextModeChange}
-        compressionOpen={compressionOpen}
         autoFocus={state.noteAutoFocus}
         destination={state.noteDestination}
         importSource={state.noteImportSource}
@@ -782,10 +779,9 @@ export function App({
   notesEpochRef.current = state.notesEpoch;
   activeNoteIdRef.current = state.activeNoteId;
   const notesVisibleRef = useRef(false);
-  const compressionRun = useRef<(CompressionCancellation & { notesChanged: boolean }) | null>(null);
-  const summaryBatch = useRef<NoteItem | null>(null);
-  const [compression, setCompression] = useState<NoteCompressionProgress | null>(null);
-  const compressionInProgress = useCallback(() => compressionRun.current !== null, []);
+  const summaryBatch = useRef<{ source: NoteItem; epoch: number } | null>(null);
+  const [summarySetup, setSummarySetup] = useState<{ source: NoteItem; epoch: number } | null>(null);
+  const closeSummarySetup = useCallback(() => setSummarySetup(null), []);
   notesVisibleRef.current = workspaceVisibility(state).notesVisible;
   const noteLeave = useNoteLeave(() => noteSaveRef.current, {
     disposeEditor: () => {
@@ -808,7 +804,7 @@ export function App({
     type: 'set-layout' | 'show-chat-tab' | 'show-notes-tab';
   }>) => {
     // A session open started in split view can replace Notes if it completes in single view.
-    if (compressionRun.current || state.bootstrapStatus !== 'ready'
+    if (state.bootstrapStatus !== 'ready'
       || state.sessionOperation === 'pending' || closeHost.current.isPending()) return;
     const current = { layoutMode: state.layoutMode, mainView: state.mainView };
     const next: typeof current = action.type === 'set-layout'
@@ -823,7 +819,6 @@ export function App({
     } else dispatch(action);
   }, [state.bootstrapStatus, state.layoutMode, state.mainView, state.sessionOperation, noteLeave.leaveNoteThen]);
   useEffect(() => installNativeLayoutHandler((requested) => {
-    if (compressionRun.current) return;
     if (requested === 'toggle-russian') {
       dispatch({ type: 'toggle-russian' });
       return;
@@ -931,7 +926,6 @@ export function App({
       ));
     },
     leaveNoteThen: noteLeave.leaveNoteThen,
-    navigationBlocked: compressionInProgress,
   });
 
   useEffect(() => {
@@ -943,7 +937,7 @@ export function App({
   }, [navigate]);
 
   const changeNoteTextMode = useCallback((mode: NoteTextMode) => {
-    if (mode === state.noteTextMode || compressionRun.current) return;
+    if (mode === state.noteTextMode) return;
     const context = vaultContext.current;
     void noteLeave.leaveNoteThen(() => {
       if (vaultContext.current !== context) return false;
@@ -1144,79 +1138,10 @@ export function App({
     }
   }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction]);
 
-  const compressNote = useCallback<CompressNote>(async (targets, epoch, folder, refresh) => {
-    const context = notesCancellation.current.signal;
-    const checkContext = () => {
-      if (context.aborted || client.contextEpoch() !== epoch)
-        throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
-    };
-    checkContext();
-    if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    const run: NonNullable<typeof compressionRun.current> = { requested: false, notesChanged: false };
-    compressionRun.current = run;
-    setCompression({ message: 'Saving note…', cancelEnabled: true });
-    const noteId = activeNoteIdRef.current;
-    const save = noteSaveRef.current;
-    const editor = editorLiveRef.current;
-    let reload = false;
-    let started = false;
-    try {
-      if (save?.isOpen) {
-        save.freeze();
-        const admitted = save.inFlightSerial();
-        await save.waitInFlight();
-        checkContext();
-        if (save.saveError?.serial === admitted || !await save.flushRemaining()) return;
-      }
-      checkContext();
-      if (run.requested) return;
-      started = true;
-      for (const [index, target] of targets.entries()) {
-        if (run.requested) break;
-        checkContext();
-        const progress = {
-          message: `Compressing “${target.name}”…`,
-          count: folder ? `Note ${index + 1} of ${targets.length}` : undefined,
-          cancelEnabled: true,
-        };
-        setCompression(progress);
-        await compressAndWait(client, target.id, epoch, folder, run, context, () => setCompression(progress));
-        if (target.id === noteId && state.noteTextMode === 'compressed') reload = true;
-      }
-    } finally {
-      try {
-        if (started || run.notesChanged) {
-          checkContext();
-          setCompression(progress => progress && { ...progress, cancelEnabled: false });
-          await refresh();
-          checkContext();
-          if (reload && !run.notesChanged && noteId === activeNoteIdRef.current && notesVisibleRef.current) {
-            try { await save?.saveScrollPosition?.(); }
-            catch (failure) { console.warn('Could not save the note scroll position.', failure); }
-          }
-          // A sync notice can arrive while the replacement is opening.
-          while ((reload || run.notesChanged) && noteId !== null
-              && noteId === activeNoteIdRef.current && notesVisibleRef.current) {
-            checkContext();
-            reload = false;
-            run.notesChanged = false;
-            setCompression({ message: 'Opening note…', cancelEnabled: false });
-            flushSync(() => dispatch({ type: 'reload-note' }));
-            await noteLoadRef.current;
-          }
-        }
-      } finally {
-        if (save?.isOpen && !context.aborted && editor === editorLiveRef.current) save.unfreeze();
-        compressionRun.current = null;
-        setCompression(null);
-        noteLeave.endNoteAction();
-      }
-    }
-  }, [client, noteLeave.beginNoteAction, noteLeave.endNoteAction, state.noteTextMode]);
-
-  const summarizeNotes = useCallback<SummarizeNotes>(async (source, epoch) => {
-    if (summaryBatch.current)
-      throw new ChaError('invalid_argument', `Summarization is already running for “${summaryBatch.current.name}”.`);
+  const summarizeNotes = useCallback(async (source: NoteItem, epoch: number, options: SummaryStartRequest) => {
+    const batch = { source, epoch };
+    if (summaryBatch.current?.epoch === epoch)
+      throw new ChaError('invalid_argument', `Summarization is already running for “${summaryBatch.current.source.name}”.`);
     const signal = notesCancellation.current.signal;
     const editorEpoch = notesEpochRef.current;
     const current = () => {
@@ -1280,7 +1205,8 @@ export function App({
     const showsFolderChild = (id: number, kind: 'summary' | 'annotation') =>
       notesVisibleRef.current && noteViewRef.current.items.some(item => item.id === activeNoteIdRef.current
         && item.parent_id === id && (kind === 'summary' ? item.folder_summary : item.kind === 'annotation'));
-    const commit: typeof client.summaryCommit = async (id, part, document) => {
+    const commit: typeof client.summaryCommit = async (...args) => {
+      const [id, part] = args;
       const replacesView = () => part === 'l3' ? showsFolderChild(id, 'summary')
         : showsVersion(id, part) && documentIdRef.current !== id;
       const guarded = await guardView(replacesView);
@@ -1306,7 +1232,7 @@ export function App({
         }
         checkContext();
         try {
-          await client.summaryCommit(id, part, document);
+          await client.summaryCommit(...args);
           replaced = true;
         } catch (failure) {
           const definite = failure instanceof ChaError
@@ -1352,12 +1278,12 @@ export function App({
 
     checkContext();
     if (!noteLeave.beginNoteAction()) throw new ChaError('invalid_argument', 'A notes action is already in progress.');
-    summaryBatch.current = source;
+    summaryBatch.current = batch;
     let sent = false;
     const finish = async () => {
       try { if (sent) await client.summaryFinish(epoch); }
       catch { /* The native lifecycle also retires batches on disconnect and vault changes. */ }
-      finally { summaryBatch.current = null; }
+      finally { if (summaryBatch.current === batch) summaryBatch.current = null; }
     };
     try {
       try {
@@ -1370,20 +1296,15 @@ export function App({
         noteLeave.endNoteAction();
       }
       sent = true;
-      const { notes } = await client.summaryStart(source.id, epoch);
-      void runSummaryBatch(client, source, notes, {
-        checkContext,
-        commit,
-        compressed: async id => {
-          checkContext();
-          noteActionsRef.current?.refresh();
-          await refreshView(() => showsVersion(id, 'compressed')
-            && (documentIdRef.current === id || noteLoadRef.current !== null), true);
-        },
-      }).catch(failure => {
+      const { notes } = await client.summaryStart(options, epoch);
+      checkContext();
+      void runSummaryBatch(client, source, notes, { checkContext, commit }).catch(failure => {
         if (current()) console.warn('Could not complete the summarization batch.', failure);
       }).finally(finish);
     } catch (failure) {
+      // A definite rejection owns no slot. Finish only when the start reply may have been lost.
+      if (failure instanceof ChaError
+        && !['command_timeout', 'application_unavailable', 'server_stopping'].includes(failure.code)) sent = false;
       await finish();
       throw failure;
     }
@@ -1442,6 +1363,7 @@ export function App({
       const started = ++generation;
       vaultContext.current += 1;
       welcomeRefresh.current += 1;
+      setSummarySetup(null);
       clearVaultContext();
       setDetailRefreshing(false);
       setDetailFailed(false);
@@ -1487,14 +1409,12 @@ export function App({
         return;
       }
       noteActionsRef.current?.refresh();
-      if (compressionRun.current) compressionRun.current.notesChanged = true;
-      else if (notesVisibleRef.current) dispatch({ type: 'reload-note' });
+      if (notesVisibleRef.current) dispatch({ type: 'reload-note' });
     });
     return unsubscribe;
   }, [client, contextEvents, dispatch]);
 
   const returnToStart = useCallback(() => {
-    if (compressionRun.current) return;
     const action = () => {
       const bootstrap = state.bootstrap;
       if (bootstrap) noteDraftAdoption(bootstrap.initial_forum_id, bootstrap.initial_session_id);
@@ -1782,9 +1702,7 @@ export function App({
                 noteTextMode={state.noteTextMode}
                 onBeforeCreateNote={beforeCreateNote}
                 onDeleteItem={deleteNoteItem}
-                onCompressNote={compressNote}
-                onSummarize={summarizeNotes}
-                compressionInProgress={compressionInProgress}
+                onSummarize={(source, epoch) => setSummarySetup({ source, epoch })}
                 onSetNoteReadOnly={setNoteReadOnly}
                 onNoteItems={updateNoteItems}
                 onSourceChanged={sourceChanged}
@@ -1856,7 +1774,6 @@ export function App({
                 onRegisterLoad={registerLoad}
                 onNoteTextModeChange={changeNoteTextMode}
                 noteActionPending={noteLeave.pendingKind !== null}
-                compressionOpen={compression !== null}
                 onRegisterSave={registerSave}
                 onCoverConversation={coverConversation}
                 onDeleteTurn={deleteTurn}
@@ -1879,13 +1796,9 @@ export function App({
             )}
           </main>
         </div>
-        {compression && <NoteCompressionDialog progress={compression} onCancel={() => {
-          const run = compressionRun.current;
-          if (!compression.cancelEnabled || !run) return;
-          run.requested = true;
-          setCompression({ message: 'Cancelling…', count: compression.count, cancelEnabled: false });
-          run.cancelJob?.();
-        }} />}
+        {summarySetup && <NoteSummaryDialog client={client} source={summarySetup.source} epoch={summarySetup.epoch}
+          onStart={options => summarizeNotes(summarySetup.source, summarySetup.epoch, options)}
+          onClose={closeSummarySetup} />}
       </TransliterationProvider>
       </DetailRefreshProvider>
     </AppErrorBoundary>

@@ -41,26 +41,29 @@ void NoteSummaryCost::merge(const NoteSummaryCost& other) {
 }
 
 namespace {
-constexpr std::size_t note_compression_min_bytes = 4 * 1024;
+constexpr std::size_t note_summary_min_bytes = 4 * 1024;
 
-ProviderSelection note_editing_provider(const Workspace& workspace) {
-    const auto* provider = workspace.find_provider(workspace.notes().compression_provider_id);
-    if (!provider) {
-        throw ApplicationError(ErrorCode::invalid_argument,
-            "Select a compression provider in Notes settings.");
+ProviderSelection note_editing_provider(const Workspace& workspace, std::string_view provider_id = {},
+    const std::string& requested_effort = {}) {
+    const bool selected = !provider_id.empty();
+    const auto* configured = workspace.find_provider(selected ? provider_id : workspace.notes().compression_provider_id);
+    if (!configured) {
+        if (selected) throw ApplicationError(ErrorCode::not_found, "That provider was not found.");
+        throw ApplicationError(ErrorCode::invalid_argument, "Select a compression provider in Notes settings.");
     }
-    const auto& effort = workspace.notes().compression_reasoning_effort;
+    const auto& provider = *configured;
+    const auto& effort = selected ? requested_effort : workspace.notes().compression_reasoning_effort;
     if (effort != "none"
-        && !provider_supports_reasoning_effort(provider->config, provider->config.api)) {
-        if (provider->config.mode == Mode::net)
+        && !provider_supports_reasoning_effort(provider.config, provider.config.api)) {
+        if (provider.config.mode == Mode::net)
             throw ApplicationError(ErrorCode::invalid_argument,
                 "This compression provider's model does not support " + effort + " reasoning effort.");
         log_warn("Ignoring unsupported Notes provider reasoning effort.");
     }
-    auto config = provider->config;
+    auto config = provider.config;
     config.reasoning_effort = provider_supports_reasoning_effort(config, config.api) ? effort : "none";
     config.web_search = WebSearchMode::off;
-    return {provider->id, std::move(config)};
+    return {provider.id, std::move(config)};
 }
 
 // Bind legacy names to a stable reference, so deleting a key cannot make a
@@ -94,8 +97,9 @@ constexpr std::string_view note_source_system_prompt =
     "Follow the task instruction that comes after the note.";
 
 SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, OpenAiOAuth* oauth, ApiKeyStore* api_keys,
-    const WorkspacePrompt& prompt, NoteRequestKind kind = NoteRequestKind::plain) {
-    auto provider = note_editing_provider(workspace);
+    const WorkspacePrompt& prompt, NoteRequestKind kind = NoteRequestKind::plain,
+    std::string_view provider_id = {}, const std::string& effort = {}) {
+    auto provider = note_editing_provider(workspace, provider_id, effort);
     provider.config.timeout_s = 0;
     bind_note_api_key(provider.config, api_keys);
     if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
@@ -324,7 +328,7 @@ std::string format_note_page(const Workspace& workspace, std::string text, std::
     return std::move(answer.text);
 }
 
-std::string compression_target(std::int64_t id, std::string_view name) {
+std::string note_target_label(std::int64_t id, std::string_view name) {
     return "“" + std::string(name) + "” (note " + std::to_string(id) + ")";
 }
 } // namespace
@@ -378,6 +382,7 @@ bool folder_summary_part(SummaryPart part) {
 
 std::string_view summary_part_label(SummaryPart part) {
     switch (part) {
+    case SummaryPart::compressed: return "Compressed version";
     case SummaryPart::l1: return "L1";
     case SummaryPart::l2: return "L2";
     case SummaryPart::l3_section: return "L3 section";
@@ -389,7 +394,7 @@ std::string_view summary_part_label(SummaryPart part) {
 
 std::string note_summary_target(std::int64_t id, std::string_view name, bool folder) {
     if (name.empty()) return std::string(folder ? "folder " : "note ") + std::to_string(id);
-    if (!folder) return compression_target(id, name);
+    if (!folder) return note_target_label(id, name);
     return "“" + std::string(name) + "” (folder " + std::to_string(id) + ")";
 }
 
@@ -418,6 +423,7 @@ void require_summary_target(const NoteItem& item, bool folder) {
 
 std::string_view summary_prompt(SummaryPart part) {
     switch (part) {
+    case SummaryPart::compressed: return "note-compression";
     case SummaryPart::l1: return "summary-l1";
     case SummaryPart::l2: return "summary-l2";
     case SummaryPart::l3_section: return "summary-l3-section";
@@ -426,219 +432,6 @@ std::string_view summary_prompt(SummaryPart part) {
     }
 }
 
-}
-
-void NotesService::set_note_compression_changed(NoteAudioChanged callback) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->note_compression_changed = std::move(callback);
-}
-
-std::optional<NoteText> NotesService::Impl::compression_source_locked(std::int64_t id, bool skip_ineligible) {
-    NoteText note;
-    try {
-        const auto items = store->list_note_items();
-        const auto item = std::find_if(items.begin(), items.end(), [id](const auto& item) { return item.id == id; });
-        if (skip_ineligible && (item == items.end() || item->kind != NoteItemKind::note
-            || item->is_summary || item->has_compressed || compressions.contains(id))) return std::nullopt;
-        if (item != items.end() && item->kind != NoteItemKind::note)
-            throw NoteError(NoteFailure::invalid, "That item is not a note.");
-        if (item != items.end() && item->is_summary)
-            throw NoteError(NoteFailure::invalid, "Session summaries cannot be compressed.");
-        if (compressions.contains(id))
-            throw ApplicationError(ErrorCode::invalid_argument, "Compression is already running for this note.");
-        note = store->get_note_text(id);
-    } catch (const NoteError& error) { rethrow_note(error); }
-    if (note.text.size() < note_compression_min_bytes) {
-        if (skip_ineligible) return std::nullopt;
-        throw ApplicationError(ErrorCode::invalid_argument, "This note is under 4 KiB and does not need compression.");
-    }
-    if (note.text.find_first_not_of(" \t\r\n") == std::string::npos) {
-        if (skip_ineligible) return std::nullopt;
-        throw ApplicationError(ErrorCode::invalid_argument, "This note has no text to compress.");
-    }
-    return note;
-}
-
-NotesService::Impl::CompressionResult NotesService::Impl::run_compression(
-    const std::shared_ptr<CompressionControl>& control, const SharedCharacterDefinition& definition,
-    const std::string& instruction, const NoteText& note, std::uint64_t epoch, std::atomic_bool& cancel,
-    bool serialized, NoteSummaryCost* cost) {
-    using Kind = CompressionResult::Kind;
-    const auto target = compression_target(note.id, control->name);
-    const auto discarded = "Compression discarded for " + target
-        + ": the saved text changed. Compress again to use the current text.";
-    auto severity = EventSeverity::error;
-    std::string reason;
-    try {
-        // The separate Compress action runs one note at a time; summary lines do not wait.
-        std::unique_lock serial(compression_mutex, std::defer_lock);
-        while (serialized && !cancel.load() && !serial.try_lock_for(std::chrono::milliseconds(100))) {}
-        NotePromptAnswer answer;
-        for (unsigned retries = 0;; ++retries) {
-            std::unique_ptr<ProviderClient> client;
-            {
-                const std::lock_guard lifecycle(lifecycle_mutex);
-                const auto found = compressions.find(note.id);
-                if (found == compressions.end() || found->second != control) return {Kind::cancelled};
-                require_admitted(epoch);
-                if (cancel.load()) throw ApplicationError(ErrorCode::operation_cancelled, "Cancelled.");
-                if (store->get_note_text(note.id).text != note.text) {
-                    retire_compression(note.id, control, epoch, EventSeverity::warning, discarded);
-                    return {Kind::discarded};
-                }
-                client = std::make_unique<ProviderClient>(definition, openai_auth, api_keys,
-                    settings.test_hooks.note_summary_transport);
-            }
-            answer = collect_note_prompt(*client, definition, note.text, cancel, instruction, cost);
-            if (!answer.result.retryable || cancel.load() || retries == 3) break;
-            const auto seconds = 10 << retries;
-            if (settings.test_hooks.note_compression_wait) settings.test_hooks.note_compression_wait(seconds);
-            else for (int i = 0; i < seconds * 10 && !cancel.load(); ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        const auto& result = answer.result;
-        const std::lock_guard lifecycle(lifecycle_mutex);
-        const auto found = compressions.find(note.id);
-        if (found == compressions.end() || found->second != control) return {Kind::cancelled};
-        require_admitted(epoch);
-        if (cancel.load() || result.outcome == GenerationOutcome::cancelled)
-            throw ApplicationError(ErrorCode::operation_cancelled, "Cancelled.");
-        if (result.refused) throw ApplicationError(ErrorCode::internal_error, "The provider refused to compress this note.");
-        if (result.outcome != GenerationOutcome::completed) {
-            // Provider diagnostics can contain a raw response or echoed input.
-            // Persist only a safe, actionable reason in Events.
-            const std::initializer_list<std::string_view> safe_reasons{
-                "HTTP request failed: idle timeout reached", "HTTP request failed: Timeout was reached",
-                "Provider quota or billing limit exceeded.", "Provider authentication or permission was rejected.",
-                "Provider rate limit exceeded.", "Prompt exceeds the model's context window.",
-            };
-            const bool safe = std::find(safe_reasons.begin(), safe_reasons.end(), result.message) != safe_reasons.end();
-            throw ApplicationError(ErrorCode::internal_error, safe ? result.message
-                : "The provider request failed. Check the connection and provider settings, then try again.");
-        }
-        if (result.finish_reason == "length" || result.finish_reason == "content_filter")
-            throw ApplicationError(ErrorCode::internal_error, "The provider returned incomplete compressed text.");
-        if (store->commit_compressed_note(note.id, note.text, answer.text,
-                "Compressed version ready for " + target + ".")) {
-            retire_compression(note.id, control, epoch, EventSeverity::success, "");
-            return {Kind::saved};
-        }
-        retire_compression(note.id, control, epoch, EventSeverity::warning, discarded);
-        return {Kind::discarded};
-    } catch (const ApplicationError& error) {
-        if (cancel.load() || error.code == ErrorCode::operation_cancelled
-            || error.code == ErrorCode::server_stopping || error.code == ErrorCode::application_unavailable) {
-            severity = EventSeverity::info;
-        } else reason = error.what();
-    } catch (const NoteError& error) {
-        reason = error.what();
-    } catch (const std::exception&) {
-        reason = "Check the provider settings and try again.";
-    } catch (...) { reason = "Try again."; }
-    const bool cancelled = severity == EventSeverity::info;
-    const std::lock_guard lifecycle(lifecycle_mutex);
-    retire_compression(note.id, control, epoch, severity, cancelled
-        ? "Compression cancelled for " + target + "."
-        : "Could not compress " + target + ": " + reason);
-    if (cancelled) return {Kind::cancelled};
-    return {Kind::failed, std::move(reason)};
-}
-
-nlohmann::json NotesService::compress_note(std::int64_t id, std::uint64_t epoch, bool skip_ineligible) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    const auto source = impl_->compression_source_locked(id, skip_ineligible);
-    if (!source) return {{"skipped", true}};
-    const auto& note = *source;
-    const auto workspace = impl_->store->snapshot();
-    const auto& prompt = *workspace->find_prompt("note-compression");
-    const auto definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
-        prompt, NoteRequestKind::source_step);
-    const auto control = std::make_shared<Impl::CompressionControl>();
-    control->name = note.name;
-    impl_->compressions[id] = control;
-    try {
-        if (!impl_->background_jobs.launch(
-            [owner = impl_.get(), control, definition, instruction = prompt.text, note, epoch](std::atomic_bool& cancel) {
-                (void)owner->run_compression(control, definition, instruction, note, epoch, cancel, /*serialized=*/true);
-            }, control->cancel)) throw std::runtime_error("Worker unavailable");
-        impl_->store->append_event(EventSeverity::info, "Compression started for " + compression_target(id, note.name) + ".");
-    } catch (...) {
-        control->cancel->store(true);
-        impl_->compressions.erase(id);
-        throw ApplicationError(ErrorCode::command_queue_full, "Could not start compression. Try again.");
-    }
-    impl_->notify_compression(id, epoch);
-    return {{"accepted", true}};
-}
-
-std::shared_ptr<OperationReply> NotesService::compress_summary_note(std::string connection_id,
-    std::int64_t id, std::uint64_t epoch) {
-    auto reply = std::make_shared<OperationReply>();
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_summary_batch(connection_id, epoch);
-    const auto source = impl_->compression_source_locked(id, /*skip_ineligible=*/true);
-    if (!source) {
-        reply->complete({{"compressed", false}});
-        return reply;
-    }
-    const auto& note = *source;
-    const auto workspace = impl_->store->snapshot();
-    const auto& prompt = *workspace->find_prompt("note-compression");
-    SharedCharacterDefinition definition;
-    try {
-        definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
-            prompt, NoteRequestKind::source_step);
-    } catch (const ApplicationError& error) {
-        // The summary line goes on to its next step, so Events keeps the reason.
-        try {
-            impl_->store->append_event(EventSeverity::error,
-                "Could not compress " + compression_target(id, note.name) + ": " + error.what());
-        } catch (...) { log_warn("Could not record compression outcome."); }
-        throw;
-    }
-    const auto control = std::make_shared<Impl::CompressionControl>();
-    control->name = note.name;
-    // Cancel compression and batch cleanup share the same flag.
-    auto call = std::make_shared<Impl::SummaryCall>();
-    const auto line = impl_->find_note_summary_line(connection_id, id);
-    call->connection_id = std::move(connection_id);
-    call->cancel = control->cancel;
-    impl_->compressions[id] = control;
-    impl_->summary_calls.push_back(call);
-    try {
-        if (!impl_->background_jobs.launch(
-            [owner = impl_.get(), control, call, reply, definition, instruction = prompt.text, note, epoch, line](
-                std::atomic_bool& cancel) {
-                NoteSummaryCost cost;
-                const auto result = owner->run_compression(
-                    control, definition, instruction, note, epoch, cancel, /*serialized=*/false, line ? &cost : nullptr);
-                {
-                    const std::lock_guard lifecycle(owner->lifecycle_mutex);
-                    if (line) line->cost.merge(cost);
-                    owner->remove_summary_call(call);
-                }
-                switch (result.kind) {
-                case Impl::CompressionResult::Kind::saved: reply->complete({{"compressed", true}}); return;
-                case Impl::CompressionResult::Kind::discarded: reply->complete({{"compressed", false}}); return;
-                case Impl::CompressionResult::Kind::cancelled:
-                    if (owner->published_epoch.load() != epoch) reply->fail(ErrorCode::vault_changed, "The vault changed.");
-                    else reply->fail(ErrorCode::operation_cancelled, std::string(summary_cancelled));
-                    return;
-                case Impl::CompressionResult::Kind::failed:
-                    reply->fail(ErrorCode::internal_error, result.failure);
-                    return;
-                }
-            }, control->cancel)) throw std::runtime_error("Worker unavailable");
-        impl_->store->append_event(EventSeverity::info, "Compression started for " + compression_target(id, note.name) + ".");
-    } catch (...) {
-        control->cancel->store(true);
-        impl_->compressions.erase(id);
-        impl_->remove_summary_call(call);
-        throw ApplicationError(ErrorCode::command_queue_full, "Could not start compression. Try again.");
-    }
-    impl_->notify_compression(id, epoch);
-    return reply;
 }
 
 std::optional<std::string> flex_test_failure(const GenerationResult& result) {
@@ -687,94 +480,8 @@ std::shared_ptr<OperationReply> NotesService::test_flex(std::string provider_id,
     return reply;
 }
 
-nlohmann::json NotesService::note_compression_status(std::int64_t id, std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    return compression_status_locked(id);
-}
-
-void NotesService::cancel_note_compression(std::int64_t id, std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    impl_->cancel_note_compression_locked(id, epoch);
-}
-
-void NotesService::Impl::notify_compression(std::int64_t id, std::uint64_t epoch) noexcept {
-    try { if (note_compression_changed) note_compression_changed(id, epoch); }
-    catch (...) { log_warn("Could not deliver compression notification."); }
-}
-
-void NotesService::Impl::retire_compression(std::int64_t id,
-    const std::shared_ptr<CompressionControl>& control, std::uint64_t epoch,
-    EventSeverity severity, const std::string& message) noexcept {
-    const auto found = compressions.find(id);
-    if (found == compressions.end() || found->second != control) return;
-    // Remove before event/notification delivery, even if delivery fails.
-    compressions.erase(found);
-    if (published_epoch.load() != epoch) return;
-    try { if (!message.empty()) store->append_event(severity, message); }
-    catch (...) { log_warn("Could not record compression outcome."); }
-    notify_compression(id, epoch);
-}
-
-void NotesService::cancel_compressions_locked() {
-    while (!impl_->compressions.empty()) {
-        const auto [id, control] = *impl_->compressions.begin();
-        control->cancel->store(true);
-        impl_->retire_compression(id, control, impl_->published_epoch.load(), EventSeverity::info,
-            "Compression cancelled for " + compression_target(id, control->name) + ".");
-    }
-}
-
-nlohmann::json NotesService::compression_status_locked(std::int64_t id) {
-    if (impl_->compressions.contains(id)) return {{"pending", true}};
-    if (impl_->compressions.empty()) return {{"pending", false}};
-    try {
-        const auto items = impl_->store->list_note_items();
-        const auto pending = [&](auto&& self, std::int64_t parent) -> bool {
-            if (impl_->compressions.contains(parent)) return true;
-            return std::any_of(items.begin(), items.end(), [&](const auto& item) {
-                return item.parent_id == parent && self(self, item.id);
-            });
-        };
-        return {{"pending", pending(pending, id)}};
-    } catch (const NoteError& error) { rethrow_note(error); }
-}
-
-void NotesService::Impl::cancel_note_compression_locked(std::int64_t id, std::uint64_t epoch) {
-    const auto found = compressions.find(id);
-    if (found == compressions.end()) return;
-    const auto control = found->second;
-    control->cancel->store(true);
-    retire_compression(id, control, epoch, EventSeverity::info,
-        "Compression cancelled for " + compression_target(id, control->name) + ".");
-}
-
-std::vector<std::int64_t> NotesService::Impl::collect_compressions_locked(std::int64_t root) {
-    std::vector<std::int64_t> result;
-    if (!compressions.empty()) {
-        const auto items = store->list_note_items();
-        const auto collect = [&](auto&& self, std::int64_t parent) -> void {
-            if (compressions.contains(parent)) result.push_back(parent);
-            for (const auto& item : items)
-                if (item.parent_id == parent) self(self, item.id);
-        };
-        collect(collect, root);
-    }
-    return result;
-}
-
-void NotesService::Impl::retire_deleted_compressions_locked(const std::vector<std::int64_t>& ids, std::uint64_t epoch) {
-    for (const auto id : ids) {
-        if (const auto found = compressions.find(id); found != compressions.end()) {
-            const auto control = found->second;
-            control->cancel->store(true);
-            retire_compression(id, control, epoch, EventSeverity::info, "Compression cancelled: note deleted.");
-        }
-    }
-}
-
-nlohmann::json NotesService::start_summary_batch(std::string connection_id, std::int64_t id, std::uint64_t epoch) {
+nlohmann::json NotesService::start_summary_batch(std::string connection_id, std::int64_t id,
+    SummaryBatchOptions options, std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     if (impl_->summary_batch)
@@ -785,34 +492,59 @@ nlohmann::json NotesService::start_summary_batch(std::string connection_id, std:
         if (!item) throw ApplicationError(ErrorCode::not_found, std::string(missing_summary_target));
         const bool folder = item->kind == NoteItemKind::folder;
         require_summary_target(*item, folder);
-        if (!folder && impl_->store->get_note_text(id).text.size() < note_compression_min_bytes)
-            throw ApplicationError(ErrorCode::invalid_argument, "This note is under 4 KiB and does not need summaries.");
-        const auto workspace = impl_->store->snapshot();
-        (void)prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
-            *workspace->find_prompt("summary-l1"));
+        if (options.provider_id.empty())
+            throw ApplicationError(ErrorCode::invalid_argument, "Select a provider.");
+        if (!valid_reasoning_effort(options.reasoning_effort))
+            throw ApplicationError(ErrorCode::invalid_argument, "The reasoning effort is not valid.");
+        std::set<std::string> selected;
+        for (const auto& level : options.levels) {
+            if ((level != "compressed" && level != "l1" && level != "l2" && level != "l3")
+                || !selected.insert(level).second)
+                throw ApplicationError(ErrorCode::invalid_argument, "The summary levels are not valid.");
+        }
+        if (selected.empty())
+            throw ApplicationError(ErrorCode::invalid_argument, "Select at least one output.");
+        if (!folder && selected.contains("l3"))
+            throw ApplicationError(ErrorCode::invalid_argument, "L3 is only available for folders.");
 
         auto notes = nlohmann::json::array();
+        bool eligible = false;
         const auto add_target = [&](const NoteItem& note) {
-            notes.push_back({{"id", note.id}, {"name", note.name}, {"has_compressed", note.has_compressed},
-                {"has_l1", note.has_l1}, {"has_l2", note.has_l2}});
+            eligible = true;
+            auto levels = nlohmann::json::array();
+            if (selected.contains("compressed") && (options.overwrite || !note.has_compressed))
+                levels.push_back("compressed");
+            if (selected.contains("l1") && (options.overwrite || !note.has_l1)) levels.push_back("l1");
+            if (selected.contains("l2") && (options.overwrite || !note.has_l2)) levels.push_back("l2");
+            if (selected.contains("l3")) levels.push_back("l3");
+            if (!levels.empty())
+                notes.push_back({{"id", note.id}, {"name", note.name}, {"levels", std::move(levels)}});
         };
         if (!folder) {
+            if (impl_->store->get_note_text(id).text.size() < note_summary_min_bytes)
+                throw ApplicationError(ErrorCode::invalid_argument, "This note is under 4 KiB and does not need summaries.");
             add_target(*item);
         } else {
             for (const auto& note : impl_->store->list_note_items()) {
                 if (note.parent_id == id && note.kind == NoteItemKind::note && !note.is_summary && !note.summary_excluded
-                    && impl_->store->get_note_text(note.id).text.size() >= note_compression_min_bytes)
+                    && impl_->store->get_note_text(note.id).text.size() >= note_summary_min_bytes)
                     add_target(note);
             }
         }
-        if (notes.empty())
+        if (!eligible)
             throw ApplicationError(ErrorCode::invalid_argument, "No eligible notes to summarize.");
+        if (notes.empty())
+            throw ApplicationError(ErrorCode::invalid_argument, "All selected outputs already exist.");
+        const auto workspace = impl_->store->snapshot();
+        (void)prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+            *workspace->find_prompt("summary-l1"), NoteRequestKind::plain, options.provider_id, options.reasoning_effort);
         auto target = note_summary_target(id, item->name, folder);
         const auto count = notes.size();
         nlohmann::json result{{"notes", std::move(notes)}};
         impl_->store->append_event(EventSeverity::info, "Summarization started for " + target + ", "
             + std::to_string(count) + (count == 1 ? " note." : " notes."));
-        impl_->summary_batch.emplace(Impl::SummaryBatch{std::move(connection_id), epoch, std::move(target), item->name});
+        impl_->summary_batch.emplace(Impl::SummaryBatch{std::move(connection_id), epoch, std::move(target), item->name,
+            std::move(options.provider_id), std::move(options.reasoning_effort)});
         return result;
     } catch (const NoteError& error) { rethrow_note(error); }
 }
@@ -831,7 +563,7 @@ void NotesService::summary_line(std::string connection_id, std::int64_t id, bool
         const auto note = impl_->store->get_note_item(id);
         if (!note || note->kind != NoteItemKind::note) return;
         const auto workspace = impl_->store->snapshot();
-        const auto* provider = workspace->find_provider(workspace->notes().compression_provider_id);
+        const auto* provider = workspace->find_provider(impl_->summary_batch->provider_id);
         auto line = std::make_shared<NoteSummaryLine>();
         if (provider) {
             const auto& config = provider->config;
@@ -900,8 +632,10 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
         }
         const auto workspace = impl_->store->snapshot();
         const auto& step_prompt = *workspace->find_prompt(prompt);
+        const auto& batch = *impl_->summary_batch;
         definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
-            step_prompt, folder ? NoteRequestKind::flex : NoteRequestKind::source_step);
+            step_prompt, folder ? NoteRequestKind::flex : NoteRequestKind::source_step,
+            batch.provider_id, batch.reasoning_effort);
         if (!folder) instruction = step_prompt.text;
     } catch (const NoteError& error) {
         record_note_summary_failure(*impl_->store, part, target, error.what());
@@ -991,13 +725,24 @@ void NotesService::commit_summary_part(std::int64_t id, SummaryPart part,
     std::unique_lock lifecycle(impl_->lifecycle_mutex);
     if (connection_id) impl_->require_summary_batch(*connection_id, epoch);
     else impl_->require_admitted(epoch);
-    if (part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
+    if (part != SummaryPart::compressed && part != SummaryPart::l1 && part != SummaryPart::l2 && part != SummaryPart::l3)
         throw ApplicationError(ErrorCode::invalid_argument);
     const bool folder = folder_summary_part(part);
     auto target = note_summary_target(id, "", folder);
     std::int64_t document_id;
     try {
-        if (const auto item = impl_->store->get_note_item(id)) target = note_summary_target(id, item->name, folder);
+        const auto item = impl_->store->get_note_item(id);
+        if (item) target = note_summary_target(id, item->name, folder);
+        if (part == SummaryPart::compressed) {
+            if (!item) throw NoteError(NoteFailure::not_found, std::string(missing_summary_target));
+            if (item->kind != NoteItemKind::note || item->is_summary || !document.is_string())
+                throw NoteError(NoteFailure::invalid, "That item or compressed text is not valid.");
+            const auto& text = document.get_ref<const std::string&>();
+            if (text.size() > note_document_byte_limit)
+                throw NoteError(NoteFailure::too_large, "The result exceeds 12 MiB.");
+            impl_->store->save_compressed_note(id, text, "Compressed version ready for " + target + ".");
+            return;
+        }
         if (!folder) {
             document_id = impl_->store->commit_note_level(id, part == SummaryPart::l1 ? 1 : 2, document,
                 std::string(summary_part_label(part)) + " ready for " + target + ".");

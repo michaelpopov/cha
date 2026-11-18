@@ -59,8 +59,8 @@ public:
     void save_note_scroll_position(std::int64_t id, std::int64_t scroll_top, std::uint64_t epoch);
     NoteItem rename_note_item(std::int64_t id, std::string name, std::uint64_t epoch);
 
-    void set_note_compression_changed(NoteAudioChanged callback);
-    nlohmann::json start_summary_batch(std::string connection_id, std::int64_t id, std::uint64_t epoch);
+    nlohmann::json start_summary_batch(std::string connection_id, std::int64_t id, SummaryBatchOptions options,
+        std::uint64_t epoch);
     void summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch);
     std::shared_ptr<OperationReply> generate_summary_part(std::string connection_id,
         std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch);
@@ -70,18 +70,9 @@ public:
     void finish_summary_batch(std::string_view connection_id, std::uint64_t epoch);
     NoteItem set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch);
 
-    nlohmann::json compress_note(std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
-    // The Compress step of a summary line: no wait for other compressions, and
-    // the reply settles after the save, skip, or failure.
-    std::shared_ptr<OperationReply> compress_summary_note(std::string connection_id,
-        std::int64_t id, std::uint64_t epoch);
     // One small Flex request to the provider, for Notes settings.
     std::shared_ptr<OperationReply> test_flex(std::string provider_id, std::uint64_t epoch);
-    nlohmann::json note_compression_status(std::int64_t id, std::uint64_t epoch);
-    void cancel_note_compression(std::int64_t id, std::uint64_t epoch);
 
-    void cancel_compressions_locked();
-    nlohmann::json compression_status_locked(std::int64_t id);
     // Generate returns Markdown and a run ID through its reply. Convert the
     // Markdown, then commit the document or abandon that run ID. Each reservation
     // belongs to one connection and epoch; commit/abandon must use the same pair.

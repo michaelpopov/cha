@@ -368,9 +368,9 @@ TEST(ApplicationVault, FreshVaultsUseBundledPromptsAndCopiesPreserveStoredRows) 
     EXPECT_EQ(application->get_prompt("page-formatting", switched_copy.context_epoch).text, "");
 }
 
-// A live compression request lets maintenance tests verify cancellation before
+// A live summary request lets maintenance tests verify cancellation before
 // closing or replacing the originating store.
-std::int64_t start_stalled_compression(Application& application, MockHttpServer& provider) {
+std::int64_t start_stalled_summary(Application& application, MockHttpServer& provider) {
     const auto epoch = application.context_epoch();
     nlohmann::json settings = application.get_provider("test", epoch);
     for (const char* field : {"id", "used_by", "writable"}) settings.erase(field);
@@ -379,13 +379,14 @@ std::int64_t start_stalled_compression(Application& application, MockHttpServer&
     settings["port"] = provider.port();
     settings["https"] = false;
     (void)application.update_provider("test", settings, epoch);
-    (void)application.save_notes_settings({.compression_provider = "test", .compression_reasoning_effort = "none"}, epoch);
     const auto note = application.create_note_item({}, NoteItemKind::note, "Pending compression", epoch);
     application.save_note(note.id, {{"type", "doc"}, {"content", nlohmann::json::array({
         {{"type", "paragraph"}, {"content", nlohmann::json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
     })}}, epoch);
     provider.start();
-    EXPECT_EQ(application.compress_note(note.id, epoch), nlohmann::json({{"accepted", true}}));
+    auto start = application.start_summary_batch("owner", note.id, {"test", "none", {"compressed"}, true}, epoch);
+    EXPECT_EQ(start["notes"].size(), 1U);
+    (void)application.generate_summary_part("owner", note.id, SummaryPart::compressed, {}, epoch);
     EXPECT_TRUE(provider.wait_for_requests(1, 2s));
     return note.id;
 }
@@ -400,7 +401,7 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     }}});
     application->save_note(note, final, application->context_epoch());
     MockHttpServer compression({"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"}, true);
-    const auto pending = start_stalled_compression(*application, compression);
+    const auto pending = start_stalled_summary(*application, compression);
     const auto saved = stored_notes(pair.database_a);
     const std::string response = "HTTP/1.1 200 OK\r\nETag: \"saved\"\r\n"
         "Content-Length: 0\r\nConnection: close\r\n\r\n";
@@ -412,7 +413,6 @@ TEST(ApplicationVault, UploadIncludesFinalSavedNotesWithoutScanningDamagedConten
     (void)wait_upload(application->start_database_upload({}, application->context_epoch()));
     EXPECT_EQ(application->bootstrap().presentation.current_note_id, note);
     compression.join();
-    EXPECT_FALSE(application->note_compression_status(pending, application->context_epoch())["pending"].get<bool>());
     EXPECT_EQ(application->get_note(pending, application->context_epoch(), NoteTextMode::compressed).document_id, pending);
     server.join();
     ASSERT_EQ(server.requests().size(), 3U);
@@ -658,7 +658,7 @@ TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlder
         }}});
         application->save_note(note, saved, application->context_epoch());
         MockHttpServer compression({"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"}, true);
-        const auto pending = start_stalled_compression(*application, compression);
+        (void)start_stalled_summary(*application, compression);
         const auto local_saved = stored_notes(pair.database_a, password);
         auto backup = pair.database_a;
         backup += ".bac";
@@ -669,7 +669,6 @@ TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlder
         (void)application->download_database(old_epoch);
         EXPECT_FALSE(application->bootstrap().presentation.current_note_id);
         compression.join();
-        EXPECT_FALSE(application->note_compression_status(pending, application->context_epoch())["pending"].get<bool>());
         EXPECT_EQ(stored_notes(pair.database_a, password), remote_notes);
         EXPECT_EQ(stored_notes(backup, password), local_saved);
         EXPECT_THROW(application->save_note(note, saved, old_epoch), ApplicationError);
@@ -1450,73 +1449,11 @@ TEST(ApplicationVault, MaintenanceTimeoutRecoversWhileTheRuntimeRemainsBlocked) 
         ApplicationState::running);
 }
 
-TEST(ApplicationVault, FailedMaintenanceReservationCancelsCompressionInTheOriginatingVault) {
-    TwoVaults pair;
-    pair.workspace_a.add_character("writer", "Writer");
-    const auto member = pair.workspace_a.root() / "forums/lobby/members/writer";
-    std::filesystem::create_directories(member);
-    std::ofstream(member / "character.toml") << "# member\n";
-    (void)test::import_test_database(pair.workspace_a.root(), pair.database_a);
-    pair.command.test_shutdown_grace_ms = 50;
-    auto application = Application::open(pair.command);
-    MockHttpServer compression({"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"}, true);
-    const auto pending = start_stalled_compression(*application, compression);
-    const auto epoch = application->context_epoch();
-    const auto created = application->create_session("lobby", "Blocked runtime", epoch);
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(application->open_session("lobby", created.id, epoch)));
-    std::mutex mutex;
-    std::condition_variable changed;
-    bool retired = false, proceed = false;
-    application->set_note_compression_changed([&](auto, auto) {
-        // Let the main thread block the runtime after cancellation has been
-        // recorded, but before the maintenance reservation starts.
-        std::unique_lock lock(mutex);
-        retired = true;
-        changed.notify_all();
-        EXPECT_TRUE(changed.wait_for(lock, 2s, [&] { return proceed; }));
-    });
-    auto switching = std::async(std::launch::async, [&] {
-        try { (void)application->switch_vault("B", {}, epoch); return false; }
-        catch (const std::runtime_error&) { return true; }
-    });
-    bool reached = false;
-    {
-        std::unique_lock lock(mutex);
-        reached = changed.wait_for(lock, 2s, [&] { return retired; });
-    }
-    std::optional<WorkspaceConfigStore::MaintenanceGuard> edit_lock;
-    if (reached) {
-        edit_lock.emplace(application->store().reserve_maintenance());
-        const auto changing = application->submit_async("lobby", created.id, SetDefaultCharacterCommand{"writer"}, epoch);
-        EXPECT_TRUE(std::holds_alternative<std::shared_ptr<CommandReply>>(changing));
-    }
-    {
-        std::lock_guard lock(mutex);
-        proceed = true;
-    }
-    changed.notify_all();
-    const auto status = switching.wait_for(500ms);
-    const auto recovered_epoch = application->context_epoch();
-    edit_lock.reset();
-    EXPECT_TRUE(reached);
-    EXPECT_EQ(status, std::future_status::ready);
-    EXPECT_TRUE(switching.get());
-    application->set_note_compression_changed({});
-    compression.join();
-    EXPECT_GT(recovered_epoch, epoch);
-    EXPECT_EQ(application->current_vault().get().name, "A");
-    EXPECT_FALSE(application->note_compression_status(pending, recovered_epoch)["pending"].get<bool>());
-    EXPECT_EQ(application->get_note(pending, recovered_epoch, NoteTextMode::compressed).document_id, pending);
-    const auto events = application->list_events(recovered_epoch);
-    ASSERT_EQ(events.size(), 2U);
-    EXPECT_EQ(events.front().message, "Compression cancelled for “Pending compression” (note " + std::to_string(pending) + ").");
-}
-
 TEST(ApplicationVault, MaintenanceCompletionDoesNotUndoShutdown) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
     MockHttpServer compression({"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"}, true);
-    const auto pending = start_stalled_compression(*application, compression);
+    const auto pending = start_stalled_summary(*application, compression);
     std::mutex mutex;
     std::condition_variable changed;
     int pauses = 0;

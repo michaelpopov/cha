@@ -22,12 +22,9 @@ NoteItem Application::rename_note_item(std::int64_t id, std::string name, std::u
     return impl_->notes->rename_note_item(id, std::move(name), epoch);
 }
 
-void Application::set_note_compression_changed(NoteAudioChanged callback) {
-    impl_->notes->set_note_compression_changed(std::move(callback));
-}
-
-nlohmann::json Application::start_summary_batch(std::string connection_id, std::int64_t id, std::uint64_t epoch) {
-    return impl_->notes->start_summary_batch(std::move(connection_id), id, epoch);
+nlohmann::json Application::start_summary_batch(std::string connection_id, std::int64_t id,
+    SummaryBatchOptions options, std::uint64_t epoch) {
+    return impl_->notes->start_summary_batch(std::move(connection_id), id, std::move(options), epoch);
 }
 
 void Application::summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch) {
@@ -57,25 +54,8 @@ NoteItem Application::set_note_summary_excluded(std::int64_t id, bool excluded, 
     return impl_->notes->set_note_summary_excluded(id, excluded, epoch);
 }
 
-nlohmann::json Application::compress_note(std::int64_t id, std::uint64_t epoch, bool skip_ineligible) {
-    return impl_->notes->compress_note(id, epoch, skip_ineligible);
-}
-
-std::shared_ptr<OperationReply> Application::compress_summary_note(std::string connection_id,
-    std::int64_t id, std::uint64_t epoch) {
-    return impl_->notes->compress_summary_note(std::move(connection_id), id, epoch);
-}
-
 std::shared_ptr<OperationReply> Application::test_notes_flex(std::string provider_id, std::uint64_t epoch) {
     return impl_->notes->test_flex(std::move(provider_id), epoch);
-}
-
-nlohmann::json Application::note_compression_status(std::int64_t id, std::uint64_t epoch) {
-    return impl_->notes->note_compression_status(id, epoch);
-}
-
-void Application::cancel_note_compression(std::int64_t id, std::uint64_t epoch) {
-    impl_->notes->cancel_note_compression(id, epoch);
 }
 
 NoteItem Application::commit_session_summary(std::string_view connection_id, std::int64_t run_id,

@@ -2926,15 +2926,10 @@ NoteItem WorkspaceConfigStore::set_note_read_only(std::int64_t id, bool read_onl
     return note_set_read_only(*impl_->database, id, read_only, impl_->sync_machine);
 }
 
-void WorkspaceConfigStore::save_compressed_note(std::int64_t id, std::string_view text) {
+void WorkspaceConfigStore::save_compressed_note(std::int64_t id, std::string_view text,
+    std::string_view success_message) {
     const std::lock_guard lock(impl_->mutex);
-    note_save_compressed(*impl_->database, id, text, impl_->sync_machine);
-}
-
-bool WorkspaceConfigStore::commit_compressed_note(std::int64_t id, std::string_view source,
-    std::string_view text, std::string_view success_message) {
-    const std::lock_guard lock(impl_->mutex);
-    return note_commit_compressed(*impl_->database, id, source, text, success_message, impl_->sync_machine);
+    note_save_compressed(*impl_->database, id, text, impl_->sync_machine, success_message);
 }
 
 std::int64_t WorkspaceConfigStore::commit_note_level(std::int64_t id, int level,

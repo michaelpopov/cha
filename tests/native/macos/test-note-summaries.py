@@ -20,8 +20,10 @@ PROMPTS = {
     'overview': 'You write the overview at the start of a summary of a book or of a set of',
     'section': 'You write one section of a summary of a book or of a set of texts.',
     'l2': 'You make a short, structured version of a text for a human reader.',
+    'l1': 'Make an L1 summary of the note.',
 }
 ANSWERS = {
+    'compressed': 'Compressed result',
     'l1': 'L1 result',
     'l2': '- L2 result\n\n| Key | Value |\n| --- | --- |\n| Color | Blue |',
     'section': 'Section result',
@@ -97,9 +99,8 @@ def main():
                     assert messages[0]['role'] == 'system', messages[0]['role']
                     system = messages[0]['content']
                     source = messages[-1]['content']
-                    # The default L1 prompt is a copy of the compression prompt, so a Compress step counts as L1.
                     part = 'overview' if system.startswith(PROMPTS['overview']) else next(
-                        (part for part in ('section', 'l2') if PROMPTS[part] in source), 'l1')
+                        (part for part in ('section', 'l2', 'l1') if PROMPTS[part] in source), 'compressed')
                     if part != 'overview' and not system.startswith(SOURCE_SYSTEM_PROMPT):
                         system_errors.append(system[:80])
                     # Chat Completions can wrap the source in a speaker prefix.
@@ -161,6 +162,9 @@ def main():
                 database.execute('INSERT INTO config VALUES (?,?)', ('system/notes/config.toml',
                     'compression_provider = "test"\ncompression_reasoning_effort = "none"\n'))
 
+                database.execute('INSERT OR REPLACE INTO config VALUES (?,?)',
+                    ('system/prompts/summary-l1.md', PROMPTS['l1']))
+
                 def note(parent, name, text, excluded=False):
                     document = {'type': 'doc', 'content': [
                         {'type': 'paragraph', 'content': [{'type': 'text', 'text': text}]}]}
@@ -215,7 +219,7 @@ def main():
                     compressed = database.execute('''SELECT n.name FROM note_items n
                         JOIN note_items v ON v.parent_id=n.id
                         WHERE v.compressed=1 AND v.level=0 ORDER BY n.name''').fetchall()
-                    assert compressed == [('A First chapter',), ('B Second chapter',), ('C Excluded',)], compressed
+                    assert compressed == [('A First chapter',), ('B Second chapter',), ('C Excluded',), ('Single',)], compressed
                     summary = folder_summaries(database)
                     assert database.execute('SELECT 1 FROM event_history WHERE severity=? AND message=?', (
                         'info', f'L3 section cancelled for “A First chapter” (note {first_chapter}).')).fetchone(), (
@@ -244,11 +248,8 @@ def main():
                 assert summary == second_summary, 'Cancelled run changed the Summary note'
                 assert cancelled.wait(2), 'Held provider request was not cancelled'
                 launch('reopen')
-                expected = Counter({(part, marker): 1 for part in ('l1', 'l2')
-                                    for marker in ('SINGLE_ORIGINAL', 'FIRST_CHAPTER', 'SECOND_CHAPTER')})
-                # Each chapter's Compress step in the first folder run.
-                expected.update({('l1', 'FIRST_CHAPTER'): 1, ('l1', 'SECOND_CHAPTER'): 1,
-                                 ('l1', 'EXCLUDED'): 2, ('l2', 'EXCLUDED'): 1})
+                expected = Counter({(part, marker): 1 for part in ('compressed', 'l1', 'l2')
+                                    for marker in ('SINGLE_ORIGINAL', 'FIRST_CHAPTER', 'SECOND_CHAPTER', 'EXCLUDED')})
                 expected.update({('section', 'FIRST_CHAPTER'): 3, ('section', 'SECOND_CHAPTER'): 3,
                                  ('section', 'EXCLUDED'): 1,
                                  ('overview', 'overview'): 2})
@@ -272,7 +273,7 @@ def main():
                         WHERE message = 'L1 cancelled for “Single” (note 1).'""").fetchone() == (1,)
                 assert not system_errors, system_errors
                 assert len(chat_requests) == 1, len(chat_requests)
-                assert original in chat_requests[0], 'Chat provider did not receive the original note'
+                assert ANSWERS['compressed'] in chat_requests[0], 'Chat provider did not receive the saved Compressed version'
                 assert 'L1 result' not in chat_requests[0] and 'L2 result' not in chat_requests[0]
                 print('Verified foreground use, saved versions, and batch cancellation through normal quit and reopen.')
             except (subprocess.CalledProcessError, AssertionError):

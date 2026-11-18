@@ -1487,39 +1487,21 @@ TEST_F(NoteStorageTest, SavesOnlyTheLoadedDocumentWithSharedPermissions) {
     EXPECT_EQ(note_get_text(*database_, note.id, true).text, "Replacement");
 }
 
-TEST_F(NoteStorageTest, CompressionCommitChecksSourceAndAtomicallyStoresItsEvent) {
+TEST_F(NoteStorageTest, CompressionCommitAtomicallyStoresItsEvent) {
     create_event_history_schema(*database_);
     const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
-    const auto source = note_get_text(*database_, note.id).text;
     note_save_compressed(*database_, note.id, "Previous");
-    EXPECT_FALSE(note_commit_compressed(*database_, note.id, "Changed", "Stale", "Ready"));
     EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Previous"));
     EXPECT_TRUE(event_list(*database_).empty());
     database_->execute("CREATE TRIGGER reject_success BEFORE INSERT ON event_history BEGIN SELECT RAISE(ABORT,'event failure'); END");
-    EXPECT_THROW(note_commit_compressed(*database_, note.id, source, "Replacement", "Ready"), NoteError);
+    EXPECT_THROW(note_save_compressed(*database_, note.id, "Replacement", {}, "Ready"), NoteError);
     EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Previous"));
     EXPECT_TRUE(event_list(*database_).empty());
     database_->execute("DROP TRIGGER reject_success");
-    EXPECT_TRUE(note_commit_compressed(*database_, note.id, source, "Replacement", "Ready"));
+    note_save_compressed(*database_, note.id, "Replacement", {}, "Ready");
     EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Replacement"));
     ASSERT_EQ(event_list(*database_).size(), 1U);
     EXPECT_EQ(event_list(*database_).front().severity, EventSeverity::success);
-}
-
-TEST_F(NoteStorageTest, CompressionSourceIncludesCommentsButIgnoresUnchangedHighlights) {
-    create_event_history_schema(*database_);
-    const auto note = note_create(*database_, {}, NoteItemKind::note, "Source");
-    auto document = nlohmann::json::parse(R"({"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Original"}]}]})");
-    note_save(*database_, note.id, document);
-    const auto source = note_get_text(*database_, note.id).text;
-    document["content"][0]["content"][0]["marks"] = nlohmann::json::parse(R"([{"type":"highlight","attrs":{"color":"yellow"}}])");
-    note_save(*database_, note.id, document);
-    EXPECT_TRUE(note_commit_compressed(*database_, note.id, source, "Summary", "Ready"));
-    document["content"].push_back(nlohmann::json::parse(R"({"type":"paragraph","content":[{"type":"text","text":"Comment","marks":[{"type":"highlight","attrs":{"color":"#b3d9ff"}}]}]})"));
-    note_save(*database_, note.id, document);
-    EXPECT_FALSE(note_commit_compressed(*database_, note.id, source, "Stale", "Ready"));
-    EXPECT_EQ(note_get(*database_, note.id, NoteTextMode::compressed).document, note_document_from_text("Summary"));
-    EXPECT_EQ(event_list(*database_).size(), 1U);
 }
 
 TEST_F(NoteStorageTest, ReadOnlyStateSurvivesReopenAndProtectsOnlyContent) {

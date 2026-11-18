@@ -394,9 +394,7 @@ public:
     bool save_note(std::int64_t id, const nlohmann::json& document);
     void save_note_scroll_position(std::int64_t id, std::int64_t scroll_top);
     [[nodiscard]] NoteItem set_note_read_only(std::int64_t id, bool read_only);
-    void save_compressed_note(std::int64_t id, std::string_view text);
-    bool commit_compressed_note(std::int64_t id, std::string_view source,
-        std::string_view text, std::string_view success_message);
+    void save_compressed_note(std::int64_t id, std::string_view text, std::string_view success_message = {});
     std::int64_t commit_note_level(std::int64_t id, int level, const nlohmann::json& document,
         std::string_view success_message);
     [[nodiscard]] NoteItem commit_folder_summary(std::int64_t folder_id, const nlohmann::json& document);

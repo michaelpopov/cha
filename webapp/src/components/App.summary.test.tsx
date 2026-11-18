@@ -2,7 +2,7 @@ import type { Editor } from '@tiptap/core';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ChaError, type NoteContent, type NoteItem, type SessionSummaryGenerated } from '../api/client';
+import { ChaError, type NoteContent, type NoteItem, type NotesClient, type SessionSummaryGenerated } from '../api/client';
 import { bootstrapFixture, fixtureClient } from '../test/fixtures';
 import { noteItem } from '../test/notes';
 import { noteSaveDelayMs } from '../notes/useNoteSave';
@@ -27,8 +27,16 @@ async function startSummary() {
   fireEvent.click(await screen.findByLabelText('Actions for Planning'));
   fireEvent.click(screen.getByRole('menuitem', { name: 'Save summary' }));
 }
+async function showNotes() {
+  const tab = await screen.findByRole('tab', { name: 'Notes' });
+  fireEvent.click(tab);
+  await waitFor(() => {
+    if (tab.getAttribute('aria-selected') !== 'true') fireEvent.click(tab);
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+  });
+}
 async function openTarget(wait = true) {
-  fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+  await showNotes();
   await screen.findByRole('treeitem', { name: bootstrapFixture.vault_name });
   fireEvent.click(await screen.findByRole('treeitem', { name: 'Plan' }));
   if (wait) {
@@ -39,6 +47,142 @@ async function openTarget(wait = true) {
 beforeEach(() => window.history.replaceState(null, '', '/'));
 afterEach(() => vi.useRealTimers());
 
+const providers = [
+  { id: 'a', display_name: 'Provider A', model: 'model-a', host: 'a' },
+  { id: 'b', display_name: 'Provider B', model: 'model-b', host: 'b' },
+];
+const summarySettings = {
+  getNotesSettings: async () => ({ compression_provider: 'a', compression_reasoning_effort: 'medium' as const }),
+  listProviders: async () => providers,
+};
+const dialog = () => within(screen.getByRole('dialog', { name: 'Summarize' }));
+async function submitSummary() {
+  const start = dialog().getByRole('button', { name: 'Start' });
+  await waitFor(() => expect(start).toBeEnabled());
+  fireEvent.click(start);
+}
+
+describe('Summarize setup', () => {
+  const note = noteItem({ id: 5, name: 'Chapter' });
+  const folder = noteItem({ id: 10, name: 'Study', kind: 'folder' });
+  async function open(name: string) {
+    fireEvent.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
+    const item = screen.getByRole('menuitem', { name: 'Summarize' });
+    await waitFor(() => expect(item).toBeEnabled());
+    fireEvent.click(item);
+  }
+
+  it('loads the current defaults each time and cancels without starting work', async () => {
+    const summaryStart = vi.fn();
+    const summaryGenerate = vi.fn();
+    const getNotesSettings = vi.fn(summarySettings.getNotesSettings)
+      .mockResolvedValueOnce({ compression_provider: 'a', compression_reasoning_effort: 'medium' })
+      .mockResolvedValueOnce({ compression_provider: 'b', compression_reasoning_effort: 'medium' });
+    render(<App client={fixtureClient({ ...summarySettings, getNotesSettings, summaryStart, summaryGenerate,
+      listNoteItems: async () => [note, folder] })} />);
+    await showNotes();
+    await open(note.name);
+    await waitFor(() => expect(dialog().getByLabelText('Provider')).toHaveValue('a'));
+    expect(dialog().getByLabelText('Effort')).toHaveValue('medium');
+    for (const label of ['Compressed', 'L1', 'L2', 'Overwrite']) expect(dialog().getByLabelText(label)).toBeChecked();
+    expect(dialog().queryByLabelText('L3')).not.toBeInTheDocument();
+    for (const label of ['Compressed', 'L1', 'L2']) fireEvent.click(dialog().getByLabelText(label));
+    expect(dialog().getByRole('button', { name: 'Start' })).toBeDisabled();
+    fireEvent.change(dialog().getByLabelText('Effort'), { target: { value: 'xhigh' } });
+    fireEvent(screen.getByRole('dialog', { name: 'Summarize' }), new Event('cancel', { cancelable: true }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('treeitem', { name: note.name })).toHaveFocus();
+
+    await open(folder.name);
+    await waitFor(() => expect(dialog().getByLabelText('Provider')).toHaveValue('b'));
+    expect(dialog().getByLabelText('Effort')).toHaveValue('medium');
+    for (const label of ['Compressed', 'L1', 'L2', 'L3']) expect(dialog().getByLabelText(label)).toBeChecked();
+    expect(dialog().getByLabelText('Overwrite')).not.toBeChecked();
+    fireEvent.click(dialog().getByRole('button', { name: 'Cancel' }));
+    expect(getNotesSettings).toHaveBeenCalledTimes(2);
+    expect(summaryStart).not.toHaveBeenCalled();
+    expect(summaryGenerate).not.toHaveBeenCalled();
+  });
+
+  it('preserves choices after a competing native start and prevents resubmission while pending', async () => {
+    const admission = deferred<Awaited<ReturnType<NotesClient['summaryStart']>>>();
+    const summaryStart = vi.fn<NotesClient['summaryStart']>(() => admission.promise);
+    const summaryFinish = vi.fn();
+    const summaryGenerate = vi.fn();
+    render(<App client={fixtureClient({ ...summarySettings, summaryStart, summaryFinish, summaryGenerate,
+      getNotesSettings: async () => ({ compression_provider: 'removed', compression_reasoning_effort: 'low' }),
+      listNoteItems: async () => [note] })} />);
+    await showNotes();
+    await open(note.name);
+    await waitFor(() => expect(dialog().getByLabelText('Provider')).toBeEnabled());
+    expect(dialog().getByLabelText('Provider')).toHaveValue('');
+    expect(dialog().getByRole('button', { name: 'Start' })).toBeDisabled();
+    fireEvent.change(dialog().getByLabelText('Provider'), { target: { value: 'b' } });
+    fireEvent.change(dialog().getByLabelText('Effort'), { target: { value: 'xhigh' } });
+    for (const label of ['Compressed', 'L1', 'Overwrite']) fireEvent.click(dialog().getByLabelText(label));
+    await submitSummary();
+    const start = dialog().getByRole('button', { name: 'Start' });
+    expect(start).toBeDisabled();
+    expect(dialog().getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    fireEvent.click(start);
+    fireEvent(screen.getByRole('dialog', { name: 'Summarize' }), new Event('cancel', { cancelable: true }));
+    expect(summaryStart).toHaveBeenCalledExactlyOnceWith({
+      id: note.id, provider_id: 'b', reasoning_effort: 'xhigh', levels: ['l2'], overwrite: false,
+    }, 1);
+    await act(async () => admission.reject(new ChaError('invalid_argument', 'Summarization is already running for “Other”.')));
+    expect(dialog().getByRole('alert')).toHaveTextContent('Summarization is already running for “Other”.');
+    expect(start).toBeEnabled();
+    expect(dialog().getByLabelText('Provider')).toHaveValue('b');
+    expect(dialog().getByLabelText('Effort')).toHaveValue('xhigh');
+    expect(dialog().getByLabelText('L2')).toBeChecked();
+    expect(dialog().getByLabelText('Overwrite')).not.toBeChecked();
+    expect(summaryFinish).not.toHaveBeenCalled();
+    expect(summaryGenerate).not.toHaveBeenCalled();
+  });
+
+  it('dismisses setup and ignores a start reply from the previous vault', async () => {
+    const admission = deferred<Awaited<ReturnType<NotesClient['summaryStart']>>>();
+    const handlers = new Map<string, (payload: unknown) => void>();
+    let epoch = 1;
+    const summaryStart = vi.fn(() => admission.promise);
+    const summaryGenerate = vi.fn();
+    const summaryCommit = vi.fn();
+    render(<App client={fixtureClient({ ...summarySettings, summaryStart, summaryGenerate, summaryCommit,
+      contextEpoch: () => epoch, listNoteItems: async () => [note] })}
+      contextEvents={{ on<T>(event: string, handler: (payload: T) => void) {
+        handlers.set(event, handler as (payload: unknown) => void);
+        return () => { handlers.delete(event); };
+      } }} />);
+    await showNotes();
+    await open(note.name);
+    await submitSummary();
+    await waitFor(() => expect(summaryStart).toHaveBeenCalledOnce());
+    await act(async () => {
+      epoch = 2;
+      handlers.get('app.contextChanged')!({ causing_request_id: 1, state: 'running' });
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await act(async () => admission.resolve({ notes: [{ id: note.id, name: note.name, levels: ['compressed'] }] }));
+    expect(summaryGenerate).not.toHaveBeenCalled();
+    expect(summaryCommit).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('keeps Start disabled with no providers or a failed settings load (%s)', async fail => {
+    render(<App client={fixtureClient({ ...summarySettings, listProviders: async () => [],
+      getNotesSettings: async () => {
+        if (fail) throw new ChaError('internal_error', 'Settings unavailable.');
+        return { compression_provider: '', compression_reasoning_effort: 'high' };
+      }, listNoteItems: async () => [note] })} />);
+    await showNotes();
+    await open(note.name);
+    if (fail) expect(await dialog().findByRole('alert')).toHaveTextContent('Settings unavailable.');
+    else await waitFor(() => expect(dialog().getByLabelText('Provider')).toBeEnabled());
+    expect(dialog().getAllByRole('option').filter(option => option.parentElement === dialog().getByLabelText('Provider')))
+      .toEqual([dialog().getByRole('option', { name: 'Select provider' })]);
+    expect(dialog().getByRole('button', { name: 'Start' })).toBeDisabled();
+  });
+});
+
 describe('background note summaries', () => {
   const source = noteItem({ id: 5, name: 'Chapter' });
   const other = noteItem({ id: 6, name: 'Draft' });
@@ -46,13 +190,14 @@ describe('background note summaries', () => {
     fireEvent.click(await screen.findByRole('treeitem', { name }));
     await waitFor(() => expect(editor().isEditable).toBe(true));
   }
-  function summarize(name: string) {
+  async function summarize(name: string) {
     fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Summarize' }));
+    await submitSummary();
   }
-  function chooseL1() {
+  function chooseMode(label = 'L1') {
     fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'L1' }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: label }));
   }
   async function autosave() {
     await act(async () => { await vi.advanceTimersByTimeAsync(noteSaveDelayMs); });
@@ -63,18 +208,19 @@ describe('background note summaries', () => {
     const held = deferred<string>();
     const finish = deferred<void>();
     const summaryFinish = vi.fn(() => finish.promise);
-    const summaryStart = vi.fn(async () => ({ notes: [source] }));
+    const summaryStart = vi.fn<NotesClient['summaryStart']>(async () => ({ notes: [{ ...source, levels: ['l1', 'l2'] }] }));
     const summaryGenerate = vi.fn().mockReturnValueOnce(held.promise).mockResolvedValue('L2');
     const saveNote = vi.fn(async () => {});
     const summaryCommit = vi.fn(async () => {});
     render(<App client={fixtureClient({
+      ...summarySettings,
       listNoteItems: async () => [source, other],
       getNote: async id => ({ id, document_id: id, document: documentFor(id === source.id ? 'Source text' : 'Draft text') }),
       summaryStart, summaryGenerate, summaryCommit, summaryFinish, saveNote,
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
-    summarize(source.name);
+    await summarize(source.name);
     await waitFor(() => expect(summaryGenerate).toHaveBeenCalledExactlyOnceWith(source.id, 'l1'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     vi.useFakeTimers();
@@ -82,13 +228,14 @@ describe('background note summaries', () => {
     await autosave();
     expect(saveNote).toHaveBeenLastCalledWith(source.id, documentFor('Source text Source edit'));
     await selectNote(other.name);
-    summarize(other.name);
-    expect(await screen.findByText('Summarization is already running for “Chapter”.')).toBeInTheDocument();
+    await summarize(other.name);
+    expect(await dialog().findByRole('alert')).toHaveTextContent('Summarization is already running for “Chapter”.');
+    fireEvent.click(dialog().getByRole('button', { name: 'Cancel' }));
     vi.useFakeTimers();
     act(() => { editor().commands.insertContent(' Draft edit'); });
     await autosave();
     expect(saveNote).toHaveBeenLastCalledWith(other.id, documentFor('Draft text Draft edit'));
-    chooseL1();
+    chooseMode();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
       .toHaveAttribute('title', 'L1 mode; showing full text'));
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
@@ -102,8 +249,10 @@ describe('background note summaries', () => {
     expect(message).toHaveFocus();
     fireEvent.click(screen.getByRole('tab', { name: 'Notes' }));
     await selectNote(other.name);
-    summarize(other.name);
-    expect(summaryStart).toHaveBeenCalledExactlyOnceWith(source.id, 1);
+    await summarize(other.name);
+    expect(summaryStart).toHaveBeenCalledExactlyOnceWith({
+      id: source.id, provider_id: 'a', reasoning_effort: 'medium', levels: ['compressed', 'l1', 'l2'], overwrite: true,
+    }, 1);
     await act(async () => finish.resolve());
   });
 
@@ -112,14 +261,16 @@ describe('background note summaries', () => {
     const summaryFinish = vi.fn();
     const saveNote = vi.fn(async () => { throw new ChaError('internal_error', 'Save failed.'); });
     render(<App client={fixtureClient({
+      ...summarySettings,
       listNoteItems: async () => [source],
       getNote: async id => ({ id, document_id: id, document: documentFor('Old body') }),
       summaryStart, summaryFinish, saveNote,
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
     act(() => { editor().commands.insertContent(' Draft edit'); });
-    summarize(source.name);
+    await summarize(source.name);
+    expect(await dialog().findByRole('alert')).toHaveTextContent('Save failed.');
     await waitFor(() => expect(saveNote).toHaveBeenCalledOnce());
     await waitFor(() => expect(editor().isEditable).toBe(true));
     expect(editor().getText()).toBe('Old body Draft edit');
@@ -131,14 +282,15 @@ describe('background note summaries', () => {
     const summaryFinish = vi.fn(async () => {});
     const summaryGenerate = vi.fn();
     render(<App client={fixtureClient({
+      ...summarySettings,
       listNoteItems: async () => [source],
       getNote: async id => ({ id, document_id: id, document: documentFor('Original') }),
       summaryStart: async () => { throw new ChaError('command_timeout', 'Start reply timed out.'); },
       summaryFinish, summaryGenerate,
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
-    summarize(source.name);
+    await summarize(source.name);
     await screen.findByText('Start reply timed out.');
     expect(summaryFinish).toHaveBeenCalledExactlyOnceWith(1);
     expect(summaryGenerate).not.toHaveBeenCalled();
@@ -154,14 +306,15 @@ describe('background note summaries', () => {
     window.__CHA_NATIVE_POST__ = post;
     try {
       render(<App client={fixtureClient({
+        ...summarySettings,
         listNoteItems: async () => [source],
         getNote: async id => ({ id, document_id: id, document: documentFor('Original') }),
         saveNote: async () => { throw new ChaError('internal_error', 'Save failed.'); },
-        summaryStart: async () => ({ notes: [source] }), summaryGenerate, summaryCommit, summaryFinish,
+        summaryStart: async () => ({ notes: [{ ...source, levels: ['l1', 'l2'] }] }), summaryGenerate, summaryCommit, summaryFinish,
       })} />);
-      fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+      await showNotes();
       await selectNote(source.name);
-      summarize(source.name);
+      await summarize(source.name);
       await waitFor(() => expect(summaryGenerate).toHaveBeenCalledOnce());
       act(() => { editor().commands.insertContent(' Draft edit'); });
       act(() => window.__CHA_NATIVE_PREPARE_CLOSE__?.(7));
@@ -179,42 +332,44 @@ describe('background note summaries', () => {
     }
   });
 
-  it.each([true, false])('settles an L1 save before committing and only replaces the buffer on success (%s)', async success => {
+  it.each([true, false])('settles a Compressed save before committing and only replaces the buffer on success (%s)', async success => {
     const held = deferred<string>();
     const write = deferred<void>();
     const summaryGenerate = vi.fn().mockReturnValueOnce(held.promise).mockResolvedValue('L2');
     const summaryFinish = vi.fn(async () => {});
     const saveNote = vi.fn(() => write.promise);
     let body = 'Old body';
-    const summaryCommit = vi.fn(async (_id, part) => {
-      if (part !== 'l1') return;
+    const summaryCommit = vi.fn<NotesClient['summaryCommit']>(async (_id, part, _output) => {
+      if (part !== 'compressed') return;
       if (!success) throw new ChaError('internal_error', 'Commit failed.');
-      body = 'New L1';
+      body = 'New Compressed';
     });
     render(<App client={fixtureClient({
-      listNoteItems: async () => [{ ...source, has_l1: true }],
-      getNote: async (id, mode) => ({ id, document_id: mode === 'l1' ? 40 : id, document: documentFor(body) }),
-      summaryStart: async () => ({ notes: [source] }), summaryGenerate, summaryCommit, summaryFinish, saveNote,
+      ...summarySettings,
+      listNoteItems: async () => [{ ...source, has_compressed: true }],
+      getNote: async (id, mode) => ({ id, document_id: mode === 'compressed' ? 40 : id, document: documentFor(body) }),
+      summaryStart: async () => ({ notes: [{ ...source, levels: ['compressed'] }] }), summaryGenerate, summaryCommit, summaryFinish, saveNote,
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
-    summarize(source.name);
+    await summarize(source.name);
     await waitFor(() => expect(summaryGenerate).toHaveBeenCalledOnce());
-    chooseL1();
+    chooseMode('Compressed');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
-      .toHaveAttribute('title', 'L1 mode; showing L1'));
+      .toHaveAttribute('title', 'Compressed mode; showing compressed'));
     const old = editor();
     vi.useFakeTimers();
     act(() => { old.commands.insertContent(' In-flight edit'); });
     await autosave();
     expect(saveNote).toHaveBeenCalledExactlyOnceWith(40, documentFor('Old body In-flight edit'));
-    await act(async () => held.resolve('New L1'));
+    await act(async () => held.resolve('New Compressed'));
     expect(old.isEditable).toBe(false);
     expect(summaryCommit).not.toHaveBeenCalled();
     await act(async () => write.resolve());
+    expect(summaryCommit).toHaveBeenCalledExactlyOnceWith(source.id, 'compressed', 'New Compressed');
     await waitFor(() => expect(summaryFinish).toHaveBeenCalledOnce());
     if (success) {
-      expect(await screen.findByText('New L1')).toBeInTheDocument();
+      expect(await screen.findByText('New Compressed')).toBeInTheDocument();
       expect(old.isDestroyed).toBe(true);
     } else {
       expect(editor()).toBe(old);
@@ -235,15 +390,16 @@ describe('background note summaries', () => {
       return { id, document_id: mode === 'l1' ? 40 : id, document: documentFor(committed ? 'New L1' : 'Original') };
     });
     render(<App client={fixtureClient({
+      ...summarySettings,
       listNoteItems: async () => [{ ...source, has_l1: true }],
-      getNote, summaryStart: async () => ({ notes: [source] }), summaryGenerate, summaryFinish,
+      getNote, summaryStart: async () => ({ notes: [{ ...source, levels: ['l1', 'l2'] }] }), summaryGenerate, summaryFinish,
       summaryCommit: async () => { committed = true; },
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
-    summarize(source.name);
+    await summarize(source.name);
     await waitFor(() => expect(summaryGenerate).toHaveBeenCalledOnce());
-    chooseL1();
+    chooseMode();
     await waitFor(() => expect(getNote).toHaveBeenLastCalledWith(source.id, 'l1'));
     await act(async () => held.resolve('New L1'));
     await screen.findByText('New L1');
@@ -260,6 +416,7 @@ describe('background note summaries', () => {
     const summaryFinish = vi.fn(async () => {});
     const getNote = vi.fn(async (id, mode) => ({ id, document_id: mode === 'l1' ? 40 : id, document: documentFor('Old L1') }));
     render(<App reload={reload} client={fixtureClient({
+      ...summarySettings,
       listNoteItems: async () => {
         if (barrierFails) {
           barrierFails = false;
@@ -267,18 +424,18 @@ describe('background note summaries', () => {
         }
         return [{ ...source, has_l1: true }, other];
       },
-      getNote, summaryStart: async () => ({ notes: [source] }), summaryGenerate, summaryFinish,
-      summaryCommit: async (_id, part) => {
+      getNote, summaryStart: async () => ({ notes: [{ ...source, levels: ['l1', 'l2'] }] }), summaryGenerate, summaryFinish,
+      summaryCommit: async (_id, part, _output) => {
         if (part !== 'l1') return;
         barrierFails = true;
         throw new ChaError('command_timeout', 'Commit timed out.');
       },
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
-    summarize(source.name);
+    await summarize(source.name);
     await waitFor(() => expect(summaryGenerate).toHaveBeenCalledOnce());
-    chooseL1();
+    chooseMode();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
       .toHaveAttribute('title', 'L1 mode; showing L1'));
     const old = editor();
@@ -291,7 +448,7 @@ describe('background note summaries', () => {
     expect(getNote).not.toHaveBeenCalledWith(other.id, expect.anything());
   });
 
-  it.each([true, false])('saves the original fallback edits before reopening L1 (%s)', async success => {
+  it.each([true, false])('saves the original fallback edits before reopening Compressed (%s)', async success => {
     const held = deferred<string>();
     const summaryGenerate = vi.fn().mockReturnValueOnce(held.promise).mockResolvedValue('L2');
     const summaryFinish = vi.fn(async () => {});
@@ -300,26 +457,27 @@ describe('background note summaries', () => {
     });
     let committed = false;
     const getNote = vi.fn(async (id, mode) => {
-      const version = committed && mode === 'l1';
-      return { id, document_id: version ? 40 : id, document: documentFor(version ? 'New L1' : 'Original') };
+      const version = committed && mode === 'compressed';
+      return { id, document_id: version ? 40 : id, document: documentFor(version ? 'New Compressed' : 'Original') };
     });
     render(<App client={fixtureClient({
+      ...summarySettings,
       listNoteItems: async () => [source], getNote, saveNote,
-      summaryStart: async () => ({ notes: [source] }), summaryGenerate, summaryFinish,
+      summaryStart: async () => ({ notes: [{ ...source, levels: ['compressed'] }] }), summaryGenerate, summaryFinish,
       summaryCommit: async () => { committed = true; },
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     await selectNote(source.name);
-    summarize(source.name);
+    await summarize(source.name);
     await waitFor(() => expect(summaryGenerate).toHaveBeenCalledOnce());
-    chooseL1();
-    await waitFor(() => expect(getNote).toHaveBeenLastCalledWith(source.id, 'l1'));
+    chooseMode('Compressed');
+    await waitFor(() => expect(getNote).toHaveBeenLastCalledWith(source.id, 'compressed'));
     const original = await waitFor(() => editor());
     act(() => { original.commands.insertContent(' Draft edit'); });
-    await act(async () => held.resolve('New L1'));
+    await act(async () => held.resolve('New Compressed'));
     await waitFor(() => expect(summaryFinish).toHaveBeenCalledOnce());
     expect(saveNote).toHaveBeenCalledExactlyOnceWith(source.id, documentFor('Original Draft edit'));
-    if (success) expect(await screen.findByText('New L1')).toBeInTheDocument();
+    if (success) expect(await screen.findByText('New Compressed')).toBeInTheDocument();
     else {
       expect(editor()).toBe(original);
       expect(editor().getText()).toBe('Original Draft edit');
@@ -353,9 +511,10 @@ describe('summarizing a notes folder', () => {
     const summaryFinish = vi.fn(async () => {});
     const listNoteItems = vi.fn(async () => [folder, source, target]);
     render(<App client={fixtureClient({
-      listNoteItems, getNote, summaryStart: async () => ({ notes: [source] }), summaryGenerate, summaryCommit, summaryFinish,
+      ...summarySettings,
+      listNoteItems, getNote, summaryStart: async () => ({ notes: [{ ...source, levels: ['l3'] }] }), summaryGenerate, summaryCommit, summaryFinish,
     })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
+    await showNotes();
     fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
     fireEvent.click(await screen.findByRole('treeitem', { name }));
     await screen.findByText('Old content');
@@ -363,6 +522,7 @@ describe('summarizing a notes folder', () => {
     const summarize = screen.getByRole('menuitem', { name: 'Summarize' });
     await waitFor(() => expect(summarize).toBeEnabled());
     fireEvent.click(summarize);
+    await submitSummary();
 
     await waitFor(() => expect(summaryGenerate).toHaveBeenCalledWith(source.id, 'l3_section'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -381,42 +541,7 @@ describe('summarizing a notes folder', () => {
     expect(editor().isEditable).toBe(false);
   });
 
-  it.each([true, false])('reloads an open Compressed version only when the run made it (%s)', async made => {
-    const folder = noteItem({ id: 10, kind: 'folder', name: 'Study' });
-    const source = noteItem({ id: 5, parent_id: folder.id, name: 'Chapter', has_compressed: true, has_l1: true, has_l2: true });
-    const getNote = vi.fn(async (id: number) => ({ id, document_id: id, document: documentFor('Chapter text') }));
-    const compressed = deferred<boolean>();
-    const summaryCompress = vi.fn(() => compressed.promise);
-    const summaryFinish = vi.fn(async () => {});
-    render(<App client={fixtureClient({
-      listNoteItems: async () => [folder, source],
-      getNote,
-      summaryStart: async () => ({ notes: [
-        { id: source.id, name: source.name, has_compressed: false, has_l1: true, has_l2: true },
-      ] }),
-      summaryCompress, summaryFinish,
-      summaryGenerate: async (_id, part) => part === 'l3_section' ? 'Section' : 'Overview',
-      summaryCommit: async () => {},
-    })} />);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Notes' }));
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Study' }));
-    fireEvent.click(await screen.findByRole('treeitem', { name: 'Chapter' }));
-    await screen.findByText('Chapter text');
-    fireEvent.click(screen.getByRole('button', { name: 'Note text mode' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Compressed' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Note text mode' }))
-      .toHaveAttribute('title', 'Compressed mode; showing full text'));
-    getNote.mockClear();
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Study' }));
-    const summarize = screen.getByRole('menuitem', { name: 'Summarize' });
-    await waitFor(() => expect(summarize).toBeEnabled());
-    fireEvent.click(summarize);
-    await waitFor(() => expect(summaryCompress).toHaveBeenCalledOnce());
-    await act(async () => compressed.resolve(made));
-    await waitFor(() => expect(summaryFinish).toHaveBeenCalledOnce());
-    if (made) expect(getNote).toHaveBeenCalledExactlyOnceWith(source.id, 'compressed');
-    else expect(getNote).not.toHaveBeenCalled();
-  });
+
 });
 
 describe('saving session summaries', () => {

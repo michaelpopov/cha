@@ -173,11 +173,7 @@ void NotesService::delete_note_item(std::int64_t id, std::uint64_t epoch) {
             throw ApplicationError(ErrorCode::invalid_argument, "A store operation is running for this folder.");
         }
         const auto folder_ids = impl_->store->folder_ids_in_subtree(id);
-        // Capture affected controls before the delete. After it commits, retirement
-        // must not depend on another fallible list read.
-        const auto deleted = impl_->collect_compressions_locked(id);
         impl_->store->delete_note_item(id);
-        for (const auto note_id : deleted) impl_->cancel_note_compression_locked(note_id, epoch);
         impl_->interrupt_abandoned_audio();
         if (!folder_ids.empty() && !impl_->live_sessions->post_welcome_folder_prune(epoch, folder_ids)) {
             log_warn("Could not enqueue Welcome folder prune.");

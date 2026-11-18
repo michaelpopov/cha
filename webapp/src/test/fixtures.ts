@@ -428,17 +428,13 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     commitSessionSummary: async () => { throw new Error('sessionSummary.commit'); },
     abandonSessionSummary: async () => undefined,
     contextEpoch: () => 1,
-    compressionStatus: async () => ({ pending: false }),
-    cancelCompression: async () => undefined,
     summaryStart: unavailable('notes.summaryStart'),
     summaryLine: async () => {},
     summaryGenerate: unavailable('notes.summaryGenerate'),
     summaryCommit: unavailable('notes.summaryCommit'),
     summaryAbandon: unavailable('notes.summaryAbandon'),
     summaryFinish: unavailable('notes.summaryFinish'),
-    summaryCompress: unavailable('notes.summaryCompress'),
     setNoteSummaryExcluded: unavailable('notes.setSummaryExcluded'),
-    compressNote: unavailable('notes.compressStart'),
     ...overrides,
     saveNote: async (id, document) => {
       const result = await (overrides.saveNote ?? unavailable('notes.save'))(id, document);

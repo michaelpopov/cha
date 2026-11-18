@@ -153,11 +153,7 @@ bool note_save(
     std::string_view sync_machine = {});
 void note_save_compressed(
     storage::SqliteDatabase& database, std::int64_t id, std::string_view text,
-    std::string_view sync_machine = {});
-// Checks the saved Markdown and commits the result and success event together.
-bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
-    std::string_view source, std::string_view text, std::string_view success_message,
-    std::string_view sync_machine = {});
+    std::string_view sync_machine = {}, std::string_view success_message = {});
 // Writes the L1 or L2 row, the success event, and the sync record together.
 std::int64_t note_commit_level(storage::SqliteDatabase& database, std::int64_t id,
     int level, const nlohmann::json& document, std::string_view success_message,

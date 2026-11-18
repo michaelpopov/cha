@@ -478,7 +478,7 @@ TEST(ApplicationMedia, DefaultElevenLabsVoiceUsesItsCredentialAndStreamsAudio) {
 
 
 
-TEST(ApplicationMedia, NoteCompressionUsesAssistantAppliedProvider) {
+TEST(ApplicationMedia, CompressedSummaryUsesAssistantAppliedProvider) {
     using Json = nlohmann::json;
     const Json response{{"status", "completed"}, {"output", Json::array({{
         {"type", "message"}, {"role", "assistant"}, {"content", Json::array({{
@@ -503,11 +503,12 @@ TEST(ApplicationMedia, NoteCompressionUsesAssistantAppliedProvider) {
     application->save_note(note.id, {{"type", "doc"}, {"content", Json::array({
         {{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
     })}}, epoch);
-    ASSERT_EQ(application->compress_note(note.id, epoch), Json({{"accepted", true}}));
-    const auto deadline = std::chrono::steady_clock::now() + 3s;
-    while (application->note_compression_status(note.id, epoch)["pending"].get<bool>()
-        && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
-    EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
+    const auto defaults = application->get_notes_settings(epoch);
+    (void)application->start_summary_batch("owner", note.id,
+        {defaults.compression_provider, defaults.compression_reasoning_effort, {"compressed"}, true}, epoch);
+    const auto result = wait_reply(application->generate_summary_part("owner", note.id, SummaryPart::compressed, {}, epoch));
+    application->commit_summary_part(note.id, SummaryPart::compressed, result["markdown"], epoch, "owner");
+    application->finish_summary_batch("owner", epoch);
     server.join();
     EXPECT_EQ(application->get_note(note.id, epoch, NoteTextMode::compressed).document, note_document_from_text("Compressed through Assistant settings"));
     ASSERT_EQ(server.requests().size(), 1u);
@@ -517,7 +518,7 @@ TEST(ApplicationMedia, NoteCompressionUsesAssistantAppliedProvider) {
     EXPECT_TRUE(application->join_shutdown(2s));
 }
 
-TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers) {
+TEST(ApplicationMedia, GoogleCompressedSummaryUsesSelectedEffortAndRejectsPartialAnswers) {
     using Json = nlohmann::json;
     for (const auto* reason : {"STOP", "MAX_TOKENS", "SAFETY"}) {
         SCOPED_TRACE(reason);
@@ -531,17 +532,19 @@ TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAn
             + "\nmodel = 'gemini-test'\nbase_path = '/v1beta'\nmode = 'net'\napi = 'google'\n");
         auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
         const auto epoch = application->context_epoch();
-        EXPECT_EQ(application->get_notes_settings(epoch).compression_reasoning_effort, "high");
-        (void)application->save_notes_settings({.compression_provider = "google", .compression_reasoning_effort = "high"}, epoch);
         const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
         application->save_note(note.id, {{"type", "doc"}, {"content", Json::array({
             {{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
         })}}, epoch);
-        ASSERT_EQ(application->compress_note(note.id, epoch), Json({{"accepted", true}}));
-        const auto deadline = std::chrono::steady_clock::now() + 3s;
-        while (application->note_compression_status(note.id, epoch)["pending"].get<bool>()
-            && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
-        EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
+        (void)application->start_summary_batch("owner", note.id, {"google", "high", {"compressed"}, true}, epoch);
+        const auto reply = application->generate_summary_part("owner", note.id, SummaryPart::compressed, {}, epoch);
+        if (std::string_view(reason) == "STOP") {
+            const auto result = wait_reply(reply);
+            application->commit_summary_part(note.id, SummaryPart::compressed, result["markdown"], epoch, "owner");
+        } else {
+            EXPECT_THROW((void)wait_reply(reply), ApplicationError);
+        }
+        application->finish_summary_batch("owner", epoch);
         server.join();
         const auto saved = application->get_note(note.id, epoch, NoteTextMode::compressed);
         if (std::string_view(reason) == "STOP") EXPECT_EQ(saved.document, note_document_from_text("Compressed text"));
@@ -561,7 +564,7 @@ TEST(ApplicationMedia, GoogleNoteCompressionUsesDefaultEffortAndRejectsPartialAn
     }
 }
 
-TEST(ApplicationMedia, AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartialAnswers) {
+TEST(ApplicationMedia, AnthropicCompressedSummaryUsesSelectedEffortAndRejectsPartialAnswers) {
     using Json = nlohmann::json;
     for (const auto* reason : {"end_turn", "max_tokens", "model_context_window_exceeded", "refusal"}) {
         SCOPED_TRACE(reason);
@@ -574,17 +577,19 @@ TEST(ApplicationMedia, AnthropicNoteCompressionUsesDefaultEffortAndRejectsPartia
             + "\nmodel = 'claude-test'\nbase_path = ''\nmode = 'net'\nstream = false\napi = 'anthropic'\n");
         auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
         const auto epoch = application->context_epoch();
-        EXPECT_EQ(application->get_notes_settings(epoch).compression_reasoning_effort, "high");
-        (void)application->save_notes_settings({.compression_provider = "anthropic", .compression_reasoning_effort = "high"}, epoch);
         const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
         application->save_note(note.id, {{"type", "doc"}, {"content", Json::array({
             {{"type", "paragraph"}, {"content", Json::array({{{"type", "text"}, {"text", std::string(4096, 'a')}}})}}
         })}}, epoch);
-        ASSERT_EQ(application->compress_note(note.id, epoch), Json({{"accepted", true}}));
-        const auto deadline = std::chrono::steady_clock::now() + 3s;
-        while (application->note_compression_status(note.id, epoch)["pending"].get<bool>()
-            && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(2ms);
-        EXPECT_FALSE(application->note_compression_status(note.id, epoch)["pending"].get<bool>());
+        (void)application->start_summary_batch("owner", note.id, {"anthropic", "high", {"compressed"}, true}, epoch);
+        const auto reply = application->generate_summary_part("owner", note.id, SummaryPart::compressed, {}, epoch);
+        if (std::string_view(reason) == "end_turn") {
+            const auto result = wait_reply(reply);
+            application->commit_summary_part(note.id, SummaryPart::compressed, result["markdown"], epoch, "owner");
+        } else {
+            EXPECT_THROW((void)wait_reply(reply), ApplicationError);
+        }
+        application->finish_summary_batch("owner", epoch);
         server.join();
         const auto saved = application->get_note(note.id, epoch, NoteTextMode::compressed);
         if (std::string_view(reason) == "end_turn") EXPECT_EQ(saved.document, note_document_from_text("Compressed text"));

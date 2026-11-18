@@ -558,12 +558,11 @@ TEST_F(SyncNotesTest, StructuralOperationsRecordImmediately) {
     EXPECT_EQ(flags.integer(0), 0);
 }
 
-TEST_F(SyncNotesTest, BothCompressionCommitPathsRecord) {
+TEST_F(SyncNotesTest, CompressedSummaryCommitRecordsSync) {
     const auto note =
         note_create(*database_, std::nullopt, NoteItemKind::note, "Note", sync_machine);
     (void)note_save(*database_, note.id, text_document("source text"), sync_machine);
-    EXPECT_TRUE(note_commit_compressed(
-        *database_, note.id, "source text", "summary", "Saved.", sync_machine));
+    note_save_compressed(*database_, note.id, "summary", sync_machine, "Saved.");
     auto records = this->records();
     ASSERT_EQ(records.size(), 2u);
     EXPECT_EQ(records.back()["kind"], "note.compress");

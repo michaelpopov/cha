@@ -875,8 +875,15 @@ export interface components {
             read_only: boolean;
             name: string;
         };
+        /** @enum {string} */
+        SummaryLevel: "compressed" | "l1" | "l2" | "l3";
         SummaryStartRequest: {
             id: components["schemas"]["NoteId"];
+            provider_id: string;
+            /** @enum {string} */
+            reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh";
+            levels: components["schemas"]["SummaryLevel"][];
+            overwrite: boolean;
         };
         SummaryStartResult: {
             notes: components["schemas"]["SummaryTarget"][];
@@ -884,9 +891,7 @@ export interface components {
         SummaryTarget: {
             id: components["schemas"]["NoteId"];
             name: string;
-            has_compressed: boolean;
-            has_l1: boolean;
-            has_l2: boolean;
+            levels: components["schemas"]["SummaryLevel"][];
         };
         SummaryLineRequest: {
             id: components["schemas"]["NoteId"];
@@ -895,13 +900,18 @@ export interface components {
         SummaryGenerateRequest: {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */
-            part: "l1" | "l2" | "l3_section" | "l3_overview";
+            part: "compressed" | "l1" | "l2" | "l3_section" | "l3_overview";
             text?: string;
         };
         SummaryGenerated: {
             markdown: string;
         };
         SummaryCommitRequest: {
+            id: components["schemas"]["NoteId"];
+            /** @enum {string} */
+            part: "compressed";
+            text: string;
+        } | {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */
             part: "l1" | "l2" | "l3";
@@ -911,12 +921,6 @@ export interface components {
             id: components["schemas"]["NoteId"];
             /** @enum {string} */
             part: "l1" | "l2" | "l3";
-        };
-        SummaryCompressRequest: {
-            id: components["schemas"]["NoteId"];
-        };
-        SummaryCompressed: {
-            compressed: boolean;
         };
         NotesFlexTestRequest: {
             provider_id: string;
@@ -955,16 +959,6 @@ export interface components {
         };
         NoteDocument: {
             [key: string]: unknown;
-        };
-        NoteCompressionStartResult: {
-            /** @enum {boolean} */
-            accepted: true;
-        } | {
-            /** @enum {boolean} */
-            skipped: true;
-        };
-        NoteCompressionStatus: {
-            pending: boolean;
         };
         /** @enum {string} */
         NoteTextMode: "full_text" | "compressed" | "l1" | "l2";

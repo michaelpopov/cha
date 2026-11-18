@@ -162,11 +162,7 @@
   "notes.summaryCommit": {"requires_context_epoch": true, "changes_context": false},
   "notes.summaryAbandon": {"requires_context_epoch": true, "changes_context": false},
   "notes.summaryFinish": {"requires_context_epoch": true, "changes_context": false},
-  "notes.summaryCompress": {"requires_context_epoch": true, "changes_context": false},
   "notes.setSummaryExcluded": {"requires_context_epoch": true, "changes_context": false},
-  "notes.compressStart": {"requires_context_epoch": true, "changes_context": false},
-  "notes.compressionStatus": {"requires_context_epoch": true, "changes_context": false},
-  "notes.compressCancel": {"requires_context_epoch": true, "changes_context": false},
   "notes.rename": {"requires_context_epoch": true, "changes_context": false},
   "notes.delete": {"requires_context_epoch": true, "changes_context": false}
 }

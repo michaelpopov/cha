@@ -25,6 +25,23 @@ async function nativeParity(scenario) {
     await click(label, await until('actions menu for ' + name, actionsMenu));
     await until('actions menu closed', () => !actionsMenu());
   };
+  const summarize = async (name, outputs = null, overwrite = null) => {
+    await action(name, 'Summarize');
+    const dialog = await until('Summarize setup', () => document.querySelector('dialog[open][aria-label="Summarize"]'));
+    const checked = label => [...dialog.querySelectorAll('label')].find(node => node.textContent.trim() === label)
+      ?.querySelector('input[type="checkbox"]');
+    const isFolder = name === 'Book';
+    check(checked('Overwrite')?.checked === !isFolder, 'Unexpected Overwrite default');
+    check(checked('L3')?.checked === (isFolder ? true : undefined), 'Unexpected L3 default');
+    for (const label of ['Compressed', 'L1', 'L2', ...(isFolder ? ['L3'] : [])]) {
+      const output = checked(label);
+      check(output?.checked, label + ' was not selected by default');
+      if (outputs && !outputs.includes(label)) output.click();
+    }
+    if (overwrite !== null && checked('Overwrite').checked !== overwrite) checked('Overwrite').click();
+    await click('Start', dialog);
+    await until('Summarize setup closed', () => !dialog.isConnected);
+  };
   const select = async name => (await until(name, () => row(name))).click();
   const mode = async (name, shown = name) => {
     await click('Note text mode');
@@ -58,7 +75,7 @@ async function nativeParity(scenario) {
 
   await click('Notes');
   if (scenario === 'retry') {
-    await action('Single', 'Summarize');
+    await summarize('Single', ['L1']);
     await held('retry-backoff');
     return;
   }
@@ -80,7 +97,8 @@ async function nativeParity(scenario) {
       receive({ ...batch, messages });
     };
     if (scenario === 'final-commit') await select('Book');
-    await action(scenario === 'between-steps' ? 'Single' : 'Book', 'Summarize');
+    if (scenario === 'between-steps') await summarize('Single', ['L1']);
+    else await summarize('Book', ['L3']);
     // Keep delivery acknowledgements flowing so close negotiation still runs.
     await until(scenario + ' reply held', () => pendingReply);
     return;
@@ -88,9 +106,9 @@ async function nativeParity(scenario) {
 
   await select('Single');
   await until('editable note', () => editor()?.isEditable);
-  await action('Single', 'Summarize');
+  await summarize('Single');
   await held('single-request-held');
-  check(!document.querySelector('dialog[open]'), 'Summarize opened a dialog');
+  check(!document.querySelector('dialog[open]'), 'Setup stayed open during the request');
   check(editor()?.isEditable, 'Editor was frozen by the summary request');
   await select('Foreground');
   await until('unrelated note opened', () => editor()?.isEditable && editor().getText() === 'Foreground original');
@@ -129,7 +147,7 @@ async function nativeParity(scenario) {
   check(editor().getText().includes('Key\tValue\n\nColor\tBlue'), 'L2 table did not become plain text rows');
 
   await select('Book');
-  await action('Book', 'Summarize');
+  await summarize('Book');
   await finish(2);
   await select('Summary');
   const first = await summaryText(1);
@@ -139,12 +157,12 @@ async function nativeParity(scenario) {
   for (const name of headings.slice(1)) {
     check(row(name)?.querySelector('[aria-label="Other versions saved"]'), 'Missing version dot for ' + name);
   }
-  await action('Book', 'Summarize');
+  await summarize('Book', ['L3'], true);
   await finish(3);
   await summaryText(2);
 
   await action('C Excluded', 'Exclude from summaries');
-  await action('Book', 'Summarize');
+  await summarize('Book');
   await held('summary-request-held');
   // The test host now calls NSApp.terminate, which negotiates with the editor.
 }

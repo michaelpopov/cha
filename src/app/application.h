@@ -545,10 +545,10 @@ public:
     [[nodiscard]] std::vector<ActivityEvent> list_events(std::uint64_t epoch);
 
     [[nodiscard]] std::vector<NoteItem> list_note_items(std::uint64_t epoch);
-    void set_note_compression_changed(NoteAudioChanged callback);
     using NotesChanged = std::function<void(std::uint64_t epoch)>;
     void set_notes_changed(NotesChanged callback);
-    [[nodiscard]] nlohmann::json start_summary_batch(std::string connection_id, std::int64_t id, std::uint64_t epoch);
+    [[nodiscard]] nlohmann::json start_summary_batch(std::string connection_id, std::int64_t id, SummaryBatchOptions options,
+        std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> generate_summary_part(std::string connection_id,
         std::int64_t id, SummaryPart part, std::string text, std::uint64_t epoch);
     void summary_line(std::string connection_id, std::int64_t id, bool finished, std::uint64_t epoch);
@@ -558,13 +558,7 @@ public:
     void finish_summary_batch(std::string_view connection_id, std::uint64_t epoch);
     [[nodiscard]] NoteItem set_note_summary_excluded(std::int64_t id, bool excluded, std::uint64_t epoch);
 
-    [[nodiscard]] nlohmann::json compress_note(
-        std::int64_t id, std::uint64_t epoch, bool skip_ineligible = false);
-    [[nodiscard]] std::shared_ptr<OperationReply> compress_summary_note(std::string connection_id,
-        std::int64_t id, std::uint64_t epoch);
     [[nodiscard]] std::shared_ptr<OperationReply> test_notes_flex(std::string provider_id, std::uint64_t epoch);
-    [[nodiscard]] nlohmann::json note_compression_status(std::int64_t id, std::uint64_t epoch);
-    void cancel_note_compression(std::int64_t id, std::uint64_t epoch);
     [[nodiscard]] std::int64_t import_note_book(
         std::optional<std::int64_t> parent_id,
         std::string name, const std::vector<NoteImportEntry>& notes, std::uint64_t epoch);

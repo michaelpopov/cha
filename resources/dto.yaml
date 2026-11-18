@@ -2018,12 +2018,24 @@ components:
           type: string
           minLength: 1
 
+    SummaryLevel:
+      type: string
+      enum: [compressed, l1, l2, l3]
+
     SummaryStartRequest:
       type: object
       additionalProperties: false
-      required: [id]
+      required: [id, provider_id, reasoning_effort, levels, overwrite]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
+        provider_id: {type: string, minLength: 1}
+        reasoning_effort: {type: string, enum: [none, low, medium, high, xhigh]}
+        levels:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {$ref: "#/components/schemas/SummaryLevel"}
+        overwrite: {type: boolean}
 
     SummaryStartResult:
       type: object
@@ -2038,13 +2050,15 @@ components:
     SummaryTarget:
       type: object
       additionalProperties: false
-      required: [id, name, has_compressed, has_l1, has_l2]
+      required: [id, name, levels]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         name: {type: string, minLength: 1}
-        has_compressed: {type: boolean}
-        has_l1: {type: boolean}
-        has_l2: {type: boolean}
+        levels:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {$ref: "#/components/schemas/SummaryLevel"}
 
     SummaryLineRequest:
       type: object
@@ -2060,7 +2074,7 @@ components:
       required: [id, part]
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
-        part: {type: string, enum: [l1, l2, l3_section, l3_overview]}
+        part: {type: string, enum: [compressed, l1, l2, l3_section, l3_overview]}
         text: {type: string, minLength: 1}
       if:
         properties:
@@ -2079,13 +2093,21 @@ components:
         markdown: {type: string}
 
     SummaryCommitRequest:
-      type: object
-      additionalProperties: false
-      required: [id, part, document]
-      properties:
-        id: {$ref: "#/components/schemas/NoteId"}
-        part: {type: string, enum: [l1, l2, l3]}
-        document: {$ref: "#/components/schemas/NoteDocument"}
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [id, part, text]
+          properties:
+            id: {$ref: "#/components/schemas/NoteId"}
+            part: {type: string, enum: [compressed]}
+            text: {type: string, minLength: 1}
+        - type: object
+          additionalProperties: false
+          required: [id, part, document]
+          properties:
+            id: {$ref: "#/components/schemas/NoteId"}
+            part: {type: string, enum: [l1, l2, l3]}
+            document: {$ref: "#/components/schemas/NoteDocument"}
 
     SummaryAbandonRequest:
       type: object
@@ -2094,20 +2116,6 @@ components:
       properties:
         id: {$ref: "#/components/schemas/NoteId"}
         part: {type: string, enum: [l1, l2, l3]}
-
-    SummaryCompressRequest:
-      type: object
-      additionalProperties: false
-      required: [id]
-      properties:
-        id: {$ref: "#/components/schemas/NoteId"}
-
-    SummaryCompressed:
-      type: object
-      additionalProperties: false
-      required: [compressed]
-      properties:
-        compressed: {type: boolean}
 
     NotesFlexTestRequest:
       type: object
@@ -2189,29 +2197,6 @@ components:
       type: object
       additionalProperties: true
 
-    NoteCompressionStartResult:
-      oneOf:
-        - type: object
-          additionalProperties: false
-          required: [accepted]
-          properties:
-            accepted:
-              type: boolean
-              enum: [true]
-        - type: object
-          additionalProperties: false
-          required: [skipped]
-          properties:
-            skipped:
-              type: boolean
-              enum: [true]
-    NoteCompressionStatus:
-      type: object
-      additionalProperties: false
-      required: [pending]
-      properties:
-        pending:
-          type: boolean
     NoteTextMode:
       type: string
       enum: [full_text, compressed, l1, l2]

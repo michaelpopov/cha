@@ -102,8 +102,9 @@ export type NoteContent = components['schemas']['NoteContent'];
 export type SummaryStartResult = components['schemas']['SummaryStartResult'];
 export type SummaryTarget = components['schemas']['SummaryTarget'];
 export type SummaryGenerated = components['schemas']['SummaryGenerated'];
-export type SummaryCompressed = components['schemas']['SummaryCompressed'];
 export type SummaryGeneratePart = components['schemas']['SummaryGenerateRequest']['part'];
+export type SummaryStartRequest = components['schemas']['SummaryStartRequest'];
+export type SummaryLevel = components['schemas']['SummaryLevel'];
 export type SummaryCommitPart = components['schemas']['SummaryCommitRequest']['part'];
 export type NoteTextMode = components['schemas']['NoteTextMode'];
 
@@ -144,8 +145,6 @@ export function publicErrorMessage(failure: unknown, fallback: string): string {
 
 export type NotePageStage = 'formatting_article' | 'formatting_transcript';
 export type NotePage = { url: string; title: string; markdown: string };
-export type NoteCompressionStartResult = components['schemas']['NoteCompressionStartResult'];
-export type NoteCompressionStatus = components['schemas']['NoteCompressionStatus'];
 export type NoteBookImport = {
   parent_id: number | null;
   name: string;
@@ -208,17 +207,15 @@ export interface NotesClient {
   saveNote: (id: number, document: Record<string, unknown>) => Promise<components['schemas']['NoteSaveResult']>;
   saveNoteScrollPosition: (id: number, scrollTop: number) => Promise<void>;
   setNoteReadOnly: (id: number, readOnly: boolean) => Promise<NoteItem>;
-  compressNote: (id: number, epoch: number, skipIneligible?: boolean) => Promise<NoteCompressionStartResult>;
-  compressionStatus: (id: number, epoch: number) => Promise<NoteCompressionStatus>;
-  cancelCompression: (id: number, epoch: number) => Promise<void>;
-  summaryStart(id: number, epoch: number): Promise<SummaryStartResult>;
+  summaryStart(options: SummaryStartRequest, epoch: number): Promise<SummaryStartResult>;
   summaryLine(id: number, finished: boolean): Promise<void>;
   summaryGenerate(id: number, part: SummaryGeneratePart, text?: string): Promise<string>;
-  summaryCommit(id: number, part: SummaryCommitPart, document: Record<string, unknown>): Promise<void>;
-  summaryAbandon(id: number, part: SummaryCommitPart): Promise<void>;
+  summaryCommit(...args:
+    | [id: number, part: 'compressed', text: string]
+    | [id: number, part: Exclude<SummaryCommitPart, 'compressed'>, document: Record<string, unknown>]
+  ): Promise<void>;
+  summaryAbandon(id: number, part: components['schemas']['SummaryAbandonRequest']['part']): Promise<void>;
   summaryFinish(epoch: number): Promise<void>;
-  // Resolves true when it saved a new Compressed version.
-  summaryCompress(id: number): Promise<boolean>;
   setNoteSummaryExcluded(id: number, excluded: boolean): Promise<NoteItem>;
   renameNoteItem: (id: number, name: string) => Promise<NoteItem>;
   deleteNoteItem: (id: number) => Promise<void>;

@@ -15,18 +15,17 @@ function deferred<T>(): Deferred<T> {
 }
 
 const folder = noteItem({ id: 9, kind: 'folder' });
-const alpha = { id: 1, name: 'Alpha * #', has_compressed: false, has_l1: false, has_l2: false };
-const beta = { id: 2, name: 'Beta', has_compressed: true, has_l1: true, has_l2: true };
+const alpha: SummaryTarget = { id: 1, name: 'Alpha * #', levels: ['compressed', 'l1', 'l2', 'l3'] };
+const beta: SummaryTarget = { id: 2, name: 'Beta', levels: ['l3'] };
 const heading = (name: string) => ({ type: 'heading', attrs: { level: 1 }, content: [textNode(name)] });
 // Notes with every version, so a folder run makes only their sections.
-const complete = (ids: number[]) => ids.map(id => ({
-  id, name: `Note ${id}`, has_compressed: true, has_l1: true, has_l2: true,
+const complete = (ids: number[]): SummaryTarget[] => ids.map(id => ({
+  id, name: `Note ${id}`, levels: ['l3'],
 }));
 
 function setup(targets: SummaryTarget[] = [beta, alpha]) {
   const calls = {
     summaryLine: vi.fn<NotesClient['summaryLine']>(async () => {}),
-    summaryCompress: vi.fn<NotesClient['summaryCompress']>(async () => true),
     summaryGenerate: vi.fn<NotesClient['summaryGenerate']>(async (id, part) =>
       part === 'l3_overview' ? 'Overview' : part === 'l3_section' ? `Section ${id}` : 'Summary'),
     summaryCommit: vi.fn<NotesClient['summaryCommit']>(async () => {}),
@@ -34,11 +33,10 @@ function setup(targets: SummaryTarget[] = [beta, alpha]) {
   };
   const client = fixtureClient(calls);
   const checkContext = vi.fn();
-  const compressed = vi.fn(async (_id: number) => {});
   return {
-    ...calls, checkContext, compressed,
+    ...calls, checkContext,
     start: (source = folder) => runSummaryBatch(client, source, targets, {
-      checkContext, commit: calls.summaryCommit, compressed,
+      checkContext, commit: calls.summaryCommit,
     }),
   };
 }
@@ -58,24 +56,27 @@ function holdSections(test: ReturnType<typeof setup>) {
 describe('runSummaryBatch', () => {
   it('runs the steps of each note in order and gives the overview the sections in tree order', async () => {
     const test = setup();
-    const compressed = deferred<boolean>();
-    test.summaryCompress.mockReturnValueOnce(compressed.promise);
+    const compressed = deferred<string>();
+    test.summaryGenerate.mockImplementation(async (id, part) => {
+      if (part === 'compressed') return compressed.promise;
+      return part === 'l3_overview' ? 'Overview' : part === 'l3_section' ? `Section ${id}` : 'Summary';
+    });
     const done = test.start();
 
     await vi.waitFor(() => expect(test.summaryGenerate).toHaveBeenCalledWith(2, 'l3_section'));
-    expect(test.summaryCompress).toHaveBeenCalledExactlyOnceWith(1);
-    // L1 waits for the Compress step of its note.
-    expect(test.summaryGenerate.mock.calls.filter(([id]) => id === 1)).toEqual([]);
-    compressed.resolve(true);
+    // L1 waits for the Compressed step of its note.
+    expect(test.summaryGenerate.mock.calls.filter(([id]) => id === 1)).toEqual([[1, 'compressed']]);
+    compressed.resolve('Compressed text');
     await done;
     expect(test.summaryGenerate.mock.calls.filter(([id]) => id === 1)).toEqual([
-      [1, 'l1'], [1, 'l2'], [1, 'l3_section'],
+      [1, 'compressed'], [1, 'l1'], [1, 'l2'], [1, 'l3_section'],
     ]);
     expect(test.summaryGenerate).toHaveBeenLastCalledWith(
       9, 'l3_overview', '# Alpha * #\n\nSection 1\n\n# Beta\n\nSection 2');
     expect(test.summaryLine.mock.calls).toEqual([[1, false], [2, false], [2, true], [1, true]]);
     expect(test.summaryLine.mock.invocationCallOrder.at(-1))
       .toBeLessThan(test.summaryGenerate.mock.invocationCallOrder.at(-1)!);
+    expect(test.summaryCommit).toHaveBeenCalledWith(1, 'compressed', 'Compressed text');
     expect(test.summaryCommit).toHaveBeenCalledWith(1, 'l2', noteDocument(heading(alpha.name), paragraph('Summary')));
     expect(test.summaryCommit).toHaveBeenLastCalledWith(9, 'l3', noteDocument(
       heading(folder.name), paragraph('Overview'),
@@ -99,8 +100,8 @@ describe('runSummaryBatch', () => {
       '# Note 1\n\nOne\n\n# Note 2\n\nTwo\n\n# Note 3\n\nSection 3\n\n# Note 4\n\nSection 4\n\n# Note 5\n\nSection 5');
   });
 
-  it('replaces both levels of a single note one after the other, with no Compress step', async () => {
-    const test = setup([beta]);
+  it('runs the selected levels of a single note in order', async () => {
+    const test = setup([{ ...beta, levels: ['l2', 'l1'] }]);
     const level = deferred<string>();
     test.summaryGenerate.mockImplementationOnce(() => level.promise);
     const done = test.start(noteItem({ id: beta.id }));
@@ -109,25 +110,23 @@ describe('runSummaryBatch', () => {
     await done;
     expect(test.summaryGenerate.mock.calls).toEqual([[2, 'l1'], [2, 'l2']]);
     expect(test.summaryCommit.mock.calls.map(([id, part]) => [id, part])).toEqual([[2, 'l1'], [2, 'l2']]);
-    expect(test.summaryCompress).not.toHaveBeenCalled();
   });
 
   it('continues a line after a failed step', async () => {
     const test = setup([alpha]);
-    test.summaryCompress.mockRejectedValueOnce(new Error('Provider refused'));
     test.summaryGenerate.mockImplementation(async (_id, part) => {
-      if (part === 'l1') throw new Error('Provider refused');
+      if (part === 'l1' || part === 'compressed') throw new Error('Provider refused');
       return part === 'l3_overview' ? 'Overview' : 'Summary';
     });
     await test.start();
     expect(test.summaryGenerate.mock.calls.map(([id, part]) => [id, part])).toEqual([
-      [1, 'l1'], [1, 'l2'], [1, 'l3_section'], [9, 'l3_overview'],
+      [1, 'compressed'], [1, 'l1'], [1, 'l2'], [1, 'l3_section'], [9, 'l3_overview'],
     ]);
     expect(test.summaryCommit.mock.calls.map(([id, part]) => [id, part])).toEqual([[1, 'l2'], [9, 'l3']]);
   });
 
   it('keeps independent level saves when L2 and the overview fail', async () => {
-    const test = setup([alpha, beta]);
+    const test = setup([{ ...alpha, levels: ['l1', 'l2', 'l3'] }, beta]);
     test.summaryGenerate.mockImplementation(async (_id, part) => {
       if (part === 'l2' || part === 'l3_overview') throw new Error('Provider refused');
       return 'Valid';
@@ -138,7 +137,7 @@ describe('runSummaryBatch', () => {
   });
 
   it('starts no section after a failed section, keeps making levels, and sends no overview', async () => {
-    const test = setup([...complete([1, 2, 3]), { id: 4, name: 'Note 4', has_compressed: true, has_l1: false, has_l2: true }]);
+    const test = setup([...complete([1, 2, 3]), { id: 4, name: 'Note 4', levels: ['l1', 'l3'] }]);
     const held = holdSections(test);
     test.summaryGenerate.mockImplementationOnce(async () => { throw new Error('Provider refused'); });
     const done = test.start();
@@ -149,17 +148,16 @@ describe('runSummaryBatch', () => {
     expect(test.summaryCommit.mock.calls.map(([id, part]) => [id, part])).toEqual([[4, 'l1']]);
   });
 
-  it('lists only the notes that got a new Compressed version', async () => {
-    const gamma = { id: 3, name: 'Gamma', has_compressed: false, has_l1: true, has_l2: true };
-    const test = setup([alpha, gamma]);
-    test.summaryCompress.mockImplementation(async id => id === 1);
-    await test.start();
-    expect(test.compressed).toHaveBeenCalledExactlyOnceWith(1);
-    expect(test.summaryCompress.mock.calls).toEqual([[1], [3]]);
+  it.each(['compressed', 'l1', 'l2'] as const)('makes only the %s request and write when selected alone', async part => {
+    const test = setup([{ ...alpha, levels: [part] }]);
+    await test.start(noteItem({ id: alpha.id }));
+    expect(test.summaryGenerate).toHaveBeenCalledExactlyOnceWith(alpha.id, part);
+    expect(test.summaryCommit).toHaveBeenCalledExactlyOnceWith(alpha.id, part,
+      part === 'compressed' ? 'Summary' : expect.any(Object));
   });
 
   it('abandons the correct part after a conversion failure and continues other levels', async () => {
-    const test = setup([alpha]);
+    const test = setup([{ ...alpha, levels: ['l1', 'l2', 'l3'] }]);
     test.summaryGenerate.mockImplementation(async (_id, part) => part === 'l1' || part === 'l3_section' ? '' : 'Valid');
     await test.start();
     expect(test.summaryAbandon.mock.calls).toEqual([[1, 'l1'], [9, 'l3']]);
@@ -176,7 +174,7 @@ describe('runSummaryBatch', () => {
   });
 
   it.each(['Late level', ''])('stops the line after a vault change (%j)', async markdown => {
-    const test = setup([alpha]);
+    const test = setup([{ ...alpha, levels: ['l1', 'l2'] }]);
     const level = deferred<string>();
     test.summaryGenerate.mockImplementationOnce(() => level.promise);
     const changed = new Error('The vault changed');

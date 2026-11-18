@@ -106,14 +106,35 @@ TEST_F(NotesServiceTest, AdmissionRejectsBeforeMutation) {
     EXPECT_EQ(store->list_note_items().back().name, "Draft");
 }
 
+TEST_F(NotesServiceTest, SummaryBatchRejectsIncompatibleEffortBeforeRecordingAnEvent) {
+    const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
+    notes.save_note(note.id, text_document(std::string(4096, 'x')), 1);
+    const auto provider_id = store->create_provider("Incompatible", "test");
+    auto config = store->snapshot()->find_provider(provider_id)->config;
+    config.mode = Mode::net;
+    config.api = ProviderApi::responses;
+    config.host = "api.openai.com";
+    config.model = "gpt-4o";
+    store->apply_provider_update(provider_id, "Incompatible", config);
+    try {
+        (void)notes.start_summary_batch("owner", note.id, {provider_id, "high", {"l1"}, true}, 1);
+        FAIL() << "Expected the requested effort to be rejected";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+        EXPECT_STREQ(error.what(), "This compression provider's model does not support high reasoning effort.");
+    }
+    EXPECT_TRUE(store->list_events().empty());
+    EXPECT_NO_THROW((void)notes.start_summary_batch("owner", note.id, {"test", "none", {"l1"}, true}, 1));
+    notes.finish_summary_batch("owner", 1);
+}
+
 TEST_F(NotesServiceTest, SummaryBatchRecordsOneTerminalEventAndFreesTheSlot) {
     const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
     notes.save_note(note.id, text_document(std::string(4096, 'x')), 1);
-    store->apply_notes_update({.compression_provider_id = "test"});
     const auto label = "“Chapter” (note " + std::to_string(note.id) + ")";
-    EXPECT_EQ(notes.start_summary_batch("owner", note.id, 1)["notes"].size(), 1U);
+    EXPECT_EQ(notes.start_summary_batch("owner", note.id, {"test", "none", {"l1"}, true}, 1)["notes"].size(), 1U);
     notes.rename_note_item(note.id, "Renamed", 1);
-    EXPECT_THROW(notes.start_summary_batch("other", note.id, 1), ApplicationError);
+    EXPECT_THROW(notes.start_summary_batch("other", note.id, {"test", "none", {"l1"}, true}, 1), ApplicationError);
     notes.finish_summary_batch("other", 1);
     {
         const std::lock_guard lock(lifecycle);
@@ -127,7 +148,7 @@ TEST_F(NotesServiceTest, SummaryBatchRecordsOneTerminalEventAndFreesTheSlot) {
     EXPECT_EQ(cancelled[1].message, "Summarization started for " + label + ", 1 note.");
     EXPECT_EQ(cancelled[0].message, "Summarization cancelled for " + label + ".");
     EXPECT_EQ(cancelled[0].severity, EventSeverity::info);
-    (void)notes.start_summary_batch("other", note.id, 1);
+    (void)notes.start_summary_batch("other", note.id, {"test", "none", {"l1"}, true}, 1);
     notes.finish_summary_batch("other", 1);
     notes.finish_summary_batch("other", 1);
     const auto finished = store->list_events();
@@ -138,17 +159,16 @@ TEST_F(NotesServiceTest, SummaryBatchRecordsOneTerminalEventAndFreesTheSlot) {
 TEST_F(NotesServiceTest, SummaryBatchRequiresTheStartEventAndFreesTheSlotIfTheEndEventFails) {
     const auto note = notes.create_note_item({}, NoteItemKind::note, "Chapter", 1);
     notes.save_note(note.id, text_document(std::string(4096, 'x')), 1);
-    store->apply_notes_update({.compression_provider_id = "test"});
     storage::SqliteDatabase database(store->database_path(), storage::SqliteDatabase::Mode::read_write);
     database.execute("ALTER TABLE event_history RENAME TO unavailable_events");
-    EXPECT_THROW(notes.start_summary_batch("first", note.id, 1), std::runtime_error);
+    EXPECT_THROW(notes.start_summary_batch("first", note.id, {"test", "none", {"l1"}, true}, 1), std::runtime_error);
     database.execute("ALTER TABLE unavailable_events RENAME TO event_history");
     EXPECT_TRUE(store->list_events().empty());
-    EXPECT_NO_THROW((void)notes.start_summary_batch("first", note.id, 1));
+    EXPECT_NO_THROW((void)notes.start_summary_batch("first", note.id, {"test", "none", {"l1"}, true}, 1));
     database.execute("ALTER TABLE event_history RENAME TO unavailable_events");
     EXPECT_NO_THROW(notes.finish_summary_batch("first", 1));
     database.execute("ALTER TABLE unavailable_events RENAME TO event_history");
-    EXPECT_NO_THROW((void)notes.start_summary_batch("second", note.id, 1));
+    EXPECT_NO_THROW((void)notes.start_summary_batch("second", note.id, {"test", "none", {"l1"}, true}, 1));
     notes.finish_summary_batch("second", 1);
     EXPECT_EQ(store->list_events().size(), 3U);
 }

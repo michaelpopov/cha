@@ -3,10 +3,18 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace cha::app {
 
-enum class SummaryPart { l1, l2, l3_section, l3_overview, l3 };
+enum class SummaryPart { compressed, l1, l2, l3_section, l3_overview, l3 };
+
+struct SummaryBatchOptions {
+    std::string provider_id;
+    std::string reasoning_effort;
+    std::vector<std::string> levels;
+    bool overwrite;
+};
 
 using NoteAudioChanged = std::function<void(std::int64_t, std::uint64_t)>;
 

@@ -27,14 +27,13 @@ export async function runSummaryBatch(
   view: {
     checkContext(): void;
     commit: NotesClient['summaryCommit'];
-    compressed(id: number): Promise<void>;
   },
 ): Promise<void> {
-  const folder = source.kind === 'folder';
   const targets = admitted.map(target => ({ ...target, kind: 'note' as const })).sort(compareNoteSiblings);
-  let makeL3 = folder;
+  const sectionCount = targets.filter(target => target.levels.includes('l3')).length;
+  let sectionFailed = false;
   // Sections keep their place in tree order, whichever line finishes first.
-  const sections: (Section | undefined)[] = targets.map(() => undefined);
+  const sections: Section[] = [];
 
   async function makeLevel({ id, name }: SummaryTarget, part: 'l1' | 'l2') {
     const markdown = await client.summaryGenerate(id, part);
@@ -69,16 +68,18 @@ export async function runSummaryBatch(
       const target = targets[index];
       const { id, name } = target;
       await step(() => client.summaryLine(id, false));
-      if (folder && !target.has_compressed) await step(async () => {
-        if (await client.summaryCompress(id)) await view.compressed(id);
+      if (target.levels.includes('compressed')) await step(async () => {
+        const text = await client.summaryGenerate(id, 'compressed');
+        view.checkContext();
+        await view.commit(id, 'compressed', text);
       });
-      if (!folder || !target.has_l1) await step(() => makeLevel(target, 'l1'));
-      if (!folder || !target.has_l2) await step(() => makeLevel(target, 'l2'));
-      if (makeL3) await step(async () => {
+      if (target.levels.includes('l1')) await step(() => makeLevel(target, 'l1'));
+      if (target.levels.includes('l2')) await step(() => makeLevel(target, 'l2'));
+      if (!sectionFailed && target.levels.includes('l3')) await step(async () => {
         try {
           sections[index] = { name, markdown: await client.summaryGenerate(id, 'l3_section') };
         } catch (failure) {
-          makeL3 = false;
+          sectionFailed = true;
           throw failure;
         }
       });
@@ -88,8 +89,8 @@ export async function runSummaryBatch(
   const settled = await Promise.allSettled(Array.from({ length: Math.min(3, targets.length) }, line));
   for (const result of settled) if (result.status === 'rejected') throw result.reason;
 
-  if (!makeL3 || sections.includes(undefined)) return;
-  const complete = sections as Section[];
+  const complete = sections.filter(Boolean);
+  if (sectionFailed || sectionCount === 0 || complete.length !== sectionCount) return;
   const text = complete.map(({ name, markdown }) => `# ${name}\n\n${markdown}`).join('\n\n');
   await step(async () => {
     const overview = await client.summaryGenerate(source.id, 'l3_overview', text);

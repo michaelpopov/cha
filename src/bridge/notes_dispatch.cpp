@@ -11,8 +11,9 @@
 namespace cha::bridge {
 namespace {
 
-app::SummaryPart require_saved_summary_part(const nlohmann::json& params) {
+app::SummaryPart require_saved_summary_part(const nlohmann::json& params, bool allow_compressed = false) {
     const auto part = require_string(params, "part");
+    if (allow_compressed && part == "compressed") return app::SummaryPart::compressed;
     if (part == "l1") return app::SummaryPart::l1;
     if (part == "l2") return app::SummaryPart::l2;
     if (part == "l3") return app::SummaryPart::l3;
@@ -201,18 +202,33 @@ std::optional<nlohmann::json> dispatch_notes_operation(
             require_note_id(params), static_cast<std::int64_t>(*top), epoch);
         return nlohmann::json::object();
     }
-    case Method::notes_summary_start:
-        require_only_keys(params, {"id"});
-        return application.start_summary_batch(connection_id, require_note_id(params), epoch);
+    case Method::notes_summary_start: {
+        require_only_keys(params, {"id", "provider_id", "reasoning_effort", "levels", "overwrite"});
+        if (!params.contains("levels") || !params["levels"].is_array()
+            || !params.contains("overwrite") || !params["overwrite"].is_boolean())
+            throw std::invalid_argument("The summary options are not valid.");
+        app::SummaryBatchOptions options{require_string(params, "provider_id"), require_string(params, "reasoning_effort"),
+            {}, params["overwrite"].get<bool>()};
+        for (const auto& level : params["levels"]) {
+            if (!level.is_string()) throw std::invalid_argument("The summary levels are not valid.");
+            options.levels.push_back(level.get<std::string>());
+        }
+        return application.start_summary_batch(connection_id, require_note_id(params), std::move(options), epoch);
+    }
     case Method::notes_summary_finish:
         require_only_keys(params, {});
         application.finish_summary_batch(connection_id, epoch);
         return nlohmann::json::object();
-    case Method::notes_summary_commit:
-        require_only_keys(params, {"id", "part", "document"});
-        application.commit_summary_part(require_note_id(params),
-            require_saved_summary_part(params), require_document(params), epoch, connection_id);
+    case Method::notes_summary_commit: {
+        const auto part = require_saved_summary_part(params, true);
+        if (part == app::SummaryPart::compressed) require_only_keys(params, {"id", "part", "text"});
+        else require_only_keys(params, {"id", "part", "document"});
+        application.commit_summary_part(require_note_id(params), part,
+            part == app::SummaryPart::compressed ? nlohmann::json(require_string(params, "text"))
+                                                 : require_document(params),
+            epoch, connection_id);
         return nlohmann::json::object();
+    }
     case Method::notes_summary_abandon:
         require_only_keys(params, {"id", "part"});
         application.abandon_summary_part(connection_id, require_note_id(params),

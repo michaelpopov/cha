@@ -869,7 +869,6 @@ export function NotesScreen({
   noteTextMode,
   onNoteTextModeChange,
   noteActionPending,
-  compressionOpen,
   autoFocus = true,
   destination,
   importSource,
@@ -897,7 +896,6 @@ export function NotesScreen({
   noteTextMode: NoteTextMode;
   onNoteTextModeChange(mode: NoteTextMode): void;
   noteActionPending: boolean;
-  compressionOpen?: boolean;
   autoFocus?: boolean;
   destination?: AnnotationDestination;
   importSource?: NoteImportSource;
@@ -1010,7 +1008,7 @@ export function NotesScreen({
     },
   });
   // A file import replaces the note, so the screen stays frozen as during a save.
-  const frozen = save.frozen || replacing || !!compressionOpen;
+  const frozen = save.frozen || replacing;
 
   useLayoutEffect(() => {
     onRegisterSave(save, documentId);

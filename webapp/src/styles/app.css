@@ -678,10 +678,28 @@ select:disabled {
   margin-top: 1rem;
 }
 
-.cha-note-compression-status {
+.cha-note-summary-dialog form > label {
+  grid-template-columns: 4.5rem minmax(0, 1fr);
+  align-items: center;
+}
+
+.cha-note-summary-dialog form > label + label,
+.cha-note-summary-outputs,
+.cha-note-summary-overwrite {
+  margin-top: 0.8rem;
+}
+
+.cha-note-summary-outputs {
   display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
+.cha-note-summary-outputs label,
+.cha-note-summary-dialog .cha-note-summary-overwrite {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .cha-settings-form .cha-checkbox-row {
@@ -2172,7 +2190,6 @@ select.cha-form-control {
 @media (prefers-reduced-motion: reduce) {
   .cha-generation-indicator,
   .cha-notes-screen .cha-notes-import-spinner,
-  .cha-note-compression-status .cha-notes-import-spinner,
   .cha-session-activity.is-generating {
     animation: none;
   }

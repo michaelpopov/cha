@@ -697,56 +697,67 @@ describe('notes native client', () => {
   const note = noteItem({ id: 4, parent_id: 1, name: 'Draft' });
   const document = { type: 'doc', content: [{ type: 'paragraph' }] };
 
+  const options: import('./client').SummaryStartRequest = {
+    id: 1, provider_id: 'chosen', reasoning_effort: 'medium', levels: ['compressed', 'l1', 'l3'], overwrite: false,
+  };
+
   it('calls the seven summary methods with their wire parameters', async () => {
-    const plan = { notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: true, has_l2: false }] };
+    const plan = { notes: [{ id: 4, name: 'Draft', levels: ['compressed', 'l1', 'l3'] }] };
     const excluded = { ...note, summary_excluded: true };
     const handlers = {
       'notes.summaryStart': vi.fn(() => plan),
+      'notes.summaryLine': vi.fn(() => ({})),
       'notes.summaryGenerate': vi.fn(() => ({ markdown: '**Summary**' })),
       'notes.summaryCommit': vi.fn(() => ({})),
       'notes.summaryAbandon': vi.fn(() => ({})),
       'notes.summaryFinish': vi.fn(() => ({})),
-      'notes.summaryCompress': vi.fn(() => ({ compressed: true })),
       'notes.setSummaryExcluded': vi.fn(() => excluded),
     };
     const client = clientFor(handlers);
-    expect(await client.summaryStart(1, client.contextEpoch())).toEqual(plan);
+    expect(await client.summaryStart(options, client.contextEpoch())).toEqual(plan);
+    await expect(client.summaryStart(options, client.contextEpoch() + 1)).rejects.toMatchObject({ code: 'vault_changed' });
+    expect(await client.summaryLine(4, false)).toBeUndefined();
+    expect(await client.summaryGenerate(4, 'compressed')).toBe('**Summary**');
     expect(await client.summaryGenerate(4, 'l1')).toBe('**Summary**');
     expect(await client.summaryGenerate(1, 'l3_overview', '# Draft')).toBe('**Summary**');
+    expect(await client.summaryCommit(4, 'compressed', '**Summary**')).toBeUndefined();
     expect(await client.summaryCommit(4, 'l1', document)).toBeUndefined();
     expect(await client.summaryAbandon(1, 'l3')).toBeUndefined();
     expect(await client.summaryFinish(client.contextEpoch())).toBeUndefined();
-    expect(await client.summaryCompress(4)).toBe(true);
     expect(await client.setNoteSummaryExcluded(4, true)).toEqual(excluded);
 
-    expect(handlers['notes.summaryStart']).toHaveBeenCalledExactlyOnceWith({ id: 1 });
+    expect(handlers['notes.summaryStart']).toHaveBeenCalledExactlyOnceWith(options);
+    expect(handlers['notes.summaryLine']).toHaveBeenCalledExactlyOnceWith({ id: 4, finished: false });
     expect(handlers['notes.summaryGenerate'].mock.calls).toEqual([
+      [{ id: 4, part: 'compressed' }],
       [{ id: 4, part: 'l1' }],
       [{ id: 1, part: 'l3_overview', text: '# Draft' }],
     ]);
-    expect(handlers['notes.summaryCommit']).toHaveBeenCalledExactlyOnceWith({ id: 4, part: 'l1', document });
+    expect(handlers['notes.summaryCommit'].mock.calls).toEqual([
+      [{ id: 4, part: 'compressed', text: '**Summary**' }],
+      [{ id: 4, part: 'l1', document }],
+    ]);
     expect(handlers['notes.summaryAbandon']).toHaveBeenCalledExactlyOnceWith({ id: 1, part: 'l3' });
     expect(handlers['notes.summaryFinish']).toHaveBeenCalledExactlyOnceWith({});
-    expect(handlers['notes.summaryCompress']).toHaveBeenCalledExactlyOnceWith({ id: 4 });
     expect(handlers['notes.setSummaryExcluded']).toHaveBeenCalledExactlyOnceWith({ id: 4, excluded: true });
   });
 
   it('rejects malformed replies to all seven summary methods', async () => {
     const client = clientFor({
-      'notes.summaryStart': () => ({ notes: [{ id: 4, name: 'Draft', has_compressed: false, has_l1: 'true', has_l2: false }] }),
+      'notes.summaryStart': () => ({ notes: [{ id: 4, name: 'Draft', levels: ['l1', 'l1'] }] }),
+      'notes.summaryLine': () => null,
       'notes.summaryGenerate': () => ({ markdown: 42 }),
       'notes.summaryCommit': () => null,
       'notes.summaryAbandon': () => ({ unexpected: true }),
       'notes.summaryFinish': () => [],
-      'notes.summaryCompress': () => ({ compressed: 'yes' }),
       'notes.setSummaryExcluded': () => ({ ...note, folder_summary: true }),
     });
-    await expect(client.summaryStart(1, client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryStart(options, client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
+    await expect(client.summaryLine(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryGenerate(4, 'l1')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryCommit(4, 'l1', document)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryAbandon(1, 'l3')).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.summaryFinish(client.contextEpoch())).rejects.toBeInstanceOf(ChaProtocolError);
-    await expect(client.summaryCompress(4)).rejects.toBeInstanceOf(ChaProtocolError);
     await expect(client.setNoteSummaryExcluded(4, true)).rejects.toBeInstanceOf(ChaProtocolError);
   });
 
@@ -774,89 +785,6 @@ describe('notes native client', () => {
     await expect(client.selectNote(4)).resolves.toBeUndefined();
     expect(select).toHaveBeenCalledExactlyOnceWith({ id: 4 });
     await expect(client.selectNote(4)).rejects.toBeInstanceOf(ChaProtocolError);
-  });
-
-  it('accepts compression and folder skips using the captured context', async () => {
-    const compress = vi.fn().mockReturnValueOnce({ accepted: true }).mockReturnValueOnce({ skipped: true });
-    const client = clientFor({ 'notes.compressStart': compress });
-    expect(await client.compressNote(4, client.contextEpoch())).toEqual({ accepted: true });
-    expect(compress).toHaveBeenLastCalledWith({ id: 4 });
-    expect(await client.compressNote(4, client.contextEpoch(), true)).toEqual({ skipped: true });
-    expect(compress).toHaveBeenLastCalledWith({ id: 4, skip_ineligible: true });
-    await expect(client.compressNote(4, client.contextEpoch() + 1)).rejects.toMatchObject({ code: 'vault_changed' });
-    expect(compress).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([true, false])('resolves a lost compression reply once without resubmitting (pending=%s)', async pending => {
-    const compress = vi.fn(() => { throw new Error('Lost reply'); });
-    const status = vi.fn(() => ({ pending }));
-    const client = clientFor({ 'notes.compressStart': compress, 'notes.compressionStatus': status });
-    if (pending) expect(await client.compressNote(4, client.contextEpoch())).toEqual({ accepted: true });
-    else await expect(client.compressNote(4, client.contextEpoch())).rejects.toThrow('Could not confirm whether compression started. Check Settings → Events before starting again.');
-    expect(compress).toHaveBeenCalledOnce();
-    expect(status).toHaveBeenCalledOnce();
-  });
-
-  it('does not resolve a definite compression rejection through status', async () => {
-    const status = vi.fn();
-    const client = clientFor({ 'notes.compressStart': () => { throw new ChaError('invalid_argument', 'Missing key'); }, 'notes.compressionStatus': status });
-    await expect(client.compressNote(4, client.contextEpoch())).rejects.toThrow('Missing key');
-    expect(status).not.toHaveBeenCalled();
-  });
-
-  it.each([true, false])('confirms a lost cancellation reply through status (pending=%s)', async pending => {
-    const cancel = vi.fn(() => { throw new Error('Lost reply'); });
-    const client = clientFor({ 'notes.compressCancel': cancel, 'notes.compressionStatus': () => ({ pending }) });
-    if (pending) await expect(client.cancelCompression(4, client.contextEpoch())).rejects.toThrow('Could not confirm cancellation');
-    else await expect(client.cancelCompression(4, client.contextEpoch())).resolves.toBeUndefined();
-    expect(cancel).toHaveBeenCalledExactlyOnceWith({ id: 4 });
-  });
-
-  it.each(['linux', 'macos', 'windows'])('exposes compression context on %s independently of audio', async platform => {
-    const status = vi.fn(() => ({ pending: false }));
-    const bridge = createFakeNativeBridge({
-      'bridge.info': () => ({ protocol_version: 1, application_version: 'development', platform }),
-      'app.bootstrap': () => ({ state: 'running', context_epoch: 7, application_version: 'development', bootstrap: bootstrapFixture,
-        capabilities: { can_modify: true, can_transfer_r2: false } }),
-      'notes.compressionStatus': status,
-    });
-    const client = createNativeChaClient(bridge);
-    await client.getBootstrap();
-    expect(client.contextEpoch()).toBe(7);
-    expect(await client.compressionStatus(4, 7)).toEqual({ pending: false });
-    if (platform === 'linux') expect(client.noteAudio).toBeUndefined();
-    bridge.dispose();
-    expect(() => client.contextEpoch()).toThrow(expect.objectContaining({ code: 'application_unavailable' }));
-  });
-
-  it.each(['context', 'connection'])('does not resolve compression through an ended %s', async kind => {
-    const status = vi.fn(() => ({ pending: true }));
-    const bridge = createFakeNativeBridge({ 'notes.compressionStatus': status });
-    bridge.setContextEpoch(1);
-    const client = createNativeChaClient(bridge);
-    const outcome = expect(client.compressNote(4, 1)).rejects.toMatchObject({ code: kind === 'context' ? 'vault_changed' : 'application_unavailable' });
-    if (kind === 'context') bridge.setContextEpoch(2);
-    else bridge.receive({ connection_id: 'view-9', delivery_id: 200, messages: [
-      { connection_id: 'view-9', event: 'app.connectionInvalidated' },
-    ] });
-    await outcome;
-    expect(status).not.toHaveBeenCalled();
-  });
-
-  it('forwards compression invalidations only for the live connection and epoch', () => {
-    const bridge = createFakeNativeBridge();
-    bridge.setContextEpoch(1);
-    createNativeChaClient(bridge);
-    const changed = vi.fn();
-    window.addEventListener('cha-note-compression-changed', changed);
-    try {
-      const notice = { connection_id: 'view-9', event: 'notes.compressionChanged', id: 4, context_epoch: 1 };
-      bridge.receive({ connection_id: 'view-9', delivery_id: 1, messages: [notice, { ...notice, context_epoch: 2 }, { ...notice, id: 0 }] });
-      expect(changed).toHaveBeenCalledOnce();
-      expect(changed.mock.calls[0][0].detail).toEqual({ id: 4, epoch: 1 });
-      bridge.receive({ connection_id: 'view-9', delivery_id: 2, messages: [{ connection_id: 'view-9', event: 'app.connectionInvalidated' }, notice] });
-      expect(changed).toHaveBeenCalledOnce();
-    } finally { window.removeEventListener('cha-note-compression-changed', changed); }
   });
 
   it('reads a local note file and validates the reply, including an ordinary prompt', async () => {

@@ -405,7 +405,6 @@ bool Application::Impl::VaultMaintenance::drain_for_maintenance(
         throw ApplicationError(ErrorCode::invalid_argument,
             "A vault upload is running. Try again when it finishes.");
     }
-    app.notes->cancel_compressions_locked();
     app.notes->cancel_summaries_locked();
     app.notes->interrupt_folder_stores_locked();
     auto expected = ApplicationState::running;

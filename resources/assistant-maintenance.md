@@ -73,7 +73,7 @@ stable ID. A display name is a label, not an ID or a reference target.
 | An unaddressed message reaches the wrong character or becomes a Self-note | `system/jev/config.toml`, forum membership/defaults, and recipient-detection logs. Jev classifies the intended recipient. An explicit `@Assistant` bypasses Jev in Welcome. |
 | "Save this conversation" does not save a summary | `system/notes/config.toml`. CHA does not detect a typed save request. Outside Welcome, the user saves a session summary to Notes with Save summary in the session's sidebar menu. It uses the notes compression provider. |
 | Search or page reading is unavailable | `system/web-search/config.toml`, character `web_search_tool`, and provider/character `web_search`. Page reading first uses `web_reader` when `web_reader_enabled` is true and `web_reader_url` is set. It uses Firecrawl when `read_provider = "firecrawl"`, also after a `web_reader` failure. `web_reader_api_key` is not used. Check search and Firecrawl key metadata independently. Welcome and web page import into Notes use the same page-reading settings. |
-| Note compression, web page or YouTube import, Save summary, or note audio fails | `system/notes/config.toml`: `compression_provider`, `compression_reasoning_effort`, `audio_url`, and `audio_api_key`. Compression, import formatting, and session summaries use the compression provider; they fail when it is omitted or unavailable. Effort defaults to `high`. Note audio needs a saved key and an `audio_url` that is a service origin with no path, and runs only on desktop. Use `assistant_events` for job outcomes. |
+| Note compression or summarization, web page or YouTube import, Save summary, or note audio fails | `system/notes/config.toml`: `compression_provider`, `compression_reasoning_effort`, `audio_url`, and `audio_api_key`. Import formatting and session summaries use the compression provider; they fail when it is omitted or unavailable. Summarize in desktop Notes makes the Compressed, L1, L2 and L3 outputs with the provider and effort that the user selects in its dialog; the saved provider and effort only supply the dialog's initial values. Effort defaults to `high`. Note audio needs a saved key and an `audio_url` that is a service origin with no path, and runs only on desktop. Use `assistant_events` for job outcomes. |
 | Session naming fails or uses the wrong provider/effort | `system/session/config.toml`: `naming_provider` and `naming_reasoning_effort`. Omitted or unavailable naming provider falls back to Assistant's provider; effort defaults to `low`. Read naming logs and the selected provider. |
 | Your own configuration or credentials are suspect | Read `system/assistant/character.toml`, its selected provider, and relevant `system/keys/` metadata. These are protected from your writes. Your prompt is an application resource, not a writable vault prompt file. |
 
@@ -652,9 +652,11 @@ These tools do not read system journals, nginx logs, or browser console logs.
 
 Read the active vault's latest 1000 Events, newest first, with event IDs, Unix
 timestamps, severities, and messages. `pending_notes` lists notes with pending
-audio generation or text compression, with their note IDs, names, and the
-existing `audio` and `compression` status objects. An empty list means neither
-operation is pending. Audio `pending` includes saved attempts awaiting retry
+audio generation, with their note IDs, names, and the existing `audio` and
+`compression` status objects. `compression.pending` is always false: text
+compression runs as a step of a Notes summarization batch, which this list does
+not show. Use Events for the progress and outcome of that batch. An empty list
+means no audio generation is pending. Audio `pending` includes saved attempts awaiting retry
 or recovery; it does not prove that a worker or remote service is running.
 Use these current statuses alongside Events to explain progress and outcomes.
 Do not infer that work is still running just because a start event has no

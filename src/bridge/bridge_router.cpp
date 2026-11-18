@@ -85,7 +85,6 @@ bool deadline_exempt(Method method) noexcept {
     case Method::vault_export:
     case Method::vault_r2_download:
     case Method::notes_summary_generate:
-    case Method::notes_summary_compress:
     case Method::notes_settings_test_flex:
     case Method::session_summary_generate:
     case Method::notes_read_page:
@@ -235,7 +234,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         std::optional<nlohmann::json> pending_context;
         std::vector<std::uint64_t> pending_notes;
         std::map<std::int64_t, std::uint64_t> pending_audio;
-        std::map<std::int64_t, std::uint64_t> pending_compression;
         std::optional<nlohmann::json> pending_invalidation;
         // At most one taken SessionOutput item. Merge, snapshot fallback,
         // byte threshold, and dirty replacement stay in SessionOutput.
@@ -285,30 +283,11 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         });
     }
 
-    void listen_for_compression() {
-        auto weak = std::weak_ptr<Impl>(shared_from_this());
-        application.set_note_compression_changed([weak](std::int64_t id, std::uint64_t epoch) {
-            if (auto impl = weak.lock()) {
-                const std::lock_guard lock(impl->audio_mutex);
-                impl->compression_notices.emplace_back(id, epoch);
-            }
-        });
-    }
-
     // Called under the router mutex, before collecting any replies. The worker
     // only takes audio_mutex, so commit never reverses router/lifecycle lock order.
     void drain_audio_notices() {
         std::vector<std::pair<std::int64_t, std::uint64_t>> notices;
         { const std::lock_guard lock(audio_mutex); notices.swap(audio_notices); }
-        std::vector<std::pair<std::int64_t, std::uint64_t>> compressed;
-        { const std::lock_guard lock(audio_mutex); compressed.swap(compression_notices); }
-        for (const auto& [id, epoch] : compressed) {
-            if (application.check_context(epoch)) continue;
-            for (const auto& [connection_id, connection] : connections) {
-                (void)connection_id;
-                if (!connection->invalid) connection->pending_compression[id] = epoch;
-            }
-        }
         for (const auto& [id, epoch] : notices) {
             if (application.check_context(epoch)) continue;
             for (const auto& [connection_id, connection] : connections) {
@@ -357,7 +336,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
     std::mutex ready_tasks_mutex;
     std::mutex audio_mutex;
     std::vector<std::pair<std::int64_t, std::uint64_t>> audio_notices;
-    std::vector<std::pair<std::int64_t, std::uint64_t>> compression_notices;
     std::condition_variable work;
     std::uint64_t next_connection{1};
     bool stopping{};
@@ -477,7 +455,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         connection->pending_context.reset();
         connection->pending_notes.clear();
         connection->pending_audio.clear();
-        connection->pending_compression.clear();
         if (!drop_pending && first_invalidation) {
             connection->pending_invalidation =
                 connection_invalidated_event(connection->id);
@@ -1469,7 +1446,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
             case Method::notes_summary_generate: {
                 const auto name = require_string(params, "part");
                 app::SummaryPart part;
-                if (name == "l1") part = app::SummaryPart::l1;
+                if (name == "compressed") part = app::SummaryPart::compressed;
+                else if (name == "l1") part = app::SummaryPart::l1;
                 else if (name == "l2") part = app::SummaryPart::l2;
                 else if (name == "l3_section") part = app::SummaryPart::l3_section;
                 else if (name == "l3_overview") part = app::SummaryPart::l3_overview;
@@ -1487,28 +1465,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                     static_cast<std::int64_t>(require_safe_id(params, "id")), part, std::move(source), epoch), true);
                 return;
             }
-            case Method::notes_summary_compress:
-                require_only_keys(params, {"id"});
-                start_background(connection_id, id, application.compress_summary_note(connection_id,
-                    static_cast<std::int64_t>(require_safe_id(params, "id")), epoch), true);
-                return;
-            case Method::notes_compress_start:
-                if (params.contains("skip_ineligible")) require_only_keys(params, {"id", "skip_ineligible"});
-                else require_only_keys(params, {"id"});
-                if (params.contains("skip_ineligible") && !params["skip_ineligible"].is_boolean()) {
-                    throw std::invalid_argument("The request was not valid.");
-                }
-                result = application.compress_note(static_cast<std::int64_t>(require_safe_id(params, "id")), epoch,
-                    params.value("skip_ineligible", false));
-                break;
-            case Method::notes_compression_status:
-                require_only_keys(params, {"id"});
-                result = application.note_compression_status(static_cast<std::int64_t>(require_safe_id(params, "id")), epoch);
-                break;
-            case Method::notes_compress_cancel:
-                require_only_keys(params, {"id"});
-                application.cancel_note_compression(static_cast<std::int64_t>(require_safe_id(params, "id")), epoch);
-                break;
             case Method::session_summary_generate: {
                 const auto identity = parse_session_identity(params);
                 start_background(connection_id, id, application.generate_session_summary(connection_id, {identity.forum_id, identity.session_id}, epoch), true);
@@ -1929,7 +1885,6 @@ BridgeRouter::BridgeRouter(app::Application& application, Options options)
     impl_->listen_for_context_changes();
     impl_->listen_for_notes_changed();
     impl_->listen_for_note_audio();
-    impl_->listen_for_compression();
 }
 
 BridgeRouter::~BridgeRouter() {
@@ -1937,7 +1892,6 @@ BridgeRouter::~BridgeRouter() {
     impl_->application.set_context_changed({});
     impl_->application.set_notes_changed({});
     impl_->application.set_note_audio_changed({});
-    impl_->application.set_note_compression_changed({});
 }
 
 std::string BridgeRouter::open_connection() {
@@ -2130,12 +2084,6 @@ std::optional<nlohmann::json> BridgeRouter::take_delivery(
                 {"id", id}, {"context_epoch", epoch}});
     }
     connection->pending_audio.clear();
-    for (const auto& [id, epoch] : connection->pending_compression) {
-        if (!impl_->application.check_context(epoch))
-            messages.push_back({{"connection_id", connection->id}, {"event", "notes.compressionChanged"},
-                {"id", id}, {"context_epoch", epoch}});
-    }
-    connection->pending_compression.clear();
     for (auto& [id, request] : connection->outstanding) {
         if (request.page_progress.empty()) continue;
         if (!impl_->application.check_context(request.context_epoch)) {

@@ -1638,7 +1638,7 @@ NoteItem note_set_summary_excluded(
 
 void note_save_compressed(
     storage::SqliteDatabase& database, std::int64_t id, std::string_view text,
-    std::string_view sync_machine) {
+    std::string_view sync_machine, std::string_view success_message) {
     if (text.find_first_not_of(" \t\r\n") == std::string_view::npos) {
         fail(NoteFailure::invalid, "The provider returned no compressed text.");
     }
@@ -1646,29 +1646,10 @@ void note_save_compressed(
         storage::SqliteTransaction transaction(database);
         const auto blob = encode_compressed_note(text, id);
         write_version_row(database, id, 0, blob);
+        if (!success_message.empty()) event_append_in_transaction(database, EventSeverity::success, success_message);
         if (sync_connected(database, sync_machine))
             sync_record_note(database, id, {{"compressed_content", encode_base64(blob)}}, "note.compress");
         transaction.commit();
-    } catch (const std::runtime_error& error) {
-        throw sql_failure(error, NoteFailure::saving, saving_message);
-    }
-}
-
-bool note_commit_compressed(storage::SqliteDatabase& database, std::int64_t id,
-    std::string_view source, std::string_view text, std::string_view success_message,
-    std::string_view sync_machine) {
-    if (text.find_first_not_of(" \t\r\n") == std::string_view::npos)
-        fail(NoteFailure::invalid, "The provider returned no compressed text.");
-    try {
-        storage::SqliteTransaction transaction(database);
-        if (note_get_text(database, id).text != source) return false;
-        const auto blob = encode_compressed_note(text, id);
-        write_version_row(database, id, 0, blob);
-        event_append_in_transaction(database, EventSeverity::success, success_message);
-        if (sync_connected(database, sync_machine))
-            sync_record_note(database, id, {{"compressed_content", encode_base64(blob)}}, "note.compress");
-        transaction.commit();
-        return true;
     } catch (const std::runtime_error& error) {
         throw sql_failure(error, NoteFailure::saving, saving_message);
     }
