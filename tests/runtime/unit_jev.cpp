@@ -482,6 +482,48 @@ TEST_F(CurrentNoteRouting, FixedRecipientsAskOnlyAboutTheNoteAndKeepTheDefault) 
     EXPECT_EQ(system_prompts.back().find("# Note:"), std::string::npos);
 }
 
+TEST_F(CurrentNoteRouting, AllCharactersRefreshTheCopyOnceAndNameTheNoteInEveryRun) {
+    const auto packing = store->create_note_item({}, NoteItemKind::note, "Packing list");
+    store->save_note(packing.id, note_document_from_text("Shoes"));
+    ASSERT_TRUE(controller->add_note(trip.id).input_consumed);
+    ASSERT_TRUE(controller->add_note(packing.id).input_consumed);
+    store->save_note(trip.id, note_document_from_text("Code T-418"));
+    const auto notices = note_notices();
+    decision.choice = "all_characters";
+    const std::string prompt = "Everyone, quote the cancellation code in my current note.";
+    ASSERT_FALSE(send_current(prompt).clear_input);
+    trip = {packing.id, packing.name}; // A later selection cannot change this send.
+    finish();
+
+    auto result = controller->take_submission_result();
+    ASSERT_TRUE(result);
+    EXPECT_TRUE(result->update.input_consumed);
+    EXPECT_EQ(result->update.notice.value_or(""), "");
+    ASSERT_EQ(classified.size(), 1u);
+    EXPECT_TRUE(classified[0].ask_recipient);
+    EXPECT_EQ(classified[0].current_note_name, "Trip plan");
+    ASSERT_EQ(requests.size(), 2u);
+    ASSERT_EQ(system_prompts.size(), requests.size());
+    std::vector<std::string> targets;
+    for (std::size_t i = 0; i < requests.size(); ++i) {
+        targets.push_back(requests[i].run.target.id);
+        EXPECT_EQ(requests[i].run.current_note_name, "Trip plan");
+        const auto projected = project_model_context(requests[i], system_prompts[i]);
+        EXPECT_NE(projected.front().content.find("# Note: Trip plan\n\nCode T-418"), std::string::npos);
+        EXPECT_NE(projected.front().content.find("# Note: Packing list\n\nShoes"), std::string::npos);
+        EXPECT_EQ(projected.front().content.find("Full plan"), std::string::npos);
+        EXPECT_TRUE(projected.back().content.ends_with("\nThe user refers to the note “Trip plan”."));
+    }
+    std::ranges::sort(targets);
+    EXPECT_EQ(targets, (std::vector<std::string>{"guide", "marcus"}));
+    EXPECT_EQ(note_notices(), notices + 1);
+    const auto entries = controller->view().transcript.entries;
+    const auto human = std::ranges::find(entries, prompt, &TranscriptEntry::text);
+    ASSERT_NE(human, entries.end());
+    ASSERT_NE(human, entries.begin());
+    EXPECT_EQ(std::prev(human)->text, "Updated this chat’s copy of note “Trip plan”.");
+}
+
 TEST_F(CurrentNoteRouting, SessionThreadReadsTheSelectedNoteName) {
     const auto note = controller->current_note(trip.id);
     ASSERT_TRUE(note);

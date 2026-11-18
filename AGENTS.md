@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+## ChaWeb approval
+
+ChaWeb development is on hold until further notice. Get the user's explicit
+permission before any work that touches ChaWeb, including running its tests or
+changing shared code that affects its behavior. This approval is required even
+when a task or test plan lists ChaWeb.
+
 ## Keep it simple
 
 **This is very important.** CHA is a personal, toy-like application. It is not an
