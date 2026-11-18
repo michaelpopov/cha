@@ -11,12 +11,27 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include <system_error>
 #include <utility>
 
 namespace cha::test {
 namespace {
 
 std::atomic_uint64_t next_workspace_serial{};
+
+std::filesystem::path create_workspace_directory() {
+    const auto parent = std::filesystem::temp_directory_path();
+    const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto prefix = "cha_web_workspace_" + std::to_string(timestamp) + "_";
+    for (;;) {
+        const auto path = parent / (prefix + std::to_string(++next_workspace_serial));
+        std::error_code error;
+        if (std::filesystem::create_directory(path, error)) return path;
+        if (error && error != std::errc::file_exists) {
+            throw std::filesystem::filesystem_error("Could not create test workspace", path, error);
+        }
+    }
+}
 
 std::string quoted(std::string_view value) {
     return nlohmann::json(value).dump();
@@ -77,12 +92,7 @@ void write_style_config(
 } // namespace
 
 TestWorkspace::TestWorkspace()
-    : root_(
-          std::filesystem::temp_directory_path()
-          / ("cha_web_workspace_"
-             + std::to_string(
-                 std::chrono::steady_clock::now().time_since_epoch().count())
-             + "_" + std::to_string(++next_workspace_serial))) {
+    : root_(create_workspace_directory()) {
     const auto definition = root_ / "characters" / "guide";
     const auto member = root_ / "forums" / "lobby" / "members" / "guide";
     std::filesystem::create_directories(definition);
