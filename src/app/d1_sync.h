@@ -27,6 +27,8 @@ public:
         std::string database_password;
         std::string vault;
         std::string machine;
+        // Desktop keeps all queues when D1 is full; cha-daemon still evicts a table.
+        bool desktop_host = false;
         D1Client::Transport transport;
         // Reservation and store access; null in raw-DB tests.
         WorkspaceConfigStore* store = nullptr;

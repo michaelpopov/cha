@@ -464,10 +464,56 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
     EXPECT_FALSE(sync_has_pending(db));
 }
 
+TEST(D1AppWiringTest, SettingsCreatedForumReceivesPeerChatWithoutLocalOpen) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    seed_d1(database);
+    MockD1 mock;
+    auto application = Application::open(
+        make_d1_command(workspace, database), {}, {}, mock.transport());
+    const auto epoch = application->context_epoch();
+    const auto forum = application->create_forum(
+        {.display_name = "Shared forum", .persona_id = "reader"}, epoch);
+    const auto& forum_id = forum.summary.id;
+    {
+        Database db(database, Database::Mode::read_only);
+        auto row = db.prepare("SELECT 1 FROM forums WHERE forum_id=?1", forum_id);
+        EXPECT_TRUE(row.step());
+        const auto pending = sync_queue_list(db);
+        ASSERT_EQ(pending.size(), 1u);
+        const auto edit = nlohmann::json::parse(pending.front().record);
+        EXPECT_EQ(edit["kind"], "config.edit");
+        EXPECT_TRUE(std::ranges::any_of(edit["set"], [&](const auto& file) {
+            return file["name"] == "forums/" + forum_id + "/config.toml";
+        }));
+    }
+    {
+        const std::lock_guard lock(mock.mutex);
+        mock.incoming = {
+            {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
+                "chat.rename", {{"chat", {forum_id, "session-from-d1"}}, {"label", "Peer chat"}})}},
+        };
+    }
+    // Saving the same credentials starts a pass immediately on the open vault.
+    (void)application->save_d1_storage(credentials(), epoch);
+    {
+        std::unique_lock lock(mock.mutex);
+        ASSERT_TRUE(mock.changed.wait_for(lock, 5s, [&] { return mock.incoming.empty(); }));
+    }
+    const auto chats = application->list_sessions(forum_id, epoch);
+    ASSERT_EQ(chats.size(), 1u);
+    EXPECT_EQ(chats.front().id, "session-from-d1");
+}
+
 TEST(D1AppWiringTest, IncomingChatIsWrittenToTheSessionMirror) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     seed_d1(database);
+    {
+        // An older vault can lack the forum row. Open adds it before the first receive.
+        Database db(database, Database::Mode::read_write);
+        db.execute("DELETE FROM forums WHERE forum_id='lobby'");
+    }
     auto command = make_d1_command(workspace, database);
     const auto mirror = workspace.root() / "mirror";
     command.vault.mirror = mirror;
@@ -785,10 +831,23 @@ TEST(D1AppWiringTest, SwitchFlushesOldVaultAndUsesNewVaultPassword) {
     {
         Database db(second.data, Database::Mode::read_write, "second-password");
         sync_queue_append(db, R"({"kind":"chat.clear"})");
+        // Reopen at the switch adds the missing forum row before the first receive.
+        db.execute("DELETE FROM forums WHERE forum_id='lobby'");
+    }
+    {
+        const std::lock_guard lock(mock.mutex);
+        mock.incoming = {
+            {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
+                "chat.rename", {{"chat", {"lobby", "session-from-d1"}}, {"label", "Peer chat"}})}},
+        };
     }
     const auto result = application->switch_vault("Second", "second-password", epoch);
     EXPECT_EQ(result.state, ApplicationState::running);
     EXPECT_EQ(mock.count("INSERT"), 2u);
+    EXPECT_EQ(mock.count("DELETE FROM"), 1u);
+    const auto chats = application->list_sessions("lobby", application->context_epoch());
+    ASSERT_EQ(chats.size(), 1u);
+    EXPECT_EQ(chats.front().id, "session-from-d1");
     Database old_db(old_path, Database::Mode::read_only);
     EXPECT_FALSE(sync_has_pending(old_db));
     Database new_db(second.data, Database::Mode::read_only, "second-password");

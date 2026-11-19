@@ -744,6 +744,7 @@ D1SyncWorker::Config worker_config(
     config.database_password = {};
     config.vault = "Test";
     config.machine = std::string(sync_machine);
+    config.desktop_host = true;
     config.transport = [scripted](
                            const std::string& url, const std::string& body,
                            const std::vector<std::string>& headers) {
@@ -752,34 +753,50 @@ D1SyncWorker::Config worker_config(
     return config;
 }
 
-TEST(D1WorkerTest, SendFailureRetainsAndRetries) {
+TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
     test::TestWorkspace workspace;
     const auto path = workspace.root() / "w.sqlite3";
     create_empty_workspace_session_database(path);
+    const auto first = sync_make_record("note.create", {{"path", {"A"}}, {"item", "folder"}});
+    const auto second = sync_make_record("note.create", {{"path", {"B"}}, {"item", "folder"}});
     {
         Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
-        sync_queue_append(database, sync_make_record("note.create", {{"path", {"A"}}}));
+        add_d1_key(database);
+        sync_queue_append(database, first);
+        sync_queue_append(database, second);
     }
     auto scripted = std::make_shared<ScriptedTransport>();
-    // Run1 send discovery, send fail, receive empty.
-    // Run2 send discovery, send success, receive empty.
     scripted->responses = {
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
-        {200, error_response("transport down").dump()},
-        {200, queue_rows_success({}).dump()},
+        {200, error_response("Exceeded maximum DB size.").dump()},
+        {200, queue_rows_success({{7, 1, 1,
+            sync_make_record("note.create", {{"path", {"Incoming"}}, {"item", "folder"}})}}).dump()},
+        {200, batch_success(1).dump()},
         {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
+        {200, batch_success(1).dump()},
         {200, batch_success(1).dump()},
         {200, queue_rows_success({}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
+    EXPECT_FALSE(worker.stopped());
     {
         Database database(path, Database::Mode::read_only);
-        EXPECT_EQ(sync_queue_list(database).size(), 1u);
+        const auto pending = sync_queue_list(database);
+        ASSERT_EQ(pending.size(), 2u);
+        EXPECT_EQ(pending[0].record, first);
+        EXPECT_EQ(pending[1].record, second);
+        EXPECT_TRUE(sync_note_find(database, {"Incoming"}));
     }
+    ASSERT_EQ(scripted->bodies.size(), 4u);
+    EXPECT_NE(scripted->bodies[1].find("INSERT INTO"), std::string::npos);
+    EXPECT_NE(scripted->bodies[2].find("SELECT rowid"), std::string::npos);
+    const auto ack = nlohmann::json::parse(scripted->bodies[3])["batch"][0];
+    EXPECT_EQ(ack["sql"], "DELETE FROM \"q/Test/mac\" WHERE rowid<=?1");
+    EXPECT_EQ(ack["params"], nlohmann::json::array({"7"}));
+    for (const auto& body : scripted->bodies)
+        EXPECT_EQ(body.find("DROP TABLE"), std::string::npos);
+
     worker.run_once();
     {
         Database database(path, Database::Mode::read_only);
@@ -1144,7 +1161,9 @@ TEST(D1WorkerTest, EvictionDropsAtMostOneEligibleTable) {
         {200, batch_success(1).dump()},
         {200, queue_rows_success({}).dump()},
     };
-    D1SyncWorker worker(worker_config(path, scripted));
+    auto config = worker_config(path, scripted);
+    config.desktop_host = false;
+    D1SyncWorker worker(std::move(config));
     worker.run_once(); // Triggers eviction, retains work.
     {
         Database database(path, Database::Mode::read_only);

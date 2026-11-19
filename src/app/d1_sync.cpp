@@ -169,7 +169,7 @@ bool D1SyncWorker::send_pass(std::stop_token stop) {
                 static_cast<std::int64_t>(pieces.size()), pieces[i]);
             if (error) {
                 log_warn("D1 sync send failed: " + error->message);
-                if (error->failure == D1Client::Failure::full_database)
+                if (!config_.desktop_host && error->failure == D1Client::Failure::full_database)
                     handle_full_database(client);
                 ok = false;
                 break;

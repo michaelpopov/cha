@@ -61,6 +61,14 @@ std::map<std::string, std::string> forum_names(const Workspace& workspace) {
     return names;
 }
 
+void ensure_forum_rows(Database& database, const std::map<std::string, std::string>& forums) {
+    for (const auto& [forum_id, name] : forums) {
+        database.prepare(
+            "INSERT INTO forums (forum_id) VALUES (?1) ON CONFLICT DO NOTHING",
+            forum_id).run();
+    }
+}
+
 std::string allocate_character_id(
     const Workspace& workspace, const WorkspaceConfigEditor& editor) {
     for (std::size_t suffix = 1;; ++suffix) {
@@ -1473,6 +1481,8 @@ struct WorkspaceConfigStore::Impl {
     std::optional<RuntimePrivateRoot> tree;
     // Machine name carried from app.toml; empty means this vault never records.
     std::string sync_machine;
+    // Desktop adds forum rows at each config commit and at open; cha-daemon does not.
+    bool desktop_host = false;
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
@@ -1552,7 +1562,9 @@ struct WorkspaceConfigStore::Impl {
             apply_config_changes(*database, rows, candidate_rows);
             record_config_edit(*database, sync_machine, rows, candidate_rows);
         }
-        note_sync_forums(*database, forum_names(*workspace));
+        const auto forums = forum_names(*workspace);
+        note_sync_forums(*database, forums);
+        if (desktop_host) ensure_forum_rows(*database, forums);
         if (initialize_prompts && consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
             fail_path("Forced SQLite commit failure");
         }
@@ -1622,12 +1634,8 @@ struct WorkspaceConfigStore::Impl {
             }
             if (surviving_forums) {
                 prune_orphan_sessions(*database, *surviving_forums);
-                for (const auto& [forum_id, name] : candidate_forums) {
-                    database->prepare(
-                        "INSERT INTO forums (forum_id) VALUES (?1) ON CONFLICT DO NOTHING",
-                        forum_id).run();
-                }
             }
+            if (desktop_host || surviving_forums) ensure_forum_rows(*database, candidate_forums);
             if (clear_outgoing) sync_clear_outgoing(*database);
             if (record_sync) record_config_edit(*database, sync_machine, committed_rows, rows);
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
@@ -2192,9 +2200,11 @@ void WorkspaceConfigStore::MaintenanceGuard::reopen() {
 std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     const std::filesystem::path& database_path,
     std::string database_password,
-    std::string sync_machine) {
+    std::string sync_machine,
+    bool desktop_host) {
     auto impl = std::make_unique<Impl>();
     impl->sync_machine = std::move(sync_machine);
+    impl->desktop_host = desktop_host;
     impl->database_path = normalize_path(database_path);
     impl->database_password = std::move(database_password);
     (void)require_existing_directory(

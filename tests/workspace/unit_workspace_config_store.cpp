@@ -948,14 +948,30 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFoldersFollowCommittedCatalogAndUnd
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFolderFailureRollsBackConfigurationAndSkipsUnrelatedEdits) {
-    auto store = open_store();
+    {
+        Database db(database(), Database::Mode::read_write);
+        db.prepare("INSERT INTO config VALUES (?1, ?2)", "system/keys/api_key_1/config.toml",
+            "display_name = \"D1\"\ntype = \"D1\"\naccount_id = \"a\"\ndatabase_id = \"d\"\napi_token = \"t\"\n").run();
+    }
+    auto store = WorkspaceConfigStore::open(database(), {}, "mac", true);
+    const auto published = store->snapshot();
     const auto before = nlohmann::json(store->list_note_items());
     const auto config = config_contents(database());
+    Database reader(database(), Database::Mode::read_only);
+    const auto outbox = sync_queue_list(reader);
+    ASSERT_EQ(outbox.size(), 1u);
     for (const auto fault : {WorkspaceConfigFault::sqlite_begin, WorkspaceConfigFault::sqlite_write, WorkspaceConfigFault::sqlite_commit}) {
         force_next_workspace_config_fault(fault);
         EXPECT_THROW((void)store->create_forum("Research", "reader"), std::runtime_error);
         EXPECT_EQ(nlohmann::json(store->list_note_items()), before);
         EXPECT_EQ(config_contents(database()), config);
+        EXPECT_EQ(store->snapshot(), published);
+        auto row = reader.prepare("SELECT 1 FROM forums WHERE forum_id='forum_1'");
+        EXPECT_FALSE(row.step());
+        EXPECT_TRUE(std::ranges::equal(sync_queue_list(reader), outbox,
+            [](const auto& left, const auto& right) {
+                return left.rowid == right.rowid && left.record == right.record;
+            }));
     }
     {
         Database db(database(), Database::Mode::read_write);

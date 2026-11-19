@@ -234,7 +234,7 @@ Application::Impl::Impl(
       settings(std::move(selected_settings)),
       current_vault_(selected_command.vault),
       store(WorkspaceConfigStore::open(
-          command.vault.data, active_password, command.machine)),
+          command.vault.data, active_password, command.machine, !command.chaweb_host)),
       api_keys(std::make_unique<ApiKeyStore>(
           *store,
           command.config_directory / "api-keys.json")),
@@ -417,6 +417,7 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
         config.database_password = active_password;
         config.vault = current_vault_.get().name;
         config.machine = command.machine;
+        config.desktop_host = !command.chaweb_host;
         config.transport = d1_test_transport;
         config.store = store.get();
         config.live_sessions = live_sessions.get();

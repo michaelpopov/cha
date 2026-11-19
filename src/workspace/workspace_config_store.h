@@ -214,7 +214,8 @@ public:
     static std::unique_ptr<WorkspaceConfigStore> open(
         const std::filesystem::path& database_path,
         std::string database_password = {},
-        std::string sync_machine = {});
+        std::string sync_machine = {},
+        bool desktop_host = false);
 
     ~WorkspaceConfigStore();
     WorkspaceConfigStore(const WorkspaceConfigStore&) = delete;
