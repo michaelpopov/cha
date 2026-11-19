@@ -4780,7 +4780,7 @@ TEST_F(BridgeRouterTest, SuccessfulDeleteDoesNotDependOnAFollowupListing) {
     EXPECT_FALSE(remaining.step());
 }
 
-TEST_F(BridgeRouterTest, CompressionHasNoTransferLimitButKeepsTheIdleTimeout) {
+TEST_F(BridgeRouterTest, CompressionOverridesConfiguredTransferTimeoutAndKeepsIdleTimeout) {
     bootstrap_epoch();
     const auto note = compression_source(*application_, epoch_);
     MockHttpServer slow({"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"

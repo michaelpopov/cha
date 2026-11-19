@@ -100,7 +100,7 @@ SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, Open
     const WorkspacePrompt& prompt, NoteRequestKind kind = NoteRequestKind::plain,
     std::string_view provider_id = {}, const std::string& effort = {}) {
     auto provider = note_editing_provider(workspace, provider_id, effort);
-    provider.config.timeout_s = 0;
+    provider.config.timeout_s = 7200;
     bind_note_api_key(provider.config, api_keys);
     if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
         && oauth->status().state != OpenAiOAuthState::connected)

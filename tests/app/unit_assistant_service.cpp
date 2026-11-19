@@ -1120,8 +1120,12 @@ TEST(AssistantService, EventsRejectArgumentsWrongIdentityStaleContextAndCancella
 TEST(AssistantService, EventsRedactSecretsAndPathsAndBoundTheResult) {
     ServiceHarness harness;
     harness.store().apply_api_key_create("api_key_1", "Secret", "event-secret-key-value");
+    harness.store().apply_d1_storage_create({
+        .id = "api_key_2", .display_name = "D1", .account_id = "account",
+        .database_id = "database", .api_token = "event-d1-token-value"});
     const auto path = harness.store().workspace_path().string();
-    harness.store().append_event(EventSeverity::warning, "Failure event-secret-key-value at " + path);
+    harness.store().append_event(EventSeverity::warning,
+        "Failure event-secret-key-value event-d1-token-value at " + path);
     harness.pending_notes = Json::array({{
         {"note_id", 1}, {"name", "event-secret-key-value " + path},
         {"audio", {{"pending", true}, {"attempt_id", 9}}},
@@ -1129,6 +1133,7 @@ TEST(AssistantService, EventsRedactSecretsAndPathsAndBoundTheResult) {
     }});
     const auto redacted = harness.run("assistant_events", Json::object());
     EXPECT_EQ(redacted.dump().find("event-secret-key-value"), std::string::npos);
+    EXPECT_EQ(redacted.dump().find("event-d1-token-value"), std::string::npos);
     EXPECT_EQ(redacted.dump().find(path), std::string::npos);
     EXPECT_NE(redacted.dump().find("[REDACTED]"), std::string::npos);
     EXPECT_NE(redacted.dump().find("[path]"), std::string::npos);

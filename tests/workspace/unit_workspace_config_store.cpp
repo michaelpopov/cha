@@ -3951,6 +3951,30 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RepairOfOmittedProviderKeepsItsWrittenKe
     EXPECT_EQ(stored_config(database(), "system/providers/relay/config.toml"), "");
 }
 
+TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyRejectsProviderBasePathChangeWithSavedKey) {
+    auto store = open_store();
+    store->apply_api_key_create("api_key_1", "Models", "model-key");
+    store->apply_provider_update("second", "Second", {
+        .host = "gateway.example", .port = 443, .base_path = "/models",
+        .mode = Mode::net, .model = "fake", .api_key_id = "api_key_1", .https = true,
+    });
+    const std::string path = "system/providers/second/config.toml";
+    const auto before = stored_config(database(), path);
+    const auto revision = store->config_revision();
+    const auto result = store->apply_config(
+        revision,
+        std::vector<WorkspaceConfigChange>{{
+            .path = path,
+            .operation = WorkspaceConfigOperation::set,
+            .key = "base_path",
+            .value = std::string("/other-service"),
+        }});
+    EXPECT_FALSE(result.committed);
+    EXPECT_EQ(result.error, WorkspaceConfigApplyError::credential_destination_protected);
+    EXPECT_EQ(stored_config(database(), path), before);
+    EXPECT_EQ(store->config_revision(), revision);
+}
+
 void expect_package_seed_subscription(const ModelBackendConfig& config) {
     EXPECT_EQ(config.auth, ProviderAuth::openai_subscription);
     EXPECT_EQ(config.host, "chatgpt.com");

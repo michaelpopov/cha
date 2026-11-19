@@ -1294,7 +1294,7 @@ std::string provider_credential_destination(const ModelBackendConfig& config) {
         host = '[' + host + ']';
     }
     return std::string(config.https ? "https://" : "http://") + host + ':'
-        + std::to_string(config.port);
+        + std::to_string(config.port) + config.base_path;
 }
 
 std::string url_credential_destination(std::string_view url) {
@@ -1374,6 +1374,7 @@ std::set<CredentialPair> credential_destination_pairs(
             ModelBackendConfig config;
             config.host = text(table, "host");
             config.port = table["port"].value_or(0);
+            config.base_path = text(table, "base_path");
             config.https = table["https"].value_or(false);
             add_credential_pair(
                 pairs,

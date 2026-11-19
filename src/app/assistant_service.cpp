@@ -189,6 +189,9 @@ public:
                 if (const auto& r2 = snapshot->r2_storage()) {
                     if (!r2->secret_key.empty()) secrets_.push_back(r2->secret_key);
                 }
+                if (const auto& d1 = snapshot->d1_storage()) {
+                    if (!d1->api_token.empty()) secrets_.push_back(d1->api_token);
+                }
             }
         } catch (const std::exception&) {
         }
