@@ -23,7 +23,7 @@ void initialize_sqlite_once() {
         sqlite3_randomness(1, &seed);
     });
     if (status != SQLITE_OK) {
-        throw std::runtime_error(
+        throw SqliteError(status,
             std::string("Failed to initialize SQLite: ")
             + sqlite3_errstr(status));
     }
@@ -53,7 +53,7 @@ SqliteDatabase::SqliteDatabase(
             sqlite3_close_v2(handle_);
             handle_ = nullptr;
         }
-        throw std::runtime_error(
+        throw SqliteError(result,
             "Failed to open session database '" + path_ + "': " + detail
             + " (SQLite code " + std::to_string(result) + ")");
     }
@@ -131,7 +131,7 @@ void SqliteDatabase::rollback_noexcept() noexcept {
     const std::string message = detail.empty()
         ? sqlite3_errmsg(handle_)
         : std::string(detail);
-    throw std::runtime_error(
+    throw SqliteError(code,
         "Session database '" + path_ + "': " + message
         + " (SQLite code " + std::to_string(code) + ")");
 }

@@ -209,9 +209,11 @@ std::optional<std::int64_t> integer_field(const Json& row, std::string_view name
 
 } // namespace
 
-std::optional<D1Client::Error> D1Client::create_queue_table(std::string_view table) {
+std::optional<D1Client::Error> D1Client::create_queue_table(std::string_view table, bool v2) {
     const std::string sql = "CREATE TABLE IF NOT EXISTS " + sync_escape_identifier(table)
-        + " (piece INTEGER NOT NULL, pieces INTEGER NOT NULL, record TEXT NOT NULL)";
+        + (v2 ? " (seq INTEGER PRIMARY KEY, op_id TEXT NOT NULL, piece INTEGER NOT NULL, "
+                "pieces INTEGER NOT NULL, record TEXT NOT NULL, UNIQUE (op_id, piece))"
+              : " (piece INTEGER NOT NULL, pieces INTEGER NOT NULL, record TEXT NOT NULL)");
     BatchResult result = run_batch(query_url(), transport_, credentials_,
         nlohmann::json::array({statement(sql, nlohmann::json::array())}));
     return result.error;
@@ -233,12 +235,12 @@ std::pair<std::vector<std::string>, std::optional<D1Client::Error>> D1Client::li
 }
 
 std::pair<D1Client::VaultQueues, std::optional<D1Client::Error>> D1Client::list_vault_queues(
-    std::string_view vault, std::string_view machine) {
+    std::string_view vault, std::string_view machine, bool v2) {
     auto [tables, error] = list_tables();
     if (error) return {{}, std::move(error)};
     VaultQueues queues;
     for (auto& table : tables) {
-        const auto name = sync_parse_queue_table(table);
+        const auto name = sync_parse_queue_table(table, v2);
         if (!name || !sync_same_vault(name->vault, vault)) continue;
         if (sync_same_machine(name->machine, machine)) queues.local = std::move(table);
         else queues.recipients.push_back(std::move(table));
@@ -284,16 +286,86 @@ std::optional<D1Client::Error> D1Client::insert_piece(
     const std::vector<std::string>& recipients,
     std::int64_t piece,
     std::int64_t pieces,
-    std::string_view record_text) {
+    std::string_view record_text,
+    std::string_view op_id) {
     if (recipients.empty()) return std::nullopt;
     nlohmann::json batch = nlohmann::json::array();
     for (const auto& table : recipients) {
-        const std::string sql = "INSERT INTO " + sync_escape_identifier(table)
-            + " (piece, pieces, record) VALUES (?1, ?2, ?3)";
-        batch.push_back(statement(sql, {std::to_string(piece), std::to_string(pieces), record_text}));
+        const std::string insert = "INSERT INTO " + sync_escape_identifier(table);
+        if (op_id.empty()) {
+            batch.push_back(statement(insert + " (piece, pieces, record) VALUES (?1, ?2, ?3)",
+                {std::to_string(piece), std::to_string(pieces), record_text}));
+        } else {
+            batch.push_back(statement(insert + " (op_id, piece, pieces, record) VALUES (?1, ?2, ?3, ?4)"
+                " ON CONFLICT (op_id, piece) DO NOTHING",
+                {op_id, std::to_string(piece), std::to_string(pieces), record_text}));
+        }
     }
     BatchResult result = run_batch(query_url(), transport_, credentials_, batch);
     return result.error;
+}
+
+std::pair<std::vector<D1Client::ReadyOperation>, std::optional<D1Client::Error>>
+D1Client::read_ready(std::string_view table, int limit) {
+    const int read_limit = std::clamp(limit, 1, 50);
+    const std::string sql = "SELECT seq, op_id, pieces, CASE WHEN pieces=1 THEN record END AS record FROM "
+        + sync_escape_identifier(table) + " WHERE piece=pieces ORDER BY seq LIMIT ?1";
+    const auto result = run_batch(query_url(), transport_, credentials_,
+        Json::array({statement(sql, {std::to_string(read_limit)})}));
+    if (result.error) return {{}, result.error};
+    std::vector<ReadyOperation> operations;
+    try {
+        const auto& rows = result_rows(result);
+        if (rows.size() > static_cast<std::size_t>(read_limit))
+            return {{}, Error{Failure::protocol, "D1 queue returned more rows than requested."}};
+        std::optional<std::int64_t> previous;
+        for (const auto& row : rows) {
+            const auto seq = integer_field(row, "seq");
+            if (!seq || (previous && *seq <= *previous))
+                return {{}, Error{Failure::protocol, "Invalid D1 queue order."}};
+            previous = seq;
+            ReadyOperation operation{
+                .op_id = row.at("op_id").get<std::string>(),
+                .pieces = integer_field(row, "pieces").value_or(0)};
+            const auto record = row.find("record");
+            if (record != row.end() && record->is_string())
+                operation.record = record->get<std::string>();
+            operations.push_back(std::move(operation));
+        }
+    } catch (const std::exception&) {
+        return {{}, Error{Failure::protocol, "Invalid D1 queue headers."}};
+    }
+    return {std::move(operations), std::nullopt};
+}
+
+std::pair<std::optional<std::string>, std::optional<D1Client::Error>> D1Client::read_piece(
+    std::string_view table, const ReadyOperation& operation, std::int64_t piece) {
+    const std::string sql = "SELECT pieces, record FROM " + sync_escape_identifier(table)
+        + " WHERE op_id=?1 AND piece=?2";
+    const auto result = run_batch(query_url(), transport_, credentials_,
+        Json::array({statement(sql, {operation.op_id, std::to_string(piece)})}));
+    if (result.error) return {std::nullopt, result.error};
+    try {
+        const auto& rows = result_rows(result);
+        if (rows.size() != 1 || integer_field(rows[0], "pieces") != operation.pieces)
+            return {};
+        const auto record = rows[0].find("record");
+        if (record == rows[0].end() || !record->is_string()) return {};
+        return {record->get<std::string>(), std::nullopt};
+    } catch (const std::exception&) {
+        return {std::nullopt, Error{Failure::protocol, "Invalid D1 piece result."}};
+    }
+}
+
+std::optional<D1Client::Error> D1Client::delete_operations(
+    std::string_view table, const std::vector<std::string>& ids) {
+    if (ids.empty()) return std::nullopt;
+    if (ids.size() > 50) return Error{Failure::protocol, "Too many D1 operation IDs to acknowledge."};
+    std::string sql = "DELETE FROM " + sync_escape_identifier(table) + " WHERE op_id IN (?";
+    for (std::size_t i = 1; i < ids.size(); ++i) sql += ", ?";
+    sql += ')';
+    return run_batch(query_url(), transport_, credentials_,
+        Json::array({statement(sql, ids)})).error;
 }
 
 std::optional<D1Client::Error> D1Client::delete_through(

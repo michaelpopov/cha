@@ -5,10 +5,18 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
 namespace cha::storage {
+
+class SqliteError : public std::runtime_error {
+public:
+    SqliteError(int code, const std::string& message)
+        : std::runtime_error(message), code(code) {}
+    int code;
+};
 
 class SqliteStatement;
 

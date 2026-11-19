@@ -58,7 +58,9 @@ void sync_record_chat_initial(
     storage::SqliteDatabase& database, std::int64_t session_key);
 
 // Applies one record in a transaction without recording outgoing work.
-void sync_apply_chat_record(
-    storage::SqliteDatabase& database, const nlohmann::json& record);
+// Returns false when its v2 receipt already exists.
+bool sync_apply_chat_record(
+    storage::SqliteDatabase& database, const nlohmann::json& record,
+    std::string_view op_id = {});
 
 } // namespace cha

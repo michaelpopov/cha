@@ -31,6 +31,11 @@ public:
         std::optional<std::string> local;
         std::vector<std::string> recipients;
     };
+    struct ReadyOperation {
+        std::string op_id;
+        std::int64_t pieces{};
+        std::optional<std::string> record;
+    };
     enum class Failure {
         transport,
         http_status,
@@ -58,12 +63,12 @@ public:
     void set_endpoint_for_tests(std::string url) { endpoint_override_ = std::move(url); }
 
     // Creates one queue table when absent.
-    [[nodiscard]] std::optional<Error> create_queue_table(std::string_view table);
+    [[nodiscard]] std::optional<Error> create_queue_table(std::string_view table, bool v2 = false);
     // Names every table in the D1 database.
     [[nodiscard]] std::pair<std::vector<std::string>, std::optional<Error>> list_tables();
     // Finds the local queue and other machines' queues for this vault.
     [[nodiscard]] std::pair<VaultQueues, std::optional<Error>> list_vault_queues(
-        std::string_view vault, std::string_view machine);
+        std::string_view vault, std::string_view machine, bool v2 = false);
     // Reads up to limit rows in rowid order, starting after after_rowid.
     [[nodiscard]] std::pair<std::vector<Row>, std::optional<Error>> read_queue(
         std::string_view table, int limit, std::int64_t after_rowid = 0);
@@ -72,7 +77,16 @@ public:
         const std::vector<std::string>& recipients,
         std::int64_t piece,
         std::int64_t pieces,
-        std::string_view record_text);
+        std::string_view record_text,
+        std::string_view op_id = {});
+    // Reads the head in final-piece sequence order. Multipart headers omit record.
+    [[nodiscard]] std::pair<std::vector<ReadyOperation>, std::optional<Error>> read_ready(
+        std::string_view table, int limit);
+    // No record and no error means the requested piece is missing or inconsistent.
+    [[nodiscard]] std::pair<std::optional<std::string>, std::optional<Error>> read_piece(
+        std::string_view table, const ReadyOperation& operation, std::int64_t piece);
+    [[nodiscard]] std::optional<Error> delete_operations(
+        std::string_view table, const std::vector<std::string>& ids);
     // Deletes the handled prefix of one queue.
     [[nodiscard]] std::optional<Error> delete_through(
         std::string_view table, std::int64_t last_rowid);

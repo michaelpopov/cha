@@ -1601,7 +1601,8 @@ struct WorkspaceConfigStore::Impl {
         std::optional<UndoRecord> new_undo = {},
         bool record_sync = true,
         const std::set<std::string>* surviving_forums = nullptr,
-        bool clear_outgoing = false) {
+        bool clear_outgoing = false,
+        std::string_view op_id = {}) {
         const std::lock_guard publication_lock(snapshot_mutex);
         bool notes_changed = false;
         const bool config_changed = committed_rows != rows;
@@ -1610,6 +1611,7 @@ struct WorkspaceConfigStore::Impl {
                 fail_path("Forced SQLite begin failure");
             }
             storage::SqliteTransaction transaction(*database);
+            if (!op_id.empty() && sync_seen(*database, op_id)) return false;
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_write)) {
                 fail_path("Forced SQLite write failure");
             }
@@ -1638,6 +1640,7 @@ struct WorkspaceConfigStore::Impl {
             if (desktop_host || surviving_forums) ensure_forum_rows(*database, candidate_forums);
             if (clear_outgoing) sync_clear_outgoing(*database);
             if (record_sync) record_config_edit(*database, sync_machine, committed_rows, rows);
+            if (!op_id.empty()) sync_record_receipt(*database, op_id);
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
                 fail_path("Forced SQLite commit failure");
             }
@@ -1816,7 +1819,8 @@ struct WorkspaceConfigStore::Impl {
     SyncConfigApplyOutcome apply_received_config_edit(
         const std::vector<ConfigFile>& set_rows,
         const std::vector<std::string>& delete_names,
-        const std::function<bool()>& begin_maintenance) {
+        const std::function<bool()>& begin_maintenance,
+        std::string_view op_id) {
         std::unique_lock lock(mutex);
         const std::shared_ptr<const Workspace> published = snapshot();
         if (!published || published->root() != tree->workspace()) {
@@ -1838,14 +1842,23 @@ struct WorkspaceConfigStore::Impl {
             preserve_destination_d1(files, destination);
             if (const auto failure = load_candidate(
                     files, WorkspaceConfigApplyError::validation_failure, candidate)) {
-                log_warn("Skipped incoming configuration change: " + failure->error_message);
+                if (op_id.empty())
+                    log_warn("Skipped incoming configuration change: " + failure->error_message);
                 return {.applied = false};
             }
         } catch (const std::runtime_error& error) {
-            log_warn(std::string("Skipped incoming configuration change: ") + error.what());
+            if (op_id.empty())
+                log_warn(std::string("Skipped incoming configuration change: ") + error.what());
             return {.applied = false};
         }
-        if (committed_rows == candidate.rows) return {.applied = true};
+        if (committed_rows == candidate.rows) {
+            if (!op_id.empty()) {
+                storage::SqliteTransaction transaction(*database);
+                if (!sync_seen(*database, op_id)) sync_record_receipt(*database, op_id);
+                transaction.commit();
+            }
+            return {.applied = true};
+        }
         if (begin_maintenance) {
             const auto base_revision = revision;
             // Draining sessions may wait for an actor that still needs the store.
@@ -1859,7 +1872,7 @@ struct WorkspaceConfigStore::Impl {
         for (const auto& forum : candidate.workspace->forums()) surviving.insert(forum.id);
         const bool notes_changed = commit_and_publish(
             committed_rows, candidate.rows, std::move(candidate.workspace), {},
-            UndoUpdate::clear, {}, false, &surviving);
+            UndoUpdate::clear, {}, false, &surviving, false, op_id);
         return {.applied = true, .notes_changed = notes_changed};
     }
 
@@ -2265,8 +2278,9 @@ void WorkspaceConfigStore::set_sync_machine(std::string machine) {
 SyncConfigApplyOutcome WorkspaceConfigStore::apply_sync_config_edit(
     const std::vector<ConfigFile>& set_rows,
     const std::vector<std::string>& delete_names,
-    const std::function<bool()>& begin_maintenance) {
-    return impl_->apply_received_config_edit(set_rows, delete_names, begin_maintenance);
+    const std::function<bool()>& begin_maintenance,
+    std::string_view op_id) {
+    return impl_->apply_received_config_edit(set_rows, delete_names, begin_maintenance, op_id);
 }
 
 void WorkspaceConfigStore::apply_character_picture(

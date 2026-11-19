@@ -243,7 +243,8 @@ public:
     [[nodiscard]] SyncConfigApplyOutcome apply_sync_config_edit(
         const std::vector<ConfigFile>& set_rows,
         const std::vector<std::string>& delete_names,
-        const std::function<bool()>& begin_maintenance = {});
+        const std::function<bool()>& begin_maintenance = {},
+        std::string_view op_id = {});
     void apply_character_picture(
         std::string_view character_id,
         std::string_view filename,

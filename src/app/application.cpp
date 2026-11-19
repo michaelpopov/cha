@@ -228,7 +228,8 @@ Application::Impl::Impl(
     const ApplicationCommand& selected_command,
     std::string selected_vault_password,
     RuntimeSettings selected_settings,
-    D1Client::Transport d1_transport)
+    D1Client::Transport d1_transport,
+    bool d1_v2)
     : command(selected_command),
       active_password(std::move(selected_vault_password)),
       settings(std::move(selected_settings)),
@@ -337,7 +338,8 @@ Application::Impl::Impl(
               const MaintenanceContext& context, const std::atomic_bool& cancelled) {
               return assistant->execute(name, arguments, context, cancelled);
           }),
-      d1_test_transport(std::move(d1_transport)) {
+      d1_test_transport(std::move(d1_transport)),
+      d1_v2_for_tests(d1_v2) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         .identity = {std::string(entrance_id), std::string(welcome_id)},
@@ -419,6 +421,7 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
         config.machine = command.machine;
         config.desktop_host = !command.chaweb_host;
         config.transport = d1_test_transport;
+        config.v2_for_tests = d1_v2_for_tests;
         config.store = store.get();
         config.live_sessions = live_sessions.get();
         config.application_stopping = [this] { return stopping_flag.load(); };
@@ -565,7 +568,8 @@ std::unique_ptr<Application> Application::open(
     const ApplicationCommand& command,
     std::string vault_password,
     RuntimeSettings settings,
-    D1Client::Transport d1_transport_for_tests) {
+    D1Client::Transport d1_transport_for_tests,
+    bool d1_v2_for_tests) {
     for (const std::string& warning : command.warnings) log_warn(warning);
     if (command.vault.password_protected && vault_password.empty()) {
         throw VaultPasswordError(
@@ -578,7 +582,7 @@ std::unique_ptr<Application> Application::open(
     return std::unique_ptr<Application>(new Application(
         std::make_unique<Impl>(
             command, std::move(vault_password), std::move(settings),
-            std::move(d1_transport_for_tests))));
+            std::move(d1_transport_for_tests), d1_v2_for_tests)));
 }
 
 ApplicationBootstrap Application::bootstrap() {

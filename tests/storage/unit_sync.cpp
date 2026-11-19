@@ -160,6 +160,11 @@ TEST_F(SyncDatabaseTest, MigrationPreservesContentAndInitializesFlags) {
 
 TEST_F(SyncDatabaseTest, AbortedOperationRollsBackItsRecord) {
     add_d1_key(*database_);
+    {
+        storage::SqliteTransaction transaction(*database_);
+        ensure_sync_schema(*database_, true);
+        transaction.commit();
+    }
     const auto folder = note_create(
         *database_, std::nullopt, NoteItemKind::folder, "Books", sync_machine);
     database_->execute(
@@ -170,6 +175,10 @@ TEST_F(SyncDatabaseTest, AbortedOperationRollsBackItsRecord) {
     EXPECT_EQ(sync_note_find(*database_, {"Books"}), folder.id);
     ASSERT_EQ(queue_json(*database_).size(), 1u);
     EXPECT_EQ(queue_json(*database_)[0]["kind"], "note.create");
+    EXPECT_TRUE(sync_seen(*database_, sync_queue_list(*database_).front().op_id));
+    auto receipts = database_->prepare("SELECT count(*) FROM sync_seen");
+    ASSERT_TRUE(receipts.step());
+    EXPECT_EQ(receipts.integer(0), 1);
 }
 
 TEST_F(SyncDatabaseTest, DisconnectedOperationsWriteNoRecordsOrFlags) {
@@ -1531,6 +1540,8 @@ TEST_F(SyncConfigTest, ReceiveMultiForumRemovalPrunesSessionsAtomically) {
     std::map<std::string, std::int64_t> forum_keys{{"lobby", 1}, {"second", 2}};
     {
         Database setup(database, Database::Mode::read_write);
+        storage::SqliteTransaction transaction(setup);
+        ensure_sync_schema(setup, true);
         for (const auto& [id, key] : forum_keys) {
             setup.prepare("INSERT INTO forums(forum_key,forum_id) VALUES (?1,?2)", key, id).run();
             setup.prepare(
@@ -1538,6 +1549,7 @@ TEST_F(SyncConfigTest, ReceiveMultiForumRemovalPrunesSessionsAtomically) {
                 "next_entry_id,next_request_id) VALUES (?1,?2,'Chat',0,1,1,1)",
                 key, "20261109-120000-" + id).run();
         }
+        transaction.commit();
     }
     auto store = open_connected(database);
     std::vector<std::string> removed;
@@ -1549,13 +1561,17 @@ TEST_F(SyncConfigTest, ReceiveMultiForumRemovalPrunesSessionsAtomically) {
         }
     }
     ASSERT_FALSE(removed.empty());
-    const auto deferred = store->apply_sync_config_edit({}, removed, [] { return false; });
+    const std::string op_id(32, 'a');
+    const auto deferred = store->apply_sync_config_edit({}, removed, [] { return false; }, op_id);
     EXPECT_TRUE(deferred.retry);
     EXPECT_FALSE(deferred.applied);
+    Database check(database, Database::Mode::read_only);
+    EXPECT_FALSE(sync_seen(check, op_id));
+    EXPECT_TRUE(store->snapshot()->find_forum("second"));
     const auto outcome = store->apply_sync_config_edit({}, removed, [&] {
         // Maintenance may acquire the store lock while active sessions drain.
         return !store->list_note_items().empty();
-    });
+    }, op_id);
     EXPECT_TRUE(outcome.applied);
     EXPECT_TRUE(outcome.notes_changed);
     const auto rows = config_map(database);
@@ -1564,7 +1580,7 @@ TEST_F(SyncConfigTest, ReceiveMultiForumRemovalPrunesSessionsAtomically) {
         EXPECT_FALSE(
             name == "forums/second" || name.starts_with("forums/second/"));
     }
-    Database check(database, Database::Mode::read_only);
+    EXPECT_TRUE(sync_seen(check, op_id));
     auto sessions = check.prepare("SELECT forum_id FROM sessions s JOIN forums f USING(forum_key)");
     std::vector<std::string> remaining;
     while (sessions.step()) remaining.push_back(sessions.text(0));

@@ -50,10 +50,10 @@ bool is_key_config(std::string_view name) {
 }
 
 nlohmann::json note_fields(
-    storage::SqliteDatabase& database, std::int64_t id) {
+    storage::SqliteDatabase& database, std::int64_t id, bool v2) {
     auto query = database.prepare(
         "SELECT n.content_json, c.content_json, n.scroll_top, n.read_only, "
-        "l1.content_json, l2.content_json, n.summary_excluded, l3.content_json "
+        "l1.content_json, l2.content_json, n.summary_excluded, l3.content_json, n.folder_summary "
         "FROM note_items n LEFT JOIN note_items c ON c.parent_id=n.id AND c.compressed=1 AND c.level=0 "
         "LEFT JOIN note_items l1 ON l1.parent_id=n.id AND l1.compressed=1 AND l1.level=1 "
         "LEFT JOIN note_items l2 ON l2.parent_id=n.id AND l2.compressed=1 AND l2.level=2 "
@@ -74,12 +74,13 @@ nlohmann::json note_fields(
     fields["summary_excluded"] = query.integer(6) != 0;
     if (query.is_null(7)) fields["l3_content"] = nullptr;
     else fields["l3_content"] = encode_base64(query.blob(7));
+    if (v2) fields["folder_summary"] = query.integer(8) != 0;
     return fields;
 }
 
 } // namespace
 
-void ensure_sync_schema(storage::SqliteDatabase& database) {
+void ensure_sync_schema(storage::SqliteDatabase& database, bool v2) {
     database.execute(
         "CREATE TABLE IF NOT EXISTS sync_queue (record TEXT NOT NULL) STRICT");
     if (has_table(database, "note_items") && !has_note_changed_column(database)) {
@@ -87,22 +88,54 @@ void ensure_sync_schema(storage::SqliteDatabase& database) {
             "ALTER TABLE note_items ADD COLUMN changed INTEGER NOT NULL "
             "DEFAULT 0 CHECK (changed IN (0, 1))");
     }
+    if (v2 && !sync_has_receipt_schema(database)) {
+        database.execute("ALTER TABLE sync_queue ADD COLUMN op_id TEXT");
+        database.execute("CREATE UNIQUE INDEX sync_queue_op_id ON sync_queue(op_id)");
+        database.execute("CREATE TABLE sync_seen (op_id TEXT PRIMARY KEY) STRICT");
+        database.execute("UPDATE sync_queue SET op_id=lower(hex(randomblob(16)))");
+        database.execute("INSERT INTO sync_seen(op_id) SELECT op_id FROM sync_queue");
+    }
+}
+
+bool sync_has_receipt_schema(storage::SqliteDatabase& database) {
+    return has_table(database, "sync_seen");
+}
+
+bool sync_seen(storage::SqliteDatabase& database, std::string_view op_id) {
+    return database.prepare("SELECT 1 FROM sync_seen WHERE op_id=?1", op_id).step();
+}
+
+void sync_record_receipt(storage::SqliteDatabase& database, std::string_view op_id) {
+    database.prepare("INSERT INTO sync_seen(op_id) VALUES (?1)", op_id).run();
 }
 
 void sync_queue_append(storage::SqliteDatabase& database, std::string_view record) {
-    database.prepare("INSERT INTO sync_queue (record) VALUES (?1)", record).run();
+    if (sync_has_receipt_schema(database)) {
+        database.prepare(
+            "INSERT INTO sync_queue(record, op_id) VALUES (?1, lower(hex(randomblob(16))))",
+            record).run();
+        database.prepare("INSERT INTO sync_seen(op_id) SELECT op_id FROM sync_queue WHERE rowid=?1",
+            database.last_insert_rowid()).run();
+    } else {
+        database.prepare("INSERT INTO sync_queue (record) VALUES (?1)", record).run();
+    }
 }
 
 std::vector<QueuedRecord> sync_queue_list(storage::SqliteDatabase& database) {
     if (!has_table(database, "sync_queue")) return {};
     std::vector<QueuedRecord> rows;
-    auto query = database.prepare("SELECT rowid, record FROM sync_queue ORDER BY rowid");
-    while (query.step()) rows.push_back({query.integer(0), query.text(1)});
+    const bool v2 = sync_has_receipt_schema(database);
+    auto query = database.prepare(v2 ? "SELECT rowid, record, op_id FROM sync_queue ORDER BY rowid"
+                                     : "SELECT rowid, record FROM sync_queue ORDER BY rowid");
+    while (query.step())
+        rows.push_back({query.integer(0), query.text(1), v2 ? query.text(2) : std::string{}});
     return rows;
 }
 
-void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid) {
-    database.prepare("DELETE FROM sync_queue WHERE rowid=?1", rowid).run();
+void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid,
+    std::string_view op_id) {
+    if (op_id.empty()) database.prepare("DELETE FROM sync_queue WHERE rowid=?1", rowid).run();
+    else database.prepare("DELETE FROM sync_queue WHERE op_id=?1", op_id).run();
 }
 
 void sync_clear_outgoing(storage::SqliteDatabase& database) {
@@ -199,17 +232,18 @@ std::string sync_escape_identifier(std::string_view name) {
     return escaped;
 }
 
-std::string sync_queue_table(std::string_view vault, std::string_view machine) {
-    std::string name = "q/";
+std::string sync_queue_table(std::string_view vault, std::string_view machine, bool v2) {
+    std::string name = v2 ? "q2/" : "q/";
     name += vault;
     name += '/';
     name += machine;
     return name;
 }
 
-std::optional<ParsedQueueTable> sync_parse_queue_table(std::string_view table) {
-    if (!table.starts_with("q/")) return std::nullopt;
-    const auto rest = table.substr(2);
+std::optional<ParsedQueueTable> sync_parse_queue_table(std::string_view table, bool v2) {
+    const std::string_view prefix = v2 ? "q2/" : "q/";
+    if (!table.starts_with(prefix)) return std::nullopt;
+    const auto rest = table.substr(prefix.size());
     const auto slash = rest.find('/');
     if (slash == std::string_view::npos) return std::nullopt;
     const auto vault = rest.substr(0, slash);
@@ -306,7 +340,7 @@ std::size_t sync_collect_flagged_notes(
             "SELECT changed FROM note_items WHERE id=?1 AND kind='note' AND compressed=0", id);
         if (!check.step() || check.integer(0) == 0) continue;
         if (!sync_connected(database, machine)) continue;
-        auto fields = note_fields(database, id);
+        auto fields = note_fields(database, id, sync_has_receipt_schema(database));
         fields["path"] = sync_note_path(database, id);
         sync_queue_append(database, sync_make_record("note.update", fields));
         database.prepare("UPDATE note_items SET changed=0 WHERE id=?1", id).run();

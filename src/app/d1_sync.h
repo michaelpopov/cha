@@ -2,6 +2,7 @@
 
 #include "app/d1_client.h"
 #include "chat/session_identity.h"
+#include "storage/event_storage.h"
 #include "storage/sync_storage.h"
 
 #include <atomic>
@@ -30,6 +31,7 @@ public:
         // Desktop keeps all queues when D1 is full; cha-daemon still evicts a table.
         bool desktop_host = false;
         D1Client::Transport transport;
+        bool v2_for_tests = false;
         // Reservation and store access; null in raw-DB tests.
         WorkspaceConfigStore* store = nullptr;
         // Live sessions for per-chat and global reservations; null skips reservation.
@@ -64,13 +66,24 @@ private:
     void run_loop(std::stop_token stop, bool notify_notes);
     [[nodiscard]] bool interrupted(std::stop_token stop) const;
     void halt_with_missing_table();
+    [[nodiscard]] bool using_v2() const noexcept;
+    // Provision legacy peers only at the v2 schema upgrade boundary.
+    bool prepare_v2(std::stop_token stop = {});
+    void report_v2(EventSeverity severity, const std::string& message);
+    void pause_v2(bool sending, std::string_view stage, std::string_view reason,
+        std::string_view op_id = {});
+    void resume_v2(bool sending);
     void collect_flags();
     // Returns false when the Worker halted (missing own table).
     bool send_pass(std::stop_token stop = {});
     void receive_pass(std::stop_token stop, bool notify_notes);
+    bool receive_legacy(D1Client& client, std::stop_token stop, bool notify_notes);
+    void receive_v2(D1Client& client, std::stop_token stop, bool notify_notes);
     void handle_full_database(D1Client& client);
 
     Config config_;
+    std::string send_condition_;
+    std::string receive_condition_;
     std::atomic_bool stopped_{false};
     std::jthread thread_;
 };

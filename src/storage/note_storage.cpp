@@ -161,16 +161,19 @@ std::int64_t parent_key(const std::optional<std::int64_t>& parent_id) {
 NoteError sql_failure(
     const std::runtime_error& error,
     NoteFailure failure,
-    std::string_view public_message) {
+    std::string_view public_message,
+    bool log_detail = true) {
     const std::string message = error.what();
+    const auto* sqlite = dynamic_cast<const storage::SqliteError*>(&error);
+    const int code = sqlite ? sqlite->code : 0;
     if (message.find("UNIQUE constraint failed") != std::string::npos) {
-        return NoteError(NoteFailure::invalid, std::string(duplicate_name_message));
+        return NoteError(NoteFailure::invalid, std::string(duplicate_name_message), code);
     }
     if (message.find("FOREIGN KEY constraint failed") != std::string::npos) {
-        return NoteError(NoteFailure::invalid, std::string(missing_parent_message));
+        return NoteError(NoteFailure::invalid, std::string(missing_parent_message), code);
     }
-    log_error(std::string("Note storage failed: ") + message);
-    return NoteError(failure, std::string(public_message));
+    if (log_detail) log_error(std::string("Note storage failed: ") + message);
+    return NoteError(failure, std::string(public_message), code);
 }
 
 // A damaged row fails as a storage error, so the caller logs it and uses
@@ -832,8 +835,8 @@ std::string document_markdown(const nlohmann::json& node) {
 
 } // namespace
 
-NoteError::NoteError(NoteFailure failure, std::string message)
-    : failure(failure), message_(std::move(message)) {}
+NoteError::NoteError(NoteFailure failure, std::string message, int sqlite_code)
+    : failure(failure), sqlite_code(sqlite_code), message_(std::move(message)) {}
 
 const char* NoteError::what() const noexcept {
     return message_.c_str();
@@ -2521,7 +2524,8 @@ void apply_note_versions(storage::SqliteDatabase& database, std::int64_t id,
 }
 
 void apply_insert_note(storage::SqliteDatabase& database, const nlohmann::json& record,
-    std::optional<std::int64_t> parent, std::string_view name, bool creating) {
+    std::optional<std::int64_t> parent, std::string_view name, bool creating,
+    bool v2 = false) {
     const std::string blob = apply_content(record);
     const auto document = parse_document(blob, 0);
     auto insert = database.prepare(
@@ -2533,7 +2537,7 @@ void apply_insert_note(storage::SqliteDatabase& database, const nlohmann::json& 
     insert.bind(2, apply_available_name(database, parent, name));
     bind_note_content(insert, 3, record, blob);
     insert.bind(6, record.value("summary_excluded", false) ? 1 : 0);
-    insert.bind(7, creating && record.value("folder_summary", false) ? 1 : 0);
+    insert.bind(7, (creating || v2) && record.value("folder_summary", false) ? 1 : 0);
     insert.run();
     const auto id = database.last_insert_rowid();
     apply_note_versions(database, id, record);
@@ -2560,13 +2564,13 @@ bool apply_note_create(storage::SqliteDatabase& database, const nlohmann::json& 
     return true;
 }
 
-bool apply_note_update(storage::SqliteDatabase& database, const nlohmann::json& record) {
+bool apply_note_update(storage::SqliteDatabase& database, const nlohmann::json& record, bool v2) {
     const auto path = apply_path(record);
     const auto parent = apply_parent(database, path);
     const auto id = sync_note_find(database, path);
     const auto item = id ? find_item(database, *id) : std::nullopt;
     if (!item || item->kind == NoteItemKind::folder) {
-        apply_insert_note(database, record, parent, path.back(), false);
+        apply_insert_note(database, record, parent, path.back(), false, v2);
         return true;
     }
     if (item->kind != NoteItemKind::note)
@@ -2656,13 +2660,15 @@ bool apply_note_summary_excluded(storage::SqliteDatabase& database, const nlohma
 
 } // namespace
 
-bool note_apply_record(storage::SqliteDatabase& database, const nlohmann::json& record) {
+bool note_apply_record(storage::SqliteDatabase& database, const nlohmann::json& record,
+    std::string_view op_id) {
     try {
         const std::string kind = record.value("kind", std::string{});
         storage::SqliteTransaction transaction(database);
+        if (!op_id.empty() && sync_seen(database, op_id)) return false;
         bool changed = false;
         if (kind == "note.create") changed = apply_note_create(database, record);
-        else if (kind == "note.update") changed = apply_note_update(database, record);
+        else if (kind == "note.update") changed = apply_note_update(database, record, !op_id.empty());
         else if (kind == "note.rename") changed = apply_note_rename(database, record);
         else if (kind == "note.delete") changed = apply_note_delete(database, record);
         else if (kind == "note.read_only") changed = apply_note_read_only(database, record);
@@ -2670,6 +2676,7 @@ bool note_apply_record(storage::SqliteDatabase& database, const nlohmann::json& 
         else if (kind == "note.level") changed = apply_note_level(database, record);
         else if (kind == "note.summary_excluded") changed = apply_note_summary_excluded(database, record);
         else fail(NoteFailure::invalid, "The incoming note record is invalid.");
+        if (!op_id.empty()) sync_record_receipt(database, op_id);
         transaction.commit();
         return changed;
     } catch (const nlohmann::json::exception&) {
@@ -2677,7 +2684,7 @@ bool note_apply_record(storage::SqliteDatabase& database, const nlohmann::json& 
     } catch (const NoteError&) {
         throw;
     } catch (const std::runtime_error& error) {
-        throw sql_failure(error, NoteFailure::saving, saving_message);
+        throw sql_failure(error, NoteFailure::saving, saving_message, op_id.empty());
     }
 }
 

@@ -30,19 +30,26 @@ struct SyncD1Credentials {
 };
 
 // Caller owns the transaction. Creates sync_queue and adds note_items.changed
-// when absent, preserving existing content.
-void ensure_sync_schema(storage::SqliteDatabase& database);
+// when absent, preserving existing content. The v2 worker requests the
+// receipt schema and backfill inside a write transaction.
+void ensure_sync_schema(storage::SqliteDatabase& database, bool v2 = false);
+[[nodiscard]] bool sync_has_receipt_schema(storage::SqliteDatabase& database);
+[[nodiscard]] bool sync_seen(storage::SqliteDatabase& database, std::string_view op_id);
+// Caller owns the transaction that records the effect.
+void sync_record_receipt(storage::SqliteDatabase& database, std::string_view op_id);
 // Caller owns the transaction.
 void sync_queue_append(storage::SqliteDatabase& database, std::string_view record);
 
 struct QueuedRecord {
     std::int64_t rowid{};
     std::string record;
+    std::string op_id;
 };
 // Oldest first.
 [[nodiscard]] std::vector<QueuedRecord> sync_queue_list(storage::SqliteDatabase& database);
 // Caller owns the transaction.
-void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid);
+void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid,
+    std::string_view op_id = {});
 // Caller owns the transaction. Empties the queue and clears all note flags.
 void sync_clear_outgoing(storage::SqliteDatabase& database);
 // True when unsent records or flagged notes exist. False on databases that
@@ -62,15 +69,16 @@ void sync_clear_outgoing(storage::SqliteDatabase& database);
 // Cuts serialized record text at UTF-8 character boundaries.
 [[nodiscard]] std::vector<std::string> sync_split_record(std::string_view text);
 
-// Queue table names look like q/<vault>/<machine>. Neither part may hold '/'.
+// Queue table names use q/ (legacy) or q2/. Neither part may hold '/'.
 [[nodiscard]] std::string sync_queue_table(
-    std::string_view vault, std::string_view machine);
+    std::string_view vault, std::string_view machine, bool v2 = false);
 [[nodiscard]] std::string sync_escape_identifier(std::string_view name);
 struct ParsedQueueTable {
     std::string vault;
     std::string machine;
 };
-[[nodiscard]] std::optional<ParsedQueueTable> sync_parse_queue_table(std::string_view table);
+[[nodiscard]] std::optional<ParsedQueueTable> sync_parse_queue_table(
+    std::string_view table, bool v2 = false);
 [[nodiscard]] bool sync_same_vault(std::string_view left, std::string_view right);
 [[nodiscard]] bool sync_same_machine(std::string_view left, std::string_view right);
 

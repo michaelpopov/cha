@@ -753,6 +753,114 @@ D1SyncWorker::Config worker_config(
     return config;
 }
 
+// Execute the client's SQL against SQLite so uniqueness, interleaving, and row
+// ID reuse are covered by the database instead of a scripted response.
+struct SqliteD1 {
+    Database queue;
+    std::vector<nlohmann::json> inserts;
+    std::vector<nlohmann::json> deletes;
+    std::size_t piece_reads{};
+    bool lose_insert_response{};
+    bool fail_ack{};
+    bool fail_peer_final{};
+    bool reduce_page{};
+
+    explicit SqliteD1(const std::filesystem::path& path)
+        : queue(path, Database::Mode::read_write_create) {}
+
+    D1Client::Transport transport() {
+        return [this](const std::string&, const std::string& body,
+                   const std::vector<std::string>&) -> std::pair<long, std::string> {
+            const auto batch = nlohmann::json::parse(body).at("batch");
+            auto response = batch_success(batch.size());
+            for (std::size_t i = 0; i < batch.size(); ++i) {
+                const auto& statement = batch[i];
+                const auto sql = statement.at("sql").get<std::string>();
+                const auto& params = statement.at("params");
+                try {
+                    const bool insert = sql.starts_with("INSERT INTO");
+                    const bool acknowledge = sql.starts_with("DELETE FROM") && sql.find("op_id IN") != std::string::npos;
+                    if (insert) {
+                        inserts.push_back(statement);
+                        if (fail_peer_final && sql.find("/peer\"") != std::string::npos
+                            && params[1] == params[2]) {
+                            fail_peer_final = false;
+                            response["result"][i] = {{"success", false}, {"error", "down"}};
+                            continue;
+                        }
+                    }
+                    if (acknowledge && std::exchange(fail_ack, false))
+                        return {503, error_response("ack down").dump()};
+                    if (sql.starts_with("SELECT seq") && std::exchange(reduce_page, false))
+                        return {400, error_response("D1 query result exceeded").dump()};
+                    auto query = queue.prepare(sql);
+                    for (std::size_t param = 0; param < params.size(); ++param)
+                        query.bind(static_cast<int>(param + 1), params[param].get<std::string>());
+                    auto& rows = response["result"][i]["results"];
+                    if (sql.starts_with("SELECT name")) {
+                        while (query.step()) rows.push_back({{"name", query.text(0)}});
+                    } else if (sql.starts_with("SELECT seq")) {
+                        while (query.step()) {
+                            nlohmann::json row{{"seq", query.integer(0)}, {"op_id", query.text(1)},
+                                {"pieces", query.integer(2)}, {"record", nullptr}};
+                            if (!query.is_null(3)) row["record"] = query.text(3);
+                            rows.push_back(std::move(row));
+                        }
+                    } else if (sql.starts_with("SELECT pieces")) {
+                        ++piece_reads;
+                        while (query.step())
+                            rows.push_back({{"pieces", query.integer(0)}, {"record", query.text(1)}});
+                    } else if (sql.starts_with("SELECT rowid")) {
+                        while (query.step()) {
+                            rows.push_back({{"rowid", query.integer(0)}, {"piece", query.integer(1)},
+                                {"pieces", query.integer(2)}, {"record", query.text(3)}});
+                        }
+                    } else {
+                        query.run();
+                    }
+                    if (acknowledge) deletes.push_back(statement);
+                } catch (const storage::SqliteError& error) {
+                    return {400, error_response(error.what()).dump()};
+                }
+            }
+            if (batch[0]["sql"].get_ref<const std::string&>().starts_with("INSERT")
+                && std::exchange(lose_insert_response, false))
+                return {503, error_response("response lost").dump()};
+            return {200, response.dump()};
+        };
+    }
+
+    D1SyncWorker::Config config(const std::filesystem::path& path, std::string machine = "mac") {
+        return {
+            .database_path = path, .vault = "Test", .machine = std::move(machine),
+            .desktop_host = true, .transport = transport(), .v2_for_tests = true,
+        };
+    }
+
+    std::vector<std::string> ids(std::string_view table) {
+        std::vector<std::string> result;
+        auto query = queue.prepare("SELECT op_id FROM " + sync_escape_identifier(table) + " ORDER BY seq");
+        while (query.step()) result.push_back(query.text(0));
+        return result;
+    }
+};
+
+std::string folder_record(std::string_view name) {
+    return sync_make_record("note.create", {{"path", {name}}, {"item", "folder"}});
+}
+
+std::string remote_turn() {
+    return sync_make_record("chat.entries", {
+        {"chat", {"f1", "remote-turn"}}, {"label", "Remote"}, {"state", 1},
+        {"entries", {
+            {{"kind", 0}, {"participant_id", "u"}, {"display_name", "U"},
+             {"addressed_to", "a"}, {"addressed_to_name", "A"}, {"text", "Prompt"}, {"status", 0}},
+            {{"kind", 1}, {"participant_id", "a"}, {"display_name", "A"},
+             {"text", "Reply"}, {"status", 0}},
+        }},
+    });
+}
+
 TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
     test::TestWorkspace workspace;
     const auto path = workspace.root() / "w.sqlite3";
@@ -767,7 +875,7 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
     }
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
+        {200, table_list_success({"q/Test/mac", "q/Test/other", "q2/Test/mac", "q2/Test/other"}).dump()},
         {200, error_response("Exceeded maximum DB size.").dump()},
         {200, queue_rows_success({{7, 1, 1,
             sync_make_record("note.create", {{"path", {"Incoming"}}, {"item", "folder"}})}}).dump()},
@@ -794,8 +902,10 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
     const auto ack = nlohmann::json::parse(scripted->bodies[3])["batch"][0];
     EXPECT_EQ(ack["sql"], "DELETE FROM \"q/Test/mac\" WHERE rowid<=?1");
     EXPECT_EQ(ack["params"], nlohmann::json::array({"7"}));
-    for (const auto& body : scripted->bodies)
+    for (const auto& body : scripted->bodies) {
         EXPECT_EQ(body.find("DROP TABLE"), std::string::npos);
+        EXPECT_EQ(body.find("q2/"), std::string::npos);
+    }
 
     worker.run_once();
     {
@@ -805,29 +915,35 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
 }
 
 TEST(D1WorkerTest, NoRecipientsDeletesWithoutRequests) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "w.sqlite3";
-    create_empty_workspace_session_database(path);
-    {
-        Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
-        sync_queue_append(database, sync_make_record("note.create", {{"path", {"A"}}}));
-    }
-    auto scripted = std::make_shared<ScriptedTransport>();
-    scripted->responses = {
-        {200, table_list_success({"q/Test/mac"}).dump()},
-        {200, queue_rows_success({}).dump()},
-    };
-    D1SyncWorker worker(worker_config(path, scripted));
-    worker.run_once();
-    Database database(path, Database::Mode::read_only);
-    EXPECT_TRUE(sync_queue_list(database).empty());
-    // Send discovery + receive read; no insert bodies for recipients.
-    EXPECT_GE(scripted->bodies.size(), 2u);
-    for (const auto& body : scripted->bodies) {
-        EXPECT_EQ(body.find("INSERT"), std::string::npos);
+    for (const bool v2 : {false, true}) {
+        SCOPED_TRACE(v2);
+        test::TestWorkspace workspace;
+        const auto path = workspace.root() / "w.sqlite3";
+        create_empty_workspace_session_database(path);
+        std::string id;
+        {
+            Database database(path, Database::Mode::read_write);
+            add_d1_key(database);
+            storage::SqliteTransaction transaction(database);
+            ensure_sync_schema(database, v2);
+            sync_queue_append(database, folder_record("Local"));
+            id = sync_queue_list(database).front().op_id;
+            transaction.commit();
+        }
+        SqliteD1 d1(workspace.root() / "d1.sqlite3");
+        D1Client client({"a", "d", "t"}, d1.transport());
+        ASSERT_FALSE(client.create_queue_table(sync_queue_table("Test", "mac", v2), v2));
+        auto config = d1.config(path);
+        config.v2_for_tests = v2;
+        D1SyncWorker worker(std::move(config));
+        worker.run_once();
+
+        Database database(path, Database::Mode::read_only);
+        EXPECT_FALSE(worker.stopped());
+        EXPECT_TRUE(sync_queue_list(database).empty());
+        EXPECT_TRUE(d1.inserts.empty());
+        if (v2) EXPECT_TRUE(sync_seen(database, id));
+        else EXPECT_FALSE(sync_has_receipt_schema(database));
     }
 }
 
@@ -965,37 +1081,45 @@ TEST(D1WorkerTest, SplitSendRetriesFromFirstPiece) {
     test::TestWorkspace workspace;
     const auto path = workspace.root() / "w.sqlite3";
     create_empty_workspace_session_database(path);
-    std::string large(1900001, 'x');
+    const auto record = sync_make_record("note.create",
+        {{"path", {"A"}}, {"item", "folder"}, {"text", std::string(sync_piece_bytes, 'x')}});
     {
         Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
-        sync_queue_append(
-            database, sync_make_record("note.create", {{"path", {"A"}}, {"text", large}}));
+        add_d1_key(database);
+        sync_queue_append(database, record);
     }
-    auto scripted = std::make_shared<ScriptedTransport>();
-    scripted->responses = {
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
-        {200, batch_success(1).dump()}, // piece 1 succeeds
-        {200, error_response("down").dump()}, // piece 2 fails
-        {200, queue_rows_success({}).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
-        {200, batch_success(1).dump()},
-        {200, batch_success(1).dump()},
-        {200, queue_rows_success({}).dump()},
-    };
-    D1SyncWorker worker(worker_config(path, scripted));
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    for (const auto* name : {"q2/Test/mac", "q2/TEST/other", "q2/Test/peer", "q2/Elsewhere/other"})
+        ASSERT_FALSE(client.create_queue_table(name, true));
+    d1.fail_peer_final = true;
+    D1SyncWorker worker(d1.config(path));
     worker.run_once();
+
+    std::string id;
     {
         Database database(path, Database::Mode::read_only);
-        EXPECT_EQ(sync_queue_list(database).size(), 1u);
+        const auto pending = sync_queue_list(database);
+        ASSERT_EQ(pending.size(), 1u);
+        id = pending.front().op_id;
+        EXPECT_EQ(pending.front().record, record);
+        EXPECT_TRUE(sync_seen(database, id));
     }
+    EXPECT_EQ(d1.ids("q2/TEST/other"), (std::vector{id, id}));
+    EXPECT_EQ(d1.ids("q2/Test/peer"), (std::vector{id}));
+    ASSERT_EQ(d1.inserts.size(), 4u);
+
     worker.run_once();
-    {
-        Database database(path, Database::Mode::read_only);
-        EXPECT_TRUE(sync_queue_list(database).empty());
-    }
+    ASSERT_EQ(d1.inserts.size(), 8u);
+    for (std::size_t i = 0; i < 4; ++i) EXPECT_TRUE(d1.inserts[i] == d1.inserts[i + 4]);
+    EXPECT_EQ(d1.inserts[4]["params"][1], "1");
+    EXPECT_EQ(d1.inserts[4]["params"][0], id);
+    EXPECT_EQ(d1.ids("q2/TEST/other"), (std::vector{id, id}));
+    EXPECT_EQ(d1.ids("q2/Test/peer"), (std::vector{id, id}));
+    EXPECT_TRUE(d1.ids("q2/Elsewhere/other").empty());
+    Database database(path, Database::Mode::read_only);
+    EXPECT_TRUE(sync_queue_list(database).empty());
+    EXPECT_TRUE(sync_seen(database, id));
 }
 
 TEST(D1WorkerTest, InvalidRecordsSkippedAndAcked) {
@@ -1004,27 +1128,30 @@ TEST(D1WorkerTest, InvalidRecordsSkippedAndAcked) {
     create_empty_workspace_session_database(path);
     {
         Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
+        add_d1_key(database);
     }
-    auto scripted = std::make_shared<ScriptedTransport>();
-    scripted->responses = {
-        {200, queue_rows_success({
-            {1, 1, 1, "not-json"},
-            {2, 1, 1, sync_make_record("unknown.kind", {})},
-            {3, 1, 1, sync_make_record("chat.rename",
-                {{"chat", {"missing", "s"}}, {"label", "X"}})},
-            {4, 1, 1, sync_make_record("note.create",
-                {{"path", {"Ok"}}, {"item", "note"}})},
-        }).dump()},
-        {200, batch_success(1).dump()},
-        {200, queue_rows_success({}).dump()},
-    };
-    D1SyncWorker worker(worker_config(path, scripted));
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    const std::string inbox = "q2/Test/mac";
+    const std::string mismatched_id(32, 'a');
+    const std::string missing_id(32, 'b');
+    const std::string valid_id(32, 'c');
+    ASSERT_FALSE(client.create_queue_table(inbox, true));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 3, "wrong piece count", mismatched_id));
+    ASSERT_FALSE(client.insert_piece({inbox}, 2, 2, "final piece", mismatched_id));
+    ASSERT_FALSE(client.insert_piece({inbox}, 2, 2, "final piece", missing_id));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, folder_record("After invalid"), valid_id));
+
+    D1SyncWorker worker(d1.config(path));
     worker.run_once();
-    // Invalid rows skipped, valid note applied, all acked (no crash).
+    EXPECT_TRUE(d1.ids(inbox).empty());
+    ASSERT_EQ(d1.deletes.size(), 1u);
+    EXPECT_EQ(d1.deletes[0]["params"], nlohmann::json::array({mismatched_id, missing_id, valid_id}));
     Database database(path, Database::Mode::read_only);
+    EXPECT_FALSE(sync_seen(database, mismatched_id));
+    EXPECT_FALSE(sync_seen(database, missing_id));
+    EXPECT_TRUE(sync_seen(database, valid_id));
+    EXPECT_TRUE(sync_note_find(database, {"After invalid"}));
     EXPECT_TRUE(sync_queue_list(database).empty());
 }
 
@@ -1053,26 +1180,89 @@ TEST(D1WorkerTest, UnorderedReadAppliesAndAcknowledgesNothing) {
 
 TEST(D1WorkerTest, AckFailureEndsPassAndRetainsForReplay) {
     test::TestWorkspace workspace;
-    const auto path = workspace.root() / "w.sqlite3";
-    create_empty_workspace_session_database(path);
-    {
+    const auto sender_path = workspace.root() / "sender.sqlite3";
+    const auto receiver_path = workspace.root() / "receiver.sqlite3";
+    for (const auto& path : {sender_path, receiver_path}) {
+        create_empty_workspace_session_database(path);
         Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
+        add_d1_key(database);
+        database.prepare("INSERT INTO forums (forum_id) VALUES ('f1')").run();
+        if (path == sender_path) sync_queue_append(database, remote_turn());
     }
-    auto scripted = std::make_shared<ScriptedTransport>();
-    scripted->responses = {
-        {200, queue_rows_success({
-            {1, 1, 1, sync_make_record("note.create",
-                {{"path", {"A"}}, {"item", "note"}})},
-        }).dump()},
-        {200, error_response("ack down").dump()},
-    };
-    D1SyncWorker worker(worker_config(path, scripted));
-    worker.run_once();
-    // Uncertain acknowledgement may replay; at minimum the pass ends cleanly.
-    EXPECT_FALSE(worker.stopped());
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    const std::string inbox = "q2/Test/other";
+    ASSERT_FALSE(client.create_queue_table("q2/Test/mac", true));
+    ASSERT_FALSE(client.create_queue_table(inbox, true));
+    D1SyncWorker sender(d1.config(sender_path));
+    D1SyncWorker receiver(d1.config(receiver_path, "other"));
+
+    const std::string multipart_id(32, 'a');
+    const std::string incomplete_id(32, 'b');
+    const auto multipart = sync_make_record("note.create",
+        {{"path", {"Parent", "Child"}}, {"item", "folder"}});
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 2, multipart.substr(0, 16), multipart_id));
+    d1.lose_insert_response = true;
+    sender.run_once();
+    std::string turn_id;
+    {
+        Database database(sender_path, Database::Mode::read_only);
+        const auto pending = sync_queue_list(database);
+        ASSERT_EQ(pending.size(), 1u);
+        turn_id = pending.front().op_id;
+        EXPECT_EQ(pending.front().record, remote_turn());
+    }
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, folder_record("Parent"), std::string(32, 'c')));
+    ASSERT_FALSE(client.insert_piece({inbox}, 2, 2, multipart.substr(16), multipart_id));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 2, "incomplete", incomplete_id));
+
+    d1.reduce_page = true;
+    d1.fail_ack = true;
+    receiver.run_once();
+    ASSERT_EQ(d1.piece_reads, 2u);
+    EXPECT_TRUE(d1.deletes.empty());
+    EXPECT_EQ(d1.ids(inbox), (std::vector{multipart_id, turn_id, std::string(32, 'c'), multipart_id, incomplete_id}));
+
+    sender.run_once();
+    receiver.run_once();
+    EXPECT_EQ(d1.piece_reads, 2u);
+    ASSERT_EQ(d1.deletes.size(), 1u);
+    EXPECT_EQ(d1.deletes.front()["params"],
+        nlohmann::json::array({turn_id, std::string(32, 'c'), multipart_id}));
+    EXPECT_EQ(d1.ids(inbox), (std::vector{incomplete_id}));
+
+    // An overlapping retry leaves just a final piece for an already seen ID.
+    // Receiving that header must avoid fetching its incomplete contents.
+    ASSERT_FALSE(client.insert_piece({inbox}, 2, 2, multipart.substr(16), multipart_id));
+    receiver.run_once();
+    EXPECT_EQ(d1.piece_reads, 2u);
+    ASSERT_EQ(d1.deletes.size(), 2u);
+    EXPECT_EQ(d1.deletes.back()["params"], nlohmann::json::array({multipart_id}));
+    EXPECT_EQ(d1.ids(inbox), (std::vector{incomplete_id}));
+
+    // Empty the queue, then exercise reuse of seq=1 (no receive cursor).
+    ASSERT_FALSE(client.delete_operations(inbox, {incomplete_id}));
+    const std::string later_id(32, 'd');
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, folder_record("After reuse"), later_id));
+    {
+        auto seq = d1.queue.prepare("SELECT seq FROM " + sync_escape_identifier(inbox));
+        ASSERT_TRUE(seq.step());
+        EXPECT_EQ(seq.integer(0), 1);
+    }
+    receiver.run_once();
+    EXPECT_EQ(d1.deletes.back()["params"], nlohmann::json::array({later_id}));
+    EXPECT_TRUE(d1.ids(inbox).empty());
+    Database database(receiver_path, Database::Mode::read_only);
+    auto turns = database.prepare("SELECT count(*) FROM turns");
+    ASSERT_TRUE(turns.step());
+    EXPECT_EQ(turns.integer(0), 1);
+    EXPECT_TRUE(sync_note_find(database, {"Parent", "Child"}));
+    EXPECT_TRUE(sync_note_find(database, {"After reuse"}));
+    EXPECT_TRUE(sync_seen(database, turn_id));
+    EXPECT_TRUE(sync_queue_list(database).empty());
+    Database sender_db(sender_path, Database::Mode::read_only);
+    EXPECT_TRUE(sync_queue_list(sender_db).empty());
+    EXPECT_TRUE(sync_seen(sender_db, turn_id));
 }
 
 TEST(D1WorkerTest, ReservationFailurePausesAndRetainsRows) {
@@ -1081,57 +1271,178 @@ TEST(D1WorkerTest, ReservationFailurePausesAndRetainsRows) {
     create_empty_workspace_session_database(path);
     {
         Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
+        add_d1_key(database);
         database.prepare("INSERT INTO forums (forum_id) VALUES ('f1')").run();
     }
-    // Live manager is stopping, so chat reservation fails.
     RuntimeSettings settings;
     LiveSessionManager live(settings, [](const FullSessionId&, std::shared_ptr<WakeNotifier>, std::uint64_t) -> OpenedSession {
         throw std::runtime_error("no opener in test");
     });
-    live.begin_shutdown();
-    auto scripted = std::make_shared<ScriptedTransport>();
-    nlohmann::json chat = {
-        {"kind", "chat.entries"},
-        {"chat", {"f1", "remote-paused"}},
-        {"label", "Remote"},
-        {"state", 1},
-        {"entries", {
-            {{"kind", 0}, {"participant_id", "u"}, {"display_name", "U"},
-             {"addressed_to", "a"}, {"addressed_to_name", "A"},
-             {"text", "P"}, {"status", 0}, {"created_at", 0},
-             {"input_tokens", nullptr}, {"output_tokens", nullptr},
-             {"web_search_used", false}},
-            {{"kind", 1}, {"participant_id", "a"}, {"display_name", "A"},
-             {"addressed_to", ""}, {"addressed_to_name", ""},
-             {"text", "R"}, {"status", 0}, {"created_at", 0},
-             {"input_tokens", nullptr}, {"output_tokens", nullptr},
-             {"web_search_used", false}},
-        }},
-    };
-    const std::string record = sync_make_record("chat.entries", chat);
-    scripted->responses = {
-        {200, queue_rows_success({{1, 1, 1, record}}).dump()},
-        // No delete expected: reservation failure retains rows.
-    };
-    D1SyncWorker::Config config = worker_config(path, scripted);
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    const std::string inbox = "q2/Test/mac";
+    const std::string before(32, 'a');
+    const std::string held(32, 'b');
+    const std::string later(32, 'c');
+    ASSERT_FALSE(client.create_queue_table(inbox, true));
+    ASSERT_FALSE(client.create_queue_table("q2/Test/other", true));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, folder_record("Before"), before));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, remote_turn(), held));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, folder_record("Later"), later));
+    auto config = d1.config(path);
     config.live_sessions = &live;
     D1SyncWorker worker(std::move(config));
-    worker.run_once();
-    for (const auto& body : scripted->bodies) {
-        EXPECT_EQ(body.find("DELETE"), std::string::npos);
-    }
-    // Chat was not created because receipt paused before apply.
     {
-        Database database(path, Database::Mode::read_only);
-        auto check = database.prepare(
-            "SELECT 1 FROM sessions s JOIN forums f USING(forum_key) "
-            "WHERE f.forum_id='f1' AND s.session_id='remote-paused'");
-        EXPECT_FALSE(check.step());
+        auto hold = live.reserve_for_sync({"f1", "remote-turn"}, std::chrono::seconds(1));
+        ASSERT_TRUE(std::holds_alternative<LiveSessionMaintenanceReservation>(hold));
+        worker.run_once();
+        EXPECT_EQ(d1.ids(inbox), (std::vector{held, later}));
+        ASSERT_EQ(d1.deletes.size(), 1u);
+        EXPECT_EQ(d1.deletes[0]["params"], nlohmann::json::array({before}));
+        Database database(path, Database::Mode::read_write);
+        EXPECT_TRUE(sync_note_find(database, {"Before"}));
+        EXPECT_FALSE(sync_note_find(database, {"Later"}));
+        EXPECT_FALSE(sync_seen(database, held));
+        storage::SqliteTransaction transaction(database);
+        sync_queue_append(database, folder_record("Local"));
+        transaction.commit();
+        worker.run_once();
+        EXPECT_EQ(d1.ids("q2/Test/other").size(), 1u);
+        EXPECT_EQ(d1.ids(inbox), (std::vector{held, later}));
     }
-    (void)live.join_shutdown(std::chrono::milliseconds(100));
+    worker.run_once();
+    EXPECT_TRUE(d1.ids(inbox).empty());
+    Database database(path, Database::Mode::read_only);
+    EXPECT_TRUE(sync_seen(database, held));
+    EXPECT_TRUE(sync_note_find(database, {"Later"}));
+    EXPECT_TRUE(sync_queue_list(database).empty());
+}
+
+TEST(D1WorkerTest, BusyNoteWriteRetriesWithoutAcknowledging) {
+    test::TestWorkspace workspace;
+    const auto path = workspace.root() / "busy.sqlite3";
+    create_empty_workspace_session_database(path);
+    {
+        Database database(path, Database::Mode::read_write);
+        add_d1_key(database);
+        storage::SqliteTransaction transaction(database);
+        ensure_sync_schema(database, true);
+        transaction.commit();
+    }
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    const std::string inbox = "q2/Test/mac";
+    const std::string id(32, '1');
+    ASSERT_FALSE(client.create_queue_table(inbox, true));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, folder_record("Retry"), id));
+    D1SyncWorker worker(d1.config(path));
+    {
+        Database locking_db(path, Database::Mode::read_write);
+        storage::SqliteTransaction lock(locking_db);
+        worker.run_once();
+        EXPECT_FALSE(worker.stopped());
+        EXPECT_EQ(d1.ids(inbox), (std::vector{id}));
+        EXPECT_FALSE(sync_seen(locking_db, id));
+        EXPECT_FALSE(sync_note_find(locking_db, {"Retry"}));
+    }
+    worker.run_once();
+    EXPECT_TRUE(d1.ids(inbox).empty());
+    Database database(path, Database::Mode::read_only);
+    EXPECT_TRUE(sync_seen(database, id));
+    EXPECT_TRUE(sync_note_find(database, {"Retry"}));
+}
+
+TEST(D1WorkerTest, ProtectedUpgradePreservesOutboxAndProvisionsLegacyPeersOnlyOnce) {
+    test::TestWorkspace workspace;
+    const auto path = workspace.root() / "protected.sqlite3";
+    const auto peer = workspace.root() / "old-peer.sqlite3";
+    const std::string password = "protected test vault";
+    create_empty_workspace_session_database(path, password);
+    create_empty_workspace_session_database(peer);
+    const auto first = folder_record("From pending work");
+    const auto second = folder_record("Also pending");
+    {
+        Database database(path, Database::Mode::read_write, password);
+        add_d1_key(database);
+        sync_queue_append(database, first);
+        sync_queue_append(database, second);
+        EXPECT_FALSE(sync_has_receipt_schema(database));
+    }
+    {
+        Database database(peer, Database::Mode::read_write);
+        add_d1_key(database);
+    }
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    ASSERT_FALSE(client.create_queue_table("q/Test/mac"));
+    ASSERT_FALSE(client.create_queue_table("q/TEST/peer"));
+    ASSERT_FALSE(client.create_queue_table("q/Elsewhere/ignored"));
+    auto config = d1.config(path);
+    config.database_password = password;
+    d1.lose_insert_response = true;
+    {
+        D1SyncWorker worker(config);
+        worker.run_once();
+        EXPECT_FALSE(worker.stopped());
+    }
+    std::vector<QueuedRecord> original;
+    {
+        Database database(path, Database::Mode::read_only, password);
+        original = sync_queue_list(database);
+        ASSERT_EQ(original.size(), 2u);
+        EXPECT_EQ(original[0].record, first);
+        EXPECT_EQ(original[1].record, second);
+        EXPECT_EQ(original[0].op_id.size(), 32u);
+        EXPECT_EQ(original[1].op_id.size(), 32u);
+        EXPECT_NE(original[0].op_id, original[1].op_id);
+        for (const auto& row : original) {
+            EXPECT_EQ(row.op_id.find_first_not_of("0123456789abcdef"), std::string::npos);
+            EXPECT_TRUE(sync_seen(database, row.op_id));
+        }
+    }
+    EXPECT_EQ(d1.ids("q2/TEST/peer"), (std::vector{original[0].op_id}));
+    EXPECT_TRUE(d1.ids("q2/Test/mac").empty());
+
+    const std::string new_id(32, 'a');
+    ASSERT_FALSE(client.insert_piece({"q/Test/mac"}, 1, 1, folder_record("Legacy parent")));
+    ASSERT_FALSE(client.insert_piece({"q2/Test/mac"}, 1, 1, sync_make_record("note.create",
+        {{"path", {"Legacy parent", "V2 child"}}, {"item", "folder"}}), new_id));
+    D1SyncWorker reopened(config);
+    d1.lose_insert_response = true;
+    reopened.run_once();
+    {
+        Database database(path, Database::Mode::read_only, password);
+        const auto pending = sync_queue_list(database);
+        ASSERT_EQ(pending.size(), original.size());
+        for (std::size_t i = 0; i < original.size(); ++i) {
+            EXPECT_EQ(pending[i].op_id, original[i].op_id);
+            EXPECT_EQ(pending[i].record, original[i].record);
+        }
+        EXPECT_TRUE(sync_note_find(database, {"Legacy parent", "V2 child"}));
+        EXPECT_TRUE(sync_seen(database, new_id));
+        auto receipts = database.prepare("SELECT count(*) FROM sync_seen");
+        ASSERT_TRUE(receipts.step());
+        EXPECT_EQ(receipts.integer(0), 3);
+    }
+    reopened.run_once();
+    D1SyncWorker upgraded_peer(d1.config(peer, "peer"));
+    upgraded_peer.run_once();
+    {
+        Database database(peer, Database::Mode::read_only);
+        EXPECT_TRUE(sync_note_find(database, {"From pending work"}));
+        EXPECT_TRUE(sync_note_find(database, {"Also pending"}));
+        for (const auto& row : original) EXPECT_TRUE(sync_seen(database, row.op_id));
+    }
+    ASSERT_FALSE(client.drop_table("q2/Test/mac"));
+    D1SyncWorker missing(config);
+    missing.run_once();
+    EXPECT_TRUE(missing.stopped());
+    const auto [tables, error] = client.list_tables();
+    ASSERT_FALSE(error);
+    EXPECT_NE(std::ranges::find(tables, "q/Test/mac"), tables.end());
+    EXPECT_NE(std::ranges::find(tables, "q/Elsewhere/ignored"), tables.end());
+    EXPECT_EQ(std::ranges::find(tables, "q2/Test/mac"), tables.end());
+    EXPECT_EQ(std::ranges::find(tables, "q2/Elsewhere/ignored"), tables.end());
 }
 
 TEST(D1WorkerTest, EvictionDropsAtMostOneEligibleTable) {

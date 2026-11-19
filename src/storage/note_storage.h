@@ -37,8 +37,9 @@ enum class NoteFailure {
 
 class NoteError : public std::exception {
 public:
-    NoteError(NoteFailure failure, std::string message);
+    NoteError(NoteFailure failure, std::string message, int sqlite_code = 0);
     NoteFailure failure;
+    int sqlite_code;
     [[nodiscard]] const char* what() const noexcept override;
 
 private:
@@ -217,7 +218,8 @@ void note_save_audio(storage::SqliteDatabase& database, std::int64_t id,
 // warning (missing parent, managed item, invalid candidate). Never writes an
 // outgoing record or sets a changed flag.
 [[nodiscard]] bool note_apply_record(
-    storage::SqliteDatabase& database, const nlohmann::json& record);
+    storage::SqliteDatabase& database, const nlohmann::json& record,
+    std::string_view op_id = {});
 // Exports the folder, its subfolders, notes and audio to a new SQLite file.
 // Includes Summary note links. Annotations, session summary
 // links, and forum links are left out.

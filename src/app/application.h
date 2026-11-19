@@ -96,7 +96,8 @@ public:
         const ApplicationCommand& command,
         std::string vault_password = {},
         RuntimeSettings settings = {},
-        D1Client::Transport d1_transport_for_tests = {});
+        D1Client::Transport d1_transport_for_tests = {},
+        bool d1_v2_for_tests = false);
 
     ~Application();
     Application(const Application&) = delete;

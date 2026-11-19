@@ -403,10 +403,12 @@ std::vector<std::int64_t> sync_chat_turns(Database& database, std::int64_t sessi
     return turns;
 }
 
-void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
+bool sync_apply_chat_record(Database& database, const nlohmann::json& record,
+    std::string_view op_id) {
     const std::string kind = record.at("kind").get<std::string>();
     const SyncChatIdentity identity = sync_parse_chat_identity(record);
     storage::SqliteTransaction transaction(database);
+    if (!op_id.empty() && sync_seen(database, op_id)) return false;
     const std::int64_t session_key =
         ensure_session(database, identity.forum_id, identity.session_id, identity.label);
 
@@ -577,7 +579,9 @@ void sync_apply_chat_record(Database& database, const nlohmann::json& record) {
     } else {
         throw std::runtime_error("Incoming chat record is invalid.");
     }
+    if (!op_id.empty()) sync_record_receipt(database, op_id);
     transaction.commit();
+    return true;
 }
 
 } // namespace cha

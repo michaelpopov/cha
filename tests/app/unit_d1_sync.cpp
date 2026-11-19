@@ -87,6 +87,7 @@ struct MockD1 {
     std::atomic_bool fail_drop{};
     std::chrono::milliseconds insert_delay{};
     bool local_queue_exists = true;
+    bool local_v2_exists = false;
     std::string local_table{"q/Test/mac"};
     std::vector<std::string> other_tables{"q/Test/other"};
     std::mutex mutex;
@@ -96,45 +97,71 @@ struct MockD1 {
     std::size_t reads{};
     nlohmann::json incoming = nlohmann::json::array();
     nlohmann::json sent = nlohmann::json::array();
+    nlohmann::json incoming_v2 = nlohmann::json::array();
+    nlohmann::json sent_v2 = nlohmann::json::array();
+    nlohmann::json acknowledged_v2 = nlohmann::json::array();
 
     D1Client::Transport transport() {
         return [this](const std::string&, const std::string& body,
                    const std::vector<std::string>& headers) -> std::pair<long, std::string> {
             const auto batch = nlohmann::json::parse(body).at("batch");
             const auto sql = batch.at(0).at("sql").get<std::string>();
+            const auto local_v2 = "q2" + local_table.substr(1);
             bool have_local;
+            bool have_v2;
             nlohmann::json rows;
             {
                 const std::lock_guard lock(mutex);
                 statements.push_back(sql);
                 if (sql.starts_with("CREATE TABLE") && !fail_create) {
-                    local_queue_exists = true;
+                    if (sql.find("q2/") == std::string::npos) local_queue_exists = true;
+                    else if (sql.find(sync_escape_identifier(local_v2)) != std::string::npos)
+                        local_v2_exists = true;
                     create_headers = headers;
                 }
                 if (sql.starts_with("SELECT rowid")) {
                     ++reads;
                     rows = incoming;
                 }
-                if (sql.starts_with("DELETE FROM")) incoming.clear();
+                if (sql.starts_with("SELECT seq")) rows = incoming_v2;
+                if (sql.starts_with("DELETE FROM")) {
+                    if (sql.find("op_id IN") == std::string::npos) incoming.clear();
+                    else {
+                        const auto& ids = batch.at(0).at("params");
+                        for (const auto& id : ids) acknowledged_v2.push_back(id);
+                        for (auto row = incoming_v2.begin(); row != incoming_v2.end();) {
+                            if (std::ranges::find(ids, row->at("op_id")) != ids.end())
+                                row = incoming_v2.erase(row);
+                            else ++row;
+                        }
+                    }
+                }
                 if (sql.starts_with("INSERT") && !fail_insert) {
                     const auto& params = batch.at(0).at("params");
-                    sent.push_back({
-                        {"rowid", sent.size() + 1},
-                        {"piece", std::stoi(params.at(0).get<std::string>())},
-                        {"pieces", std::stoi(params.at(1).get<std::string>())},
-                        {"record", params.at(2)},
-                    });
+                    if (sql.find("ON CONFLICT") != std::string::npos) {
+                        sent_v2.push_back({{"seq", sent_v2.size() + 1}, {"op_id", params.at(0)},
+                            {"pieces", std::stoi(params.at(2).get<std::string>())}, {"record", params.at(3)}});
+                    } else {
+                        sent.push_back({
+                            {"rowid", sent.size() + 1},
+                            {"piece", std::stoi(params.at(0).get<std::string>())},
+                            {"pieces", std::stoi(params.at(1).get<std::string>())},
+                            {"record", params.at(2)},
+                        });
+                    }
                 }
                 have_local = local_queue_exists;
+                have_v2 = local_v2_exists;
             }
             changed.notify_all();
             if (sql.starts_with("SELECT name FROM sqlite_master")) {
                 auto tables = other_tables;
                 if (have_local) tables.push_back(local_table);
+                if (have_v2) tables.push_back(local_v2);
                 return {200, tables_ok(std::move(tables)).dump()};
             }
-            if (sql.starts_with("SELECT rowid")) {
-                if (!have_local) {
+            if (sql.starts_with("SELECT rowid") || sql.starts_with("SELECT seq")) {
+                if (!(sql.starts_with("SELECT seq") ? have_v2 : have_local)) {
                     return {400, R"({"success":false,"errors":[{"message":"no such table: q"}]})"};
                 }
                 auto response = batch_ok(1);
@@ -162,6 +189,10 @@ struct MockD1 {
             [&](const auto& sql) { return sql.starts_with(prefix); });
     }
 };
+
+nlohmann::json ready_row(int seq, std::string_view id, std::string record) {
+    return {{"seq", seq}, {"op_id", id}, {"pieces", 1}, {"record", std::move(record)}};
+}
 
 SaveD1StorageRequest credentials() {
     return {.display_name = "D1", .account_id = "a", .database_id = "d", .api_token = "t"};
@@ -241,6 +272,7 @@ TEST(D1AppWiringTest, MalformedPieceMetadataSkipsOnlyTheBadRows) {
     seed_d1(path);
     auto command = make_d1_command(workspace, path);
     MockD1 mock;
+    mock.local_v2_exists = true;
     const auto folder = [](std::string_view name) {
         return sync_make_record("note.create", {{"path", {name}}, {"item", "folder"}});
     };
@@ -260,6 +292,8 @@ TEST(D1AppWiringTest, MalformedPieceMetadataSkipsOnlyTheBadRows) {
     EXPECT_TRUE(sync_note_find(db, {"After"}));
     EXPECT_FALSE(sync_note_find(db, {"Incomplete"}));
     EXPECT_FALSE(sync_note_find(db, {"Invalid"}));
+    EXPECT_FALSE(sync_has_receipt_schema(db));
+    EXPECT_EQ(mock.count("SELECT seq"), 0u);
     EXPECT_EQ(mock.count("DELETE FROM"), 1u);
 }
 
@@ -448,20 +482,48 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
     const auto database = test::import_test_database(workspace.root());
     seed_d1(database);
     MockD1 mock;
-    mock.incoming = {
-        {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
-            "config.edit", {{"set", set_rows}, {"delete", nlohmann::json::array()}})}},
-        {{"rowid", 2}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
-            "chat.rename", {{"chat", {"remote", "session-from-d1"}}, {"label", "Shared chat"}})}},
+    const std::string config_id(32, '1');
+    const std::string no_op_id(32, '2');
+    const std::string rejected_id(32, '3');
+    const std::string malformed_id(32, '4');
+    const std::string chat_id(32, '5');
+    const auto delta = sync_make_record(
+        "config.edit", {{"set", set_rows}, {"delete", nlohmann::json::array()}});
+    const auto rejected = sync_make_record("config.edit",
+        {{"set", nlohmann::json::array()}, {"delete", {"../invalid-path-with-private-text"}}});
+    mock.local_v2_exists = true;
+    mock.incoming_v2 = {
+        ready_row(1, config_id, delta),
+        ready_row(2, no_op_id, delta),
+        ready_row(3, rejected_id, rejected),
+        ready_row(4, malformed_id, "malformed private payload"),
+        ready_row(5, chat_id, sync_make_record(
+            "chat.rename", {{"chat", {"remote", "session-from-d1"}}, {"label", "Shared chat"}})),
     };
     auto application = Application::open(
-        make_d1_command(workspace, database), {}, {}, mock.transport());
+        make_d1_command(workspace, database), {}, {}, mock.transport(), true);
     const auto chats = application->list_sessions("remote", application->context_epoch());
     ASSERT_EQ(chats.size(), 1u);
     EXPECT_EQ(chats.front().id, "session-from-d1");
     EXPECT_EQ(mock.count("DELETE FROM"), 1u);
+    EXPECT_TRUE(mock.incoming_v2.empty());
+    EXPECT_EQ(mock.acknowledged_v2,
+        nlohmann::json::array({config_id, no_op_id, rejected_id, malformed_id, chat_id}));
     Database db(database, Database::Mode::read_only);
     EXPECT_FALSE(sync_has_pending(db));
+    EXPECT_TRUE(sync_seen(db, config_id));
+    EXPECT_TRUE(sync_seen(db, no_op_id));
+    EXPECT_FALSE(sync_seen(db, rejected_id));
+    EXPECT_FALSE(sync_seen(db, malformed_id));
+    EXPECT_TRUE(sync_seen(db, chat_id));
+    const auto events = application->list_events(application->context_epoch());
+    for (const auto& [id, reason] : {std::pair{rejected_id, "configuration change rejected"},
+             std::pair{malformed_id, "invalid record"}}) {
+        EXPECT_NE(std::ranges::find_if(events, [&](const ActivityEvent& event) {
+            return event.severity == EventSeverity::warning
+                && event.message == "D1 skipped operation " + id + " (" + reason + ").";
+        }), events.end());
+    }
 }
 
 TEST(D1AppWiringTest, SettingsCreatedForumReceivesPeerChatWithoutLocalOpen) {
@@ -747,6 +809,7 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
     const auto l2 = note_document_from_text("Level two");
     const auto edited = note_document_from_text("Edited level one");
     const auto overview = note_document_from_text("Overview");
+    const auto updated_overview = note_document_from_text("Updated overview");
     NoteItem folder;
     NoteItem chapter;
     {
@@ -772,14 +835,16 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
 
     for (const bool editing : {false, true}) {
         MockD1 send;
-        send.other_tables = {"q/Test/linux"};
+        send.local_v2_exists = true;
+        send.other_tables = {"q/Test/linux", "q2/Test/linux"};
         {
-            auto app = Application::open(source_command, {}, {}, send.transport());
+            auto app = Application::open(source_command, {}, {}, send.transport(), true);
             {
                 Database db(source_path, Database::Mode::read_write);
                 if (editing) {
                     const auto version = note_get(db, chapter.id, NoteTextMode::l1);
                     (void)note_save(db, version.document_id, edited, "mac");
+                    (void)note_commit_folder_summary(db, folder.id, updated_overview, "mac");
                 } else {
                     note_commit_level(db, chapter.id, 1, l1, "Saved.", "mac");
                     (void)note_set_summary_excluded(db, chapter.id, true, "mac");
@@ -790,11 +855,21 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
             ASSERT_TRUE(app->join_shutdown(5s));
         }
 
+        if (editing) {
+            Database db(receiver_path, Database::Mode::read_write);
+            db.prepare("DELETE FROM note_items WHERE parent_id=? AND folder_summary=1", folder.id).run();
+            ASSERT_EQ(db.changes(), 1);
+            EXPECT_NE(std::ranges::find_if(send.sent_v2, [](const auto& row) {
+                const auto record = nlohmann::json::parse(row.at("record").template get<std::string>());
+                return record.at("kind") == "note.update" && record.value("folder_summary", false);
+            }), send.sent_v2.end());
+        }
         MockD1 receive;
         receive.local_table = "q/Test/linux";
-        receive.other_tables = {"q/Test/mac"};
-        receive.incoming = std::move(send.sent);
-        auto app = Application::open(receiver_command, {}, {}, receive.transport());
+        receive.local_v2_exists = true;
+        receive.other_tables = {"q/Test/mac", "q2/Test/mac"};
+        receive.incoming_v2 = send.sent_v2;
+        auto app = Application::open(receiver_command, {}, {}, receive.transport(), true);
         Database db(receiver_path, Database::Mode::read_only);
         const auto items = note_list(db);
         const auto received = std::ranges::find(items, chapter.id, &NoteItem::id);
@@ -808,7 +883,14 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
         const auto summary = std::ranges::find(items, true, &NoteItem::folder_summary);
         ASSERT_NE(summary, items.end());
         EXPECT_EQ(summary->parent_id, folder.id);
-        EXPECT_EQ(note_get(db, summary->id).document, overview);
+        EXPECT_EQ(note_get(db, summary->id).document, editing ? updated_overview : overview);
+        Database source_db(source_path, Database::Mode::read_only);
+        EXPECT_FALSE(sync_has_pending(source_db));
+        for (const auto& row : send.sent_v2) {
+            const auto id = row.at("op_id").get<std::string>();
+            EXPECT_TRUE(sync_seen(source_db, id));
+            EXPECT_TRUE(sync_seen(db, id));
+        }
         app->request_shutdown();
         ASSERT_TRUE(app->join_shutdown(5s));
     }
