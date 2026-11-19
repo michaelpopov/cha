@@ -44,12 +44,14 @@ Out of scope:
 | Topic | Decision | Source |
 | --- | --- | --- |
 | D1 P0 scope | As in `specs/p0-d1-design.md`. Automatic eviction is removed (changed R46). | User, November 18 |
-| Note request time limit | One finite overall limit of 7200 s for all note requests, with or without Flex. | Proposed default. **Confirm before F1.** |
-| Welcome web tools | Remove `web_search` and `web_read` from Welcome sessions. | Proposed default. **Confirm before F2.** |
-| Rename of a connected vault | Refuse it. | Opus and Astra agree. **Confirm with the error text (F5).** |
+| Note request time limit | One finite overall limit of 7200 s for all note requests, with or without Flex. | User, November 19 |
+| Welcome web tools | Keep `web_search` and `web_read` in Welcome sessions. They are required. | User, November 19 |
+| Rename of a connected vault | Refuse it when the vault has D1 credentials. | User, November 19. The error text needs UI approval (F5). |
 | `/cover` | Keep the current behavior. Correct the User Manual. | User, November 19 |
 | Jev first reply | Start the reply when Jev picks a character. Do not wait for the session name. | User, November 19 |
 | Google and Anthropic effort | Send thinking settings in the provider requests. | User, November 19 |
+| `##folder` and `/detach` | Remove both (F18). | User, November 19 |
+| `web_reader_api_key` | Remove the field (F19). | User, November 19 |
 | Picture fetch to local network addresses | No change. | User, November 19 |
 | First D1 pass at vault open | Keep it (R37). P0-D1 keeps it. | D1 design |
 
@@ -63,7 +65,6 @@ Size: **S** = a few lines. **M** = a larger change in one area.
 | --- | --- | --- | --- | --- | --- | --- |
 | P0-D1 | D1 data integrity (in progress) | P0 | — | — | Yes | Yes (§6) |
 | F1 | Finite time limit for note requests | P1 | S | — | No | Yes |
-| F2 | Welcome without web tools | P1 | S | — | No | Yes |
 | F3 | D1 token in `Redactor` | P2 | S | — | No | Yes |
 | F4 | Base path in the credential destination check | P2 | S | — | No | Yes |
 | F5 | Refuse a rename of a connected vault | P1 | S | P0-D1 | Yes | Check |
@@ -140,28 +141,6 @@ This changes the Flex design rule that keeps an unlimited first-byte wait
 **Test:** No new test. If the existing timeout test
 (`tests/bridge/unit_bridge_router.cpp:4783`) expects the unlimited value,
 change its expectation.
-
-### F2. Welcome without web tools
-
-**Sources:** Carbon 7.3, Opus P2.4, Astra 7.3.
-
-**Problem:** Welcome turns off only the provider's own web search. CHA's
-`web_search` and `web_read` tools stay on next to `vault_config_apply`,
-`host_config_write`, and `assistant_logging`. No write needs a confirmation
-from the user. Text on a fetched page can tell the model to change the
-configuration or to turn on debug logging.
-
-**Fix:**
-
-1. Do not pass `web_search_tool` and `web_read_tool` when `maintenance` is
-   true (`src/session/session_controller.cpp:922-940, 1015-1017`).
-2. If the Assistant instructions (`resources/assistant-maintenance.md`) tell
-   the model to use web tools, remove that text.
-
-Do not add a confirmation step for each write (Astra). Removing the tools
-closes the path with less machinery.
-
-**Test:** One test: a Welcome session gets no web tools.
 
 ### F3. D1 token in `Redactor`
 
@@ -529,8 +508,8 @@ Changes that come from this plan:
 - `docs/UserManual.md`: remove `##folder` and `/detach` (F18).
 - `docs/AdminManual.md`: the P0-D1 changes (no eviction, Events, `q2` tables,
   replacement refusal, cha-daemon without D1), the rename refusal (F5),
-  Welcome without web tools (F2), effort for Google and Anthropic (F15), and
-  the removed `web_reader_api_key` (F19, line 933).
+  effort for Google and Anthropic (F15), and the removed `web_reader_api_key`
+  (F19, line 933).
 - `specs/flex-design.md`: the finite time limit (F1).
 - `specs/current-design.md`: the Jev reply starts before the name (F10).
 
@@ -572,7 +551,8 @@ Existing drift (Opus P3.17, Astra §9):
 | Keep the previous target and lease open after any reopen error | Astra 6.1 | F7 and F8 cover the realistic cases. |
 | Redact `host_config_read` | Carbon 7.2 | Breaks `host_config_write`. |
 | Local network addresses in picture fetch and `web_read` | Carbon 7.4, Astra 7.4 | User decision, November 19. |
-| Confirm each Welcome write | Astra 7.3 | F2 removes the web tools. |
+| Remove the web tools from Welcome | Carbon 7.3, Opus P2.4, Astra 7.3 | User requirement, November 19: Welcome must search and read the web. |
+| Confirm each Welcome write | Astra 7.3 | Not requested. It adds a step to each write. |
 | Persist `/cover` | Carbon 8.2 | User decision, November 19. Phase 5 corrects the manual. |
 | Remove the `history_epoch` filters | Carbon 8.4 | Needed for vaults that older builds cleared. |
 | Hardcoded Gemini Library model | Carbon 8.6a, Opus P3.10 | Change the constant when Google retires the model. No new setting for a future need. |
@@ -589,8 +569,7 @@ Existing drift (Opus P3.17, Astra §9):
 ## Order of work
 
 1. Finish P0-D1 (Phase 0).
-2. Do F1 and F2 when the user confirms their defaults. Do F3 and F4. These do
-   not depend on P0-D1.
+2. Do F1, F3, and F4. These do not depend on P0-D1.
 3. After P0-D1: do F5 and F6. Do F8 with P0-D1 implementation step 5, or
    after it.
 4. Do F7, then F9.
@@ -601,10 +580,8 @@ Existing drift (Opus P3.17, Astra §9):
 
 ## Approvals to get
 
-- **Confirm the defaults:** F1 (7200 s for all note requests), F2 (no web
-  tools in Welcome), and F5 (refuse the rename).
 - **UI approval:** the P0-D1 Event and R2 replacement texts, F5, F6, F7 and
   F8 if they need new texts, F18, and F19. Show the F15 mapping table before
   code.
-- **ChaWeb permission:** P0-D1 §6, F1, F2, F3, F4, F10, F11, F12, F13, F15,
+- **ChaWeb permission:** P0-D1 §6, F1, F3, F4, F10, F11, F12, F13, F15,
   F16, F17, and F18. Check F5, F7, F14, and F19 at the start.
