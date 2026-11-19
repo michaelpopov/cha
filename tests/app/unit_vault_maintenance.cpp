@@ -1254,6 +1254,25 @@ TEST(ApplicationVault, NewVaultHasNoParentAndRenamingPreservesExistingParentRefe
     EXPECT_EQ(find_vault(registry.vaults, "Renamed child")->parent, "B");
 }
 
+TEST(ApplicationVault, RenameOfAD1ConnectedVaultIsRefusedExceptForLetterCase) {
+    TwoVaults pair;
+    for (const auto& path : {pair.database_a, pair.database_b}) {
+        storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+        database.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)",
+            "system/keys/api_key_1/config.toml",
+            "display_name = \"D1\"\ntype = \"D1\"\n"
+            "account_id = \"a\"\ndatabase_id = \"d\"\napi_token = \"t\"\n").run();
+    }
+    auto application = Application::open(pair.command);
+    for (const std::string_view name : {"A", "B"}) { // Active and inactive vaults.
+        SCOPED_TRACE(name);
+        EXPECT_THROW((void)application->update_vault(
+            name, {.display_name = "Renamed"}, application->context_epoch()), std::invalid_argument);
+    }
+    EXPECT_EQ(application->update_vault(
+        "A", {.display_name = "a"}, application->context_epoch()).name, "a");
+}
+
 TEST(ApplicationVault, SaveFileRejectsStaleEpochAndReplacesAtomically) {
     TwoVaults pair;
     auto application = Application::open(pair.command);

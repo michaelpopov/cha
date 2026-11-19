@@ -735,6 +735,23 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         if (!active) {
             target_use.emplace(SessionLease::acquire(previous.data, vault_in_use_message));
         }
+        if (!sync_same_vault(previous.name, candidate.name)) {
+            // D1 queue tables carry the vault name; other machines keep the old name.
+            bool connected = active && app.api_keys->d1().has_value();
+            // A protected vault that is not active cannot be read without its password.
+            if (!active && !previous.password_protected) {
+                try {
+                    storage::SqliteDatabase database(
+                        previous.data, storage::SqliteDatabase::Mode::read_only);
+                    connected = sync_read_d1(database).has_value();
+                } catch (const std::exception& error) {
+                    log_warn(std::string("D1 check before vault rename failed: ") + error.what());
+                }
+            }
+            if (connected) {
+                throw std::invalid_argument("Disconnect this vault from D1 before you rename it.");
+            }
+        }
         std::vector<vault::VaultDirectoryMove> moved;
         bool selection_written = false;
         try {
