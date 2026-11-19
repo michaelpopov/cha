@@ -714,7 +714,7 @@ bool is_timestamp_label(std::string_view label) {
     return true;
 }
 
-TEST_F(SessionNaming, StartsWithJevAndWaitsForBothBeforeTheReply) {
+TEST_F(SessionNaming, StartsTheReplyAsSoonAsJevFinishes) {
     EXPECT_TRUE(controller->recent_pending());
     EXPECT_TRUE(load_session_state(journal.path()).discardable);
     (void)send("How should I plan a small garden?");
@@ -723,16 +723,31 @@ TEST_F(SessionNaming, StartsWithJevAndWaitsForBothBeforeTheReply) {
     EXPECT_TRUE(controller->is_naming());
     EXPECT_TRUE(controller->view().transcript.entries.empty());
     EXPECT_TRUE(load_session_state(journal.path()).entries.empty());
-    // Naming can finish first, but the prompt waits for Jev.
+    // Hold the title while Jev classifies the prompt and the character replies.
     auto name_worker = std::move(workers.back());
     workers.pop_back();
-    name_worker();
-    (void)controller->receive_events(100);
-    EXPECT_TRUE(load_session_state(journal.path()).entries.empty());
+    run_workers();
+    const auto dispatched = controller->receive_events(100).update;
+    EXPECT_FALSE(dispatched.session_label);
+    ASSERT_EQ(load_session_state(journal.path()).entries.size(), 1u);
+    EXPECT_EQ(load_session_state(journal.path()).entries[0].text, "How should I plan a small garden?");
     EXPECT_EQ(workers.size(), 1u);
+    EXPECT_TRUE(requires_snapshot(dispatched));
+    EXPECT_TRUE(controller->is_generating());
+    finish();
+    ASSERT_EQ(controller->view().transcript.entries.size(), 2u);
+    EXPECT_TRUE(controller->is_naming());
     EXPECT_TRUE(controller->recent_pending());
     EXPECT_TRUE(load_session_state(journal.path()).recent_pending);
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
+
+    name_worker();
+    const auto named = controller->receive_events(100).update;
+    EXPECT_EQ(named.session_label, title);
+    EXPECT_FALSE(controller->recent_pending());
+    EXPECT_FALSE(load_session_state(journal.path()).recent_pending);
+    EXPECT_TRUE(requires_snapshot(named));
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
     ASSERT_EQ(title_inputs.size(), 1u);
     EXPECT_EQ(title_inputs[0].run.prompt_text, "How should I plan a small garden?");
     EXPECT_TRUE(title_inputs[0].history->entries.empty());
@@ -751,19 +766,6 @@ TEST_F(SessionNaming, StartsWithJevAndWaitsForBothBeforeTheReply) {
     EXPECT_NE(title_definitions[0]->system_prompt.find("at most 6 words"), std::string::npos);
     EXPECT_EQ(title_definitions[0]->system_prompt.find("notes"), std::string::npos);
 
-    run_workers();
-    const auto update = controller->receive_events(100).update;
-    EXPECT_EQ(update.session_label, title);
-    ASSERT_EQ(load_session_state(journal.path()).entries.size(), 1u);
-    EXPECT_EQ(load_session_state(journal.path()).entries[0].text, "How should I plan a small garden?");
-    EXPECT_EQ(workers.size(), 1u);
-    EXPECT_FALSE(controller->recent_pending());
-    EXPECT_FALSE(load_session_state(journal.path()).recent_pending);
-    EXPECT_TRUE(requires_snapshot(update));
-    EXPECT_TRUE(controller->is_generating());
-    EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
-    finish();
-    ASSERT_EQ(controller->view().transcript.entries.size(), 2u);
     (void)send("And what should I plant?");
     finish();
     EXPECT_EQ(title_inputs.size(), 1u);
@@ -1074,24 +1076,6 @@ TEST_P(SessionNamingRetry, FailedNamingUsesTimestampAndDoesNotRetry) {
 
 TEST_P(SessionNamingRetry, ReopensAfterInterruptionAndRetriesOnTheNextSubmission) {
     (void)send("Plan a garden");
-    if (GetParam()) {
-        ASSERT_EQ(workers.size(), 2u);
-        auto name_worker = std::move(workers.back());
-        workers.pop_back();
-        run_workers();
-        (void)controller->receive_events(100);
-        EXPECT_TRUE(controller->view().transcript.entries.empty());
-        controller.reset();
-        name_worker();
-        controller = make_controller(notifier, load_session_state(journal.path()));
-        controller->enable_auto_naming(read_session_database_metadata(journal.path()).label);
-        (void)send("Yes, continue");
-        finish();
-        ASSERT_EQ(title_inputs.size(), 1u);
-        EXPECT_EQ(title_inputs[0].run.prompt_text, "Yes, continue");
-        EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
-        return;
-    }
     ASSERT_EQ(workers.size(), 2u);
     auto name_worker = std::move(workers.back());
     workers.pop_back();
@@ -1184,6 +1168,23 @@ TEST_F(SessionNaming, StoppedClassificationDoesNotRenameAnEmptySession) {
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, title);
 }
 
+TEST_F(SessionNaming, CancelledFirstMessageGetsNoLateName) {
+    decision = {JevOutcome::cancelled, {}, "Cancelled"};
+    (void)send("Plan a garden");
+    ASSERT_EQ(workers.size(), 2u);
+    auto name_worker = std::move(workers.back());
+    workers.pop_back();
+    run_workers();
+    (void)controller->receive_events(100);
+    EXPECT_EQ(controller->take_submission_result()->outcome, SessionController::SubmissionOutcome::cancelled);
+    EXPECT_FALSE(controller->is_naming());
+
+    name_worker();
+    EXPECT_FALSE(controller->receive_events(100).update.session_label);
+    EXPECT_TRUE(controller->view().transcript.entries.empty());
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, "New session");
+}
+
 TEST_F(SessionNaming, SnapshotReportsRetentionEvenWithoutEntries) {
     controller.reset();
     LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
@@ -1203,7 +1204,7 @@ TEST_F(SessionNaming, SnapshotReportsRetentionEvenWithoutEntries) {
 
 class SessionNamingRuntime : public SessionNaming, public testing::WithParamInterface<bool> {};
 
-TEST_P(SessionNamingRuntime, WaitsForNamingBeforeStartingTheReply) {
+TEST_P(SessionNamingRuntime, AcceptsThePromptWhileNamingIsPending) {
     if (GetParam()) title_result = {GenerationOutcome::transport_error, "Naming unavailable"};
     controller.reset();
     providers->shutdown();
@@ -1223,15 +1224,13 @@ TEST_P(SessionNamingRuntime, WaitsForNamingBeforeStartingTheReply) {
     auto queued = session->enqueue(RawCommand{"Plan a garden"});
     auto reply = std::get<std::shared_ptr<CommandReply>>(queued);
     EXPECT_EQ(started.get_future().wait_for(2s), std::future_status::ready);
+    const auto submitted = reply->wait_for(2s);
     auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
-    EXPECT_TRUE(snapshot.generation.active);
-    EXPECT_TRUE(snapshot.transcript.empty());
-    EXPECT_FALSE(reply->peek());
+    EXPECT_FALSE(snapshot.transcript.empty());
     EXPECT_FALSE(session->idle_for_retirement());
     EXPECT_EQ(snapshot.session_label, "New session");
     EXPECT_TRUE(snapshot.recent_pending);
     release.set_value();
-    const auto submitted = reply->wait_for(2s);
     ASSERT_TRUE(submitted);
     EXPECT_TRUE(std::holds_alternative<CommandResult>(*submitted));
     const auto deadline = std::chrono::steady_clock::now() + 2s;
@@ -1253,7 +1252,7 @@ TEST_P(SessionNamingRuntime, WaitsForNamingBeforeStartingTheReply) {
 
 INSTANTIATE_TEST_SUITE_P(SuccessAndFailure, SessionNamingRuntime, testing::Bool());
 
-TEST_F(SessionNaming, NamingTimeoutUsesTimestampAndAllowsTheReply) {
+TEST_F(SessionNaming, NamingTimeoutUsesTimestampAfterAcceptingThePrompt) {
     controller.reset();
     providers->shutdown();
     std::promise<void> started, release;
@@ -1270,15 +1269,19 @@ TEST_F(SessionNaming, NamingTimeoutUsesTimestampAndAllowsTheReply) {
     auto queued = session->enqueue(RawCommand{"Plan a garden"});
     auto reply = std::get<std::shared_ptr<CommandReply>>(queued);
     EXPECT_EQ(started.get_future().wait_for(2s), std::future_status::ready);
-    const auto submitted = reply->wait_for(12s);
+    const auto submitted = reply->wait_for(2s);
+    const auto deadline = std::chrono::steady_clock::now() + 12s;
+    auto snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    while (snapshot.recent_pending && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(20ms);
+        snapshot = std::get<SessionSnapshot>(session->snapshot(2s));
+    }
     release.set_value();
     ASSERT_TRUE(submitted);
     EXPECT_TRUE(std::holds_alternative<CommandResult>(*submitted));
-    const std::string label = read_session_database_metadata(journal.path()).label;
-    ASSERT_EQ(label.size(), 19u);
-    for (const std::size_t separator : {4u, 7u, 10u, 13u, 16u}) {
-        EXPECT_EQ(label[separator], '-');
-    }
+    EXPECT_FALSE(snapshot.recent_pending);
+    EXPECT_TRUE(is_timestamp_label(snapshot.session_label));
+    EXPECT_EQ(read_session_database_metadata(journal.path()).label, snapshot.session_label);
     EXPECT_EQ(title_inputs.size(), 1u);
 }
 

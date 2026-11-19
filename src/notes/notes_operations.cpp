@@ -456,8 +456,7 @@ std::shared_ptr<OperationReply> NotesService::test_flex(std::string provider_id,
     config.stream = false;
     config.timeout_s = 900; // Flex can queue a request for minutes.
     config.web_search = WebSearchMode::off;
-    // Chat Completions sends max_tokens, which the OpenAI Flex models refuse.
-    if (config.api != ProviderApi::chat_completions) config.max_tokens = 1024;
+    config.max_tokens = 1024;
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
         .character = {"flex-test", "Flex Test"}, .provider = {provider->id, std::move(config)},
     });

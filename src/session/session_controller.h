@@ -266,6 +266,7 @@ private:
         std::shared_ptr<SubmissionState> submission, std::optional<CurrentNote> current_note,
         FixedRecipients recipients = {});
     ControllerUpdate finish_classification();
+    const TranscriptEntry* first_human_entry() const;
     void start_session_name(ControllerUpdate& update, std::string_view prompt = {});
     void accept_session_name(std::string title, ControllerUpdate& update);
     void publish_recent(ControllerUpdate& update);
@@ -279,7 +280,6 @@ private:
         std::shared_ptr<SubmissionState> submission;
         std::chrono::steady_clock::time_point deadline;
         std::shared_ptr<JevRequest> request;
-        std::optional<JevResult> result;
         std::optional<std::int64_t> note_id;
         FixedRecipients recipients;
     };

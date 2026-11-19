@@ -78,6 +78,21 @@ TEST(GoogleApi, EncodesFlexAtTheTopLevel) {
     }
 }
 
+TEST(GoogleApi, EncodesTheHighestSupportedLevelForExtraHighEffort) {
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"human", "You"}, .prompt_text = "Hi"},
+    };
+    ModelBackendConfig config{.model = "models/gemini-4-neon",
+        .reasoning_effort = "xhigh", .api = ProviderApi::google};
+    const auto neon = Json::parse(build_google_request_body(request, config, ""));
+    EXPECT_EQ(neon.at("generationConfig").at("thinkingConfig"), (Json{{"thinkingLevel", "XHIGH"}}));
+
+    config.model = "gemini-3-flash-preview";
+    const auto flash = Json::parse(build_google_request_body(request, config, ""));
+    EXPECT_EQ(flash.at("generationConfig").at("thinkingConfig"), (Json{{"thinkingLevel", "HIGH"}}));
+}
+
 TEST(GoogleApi, PlacesTheStepInstructionAfterTheNote) {
     const GenerationRequest request{
         .history = std::make_shared<const ModelHistory>(),

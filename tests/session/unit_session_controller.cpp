@@ -2812,13 +2812,12 @@ TEST(SessionController, RestoresObsoleteReferencesWithoutChangingStoredRows) {
     }
     auto controller = test::from_test_backends(test::one_backend(std::make_unique<ScriptedBackend>()),
         temporary.path, notifier(), load_session_state(temporary.path));
-    ASSERT_EQ(controller->view().character_settings->size(), 1U);
-    EXPECT_EQ(controller->view().character_settings->at("guide-id").provider_id, "removed");
-    EXPECT_FALSE(controller->view().character_settings->at("guide-id").reasoning_effort);
-    EXPECT_EQ(load_session_state(temporary.path).character_settings.at("guide-id").reasoning_effort, "future-effort");
+    EXPECT_TRUE(controller->view().character_settings->empty());
+    EXPECT_EQ(load_session_state(temporary.path).character_settings.at("guide-id"),
+        (SessionCharacterSettings{"removed", "future-effort"}));
     (void)controller->set_character_settings("guide-id", std::nullopt, std::optional<std::string>("low"));
     EXPECT_EQ(load_session_state(temporary.path).character_settings.at("guide-id"),
-        (SessionCharacterSettings{"removed", "low"}));
+        (SessionCharacterSettings{std::nullopt, "low"}));
 }
 
 

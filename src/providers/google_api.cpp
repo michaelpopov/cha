@@ -5,12 +5,75 @@
 #include "util/logging.h"
 #include "util/text.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
 namespace cha {
 namespace {
 using Json = nlohmann::json;
+
+struct ThinkingLevels {
+    std::string_view model;
+    std::string_view none = "LOW";
+    std::string_view low = "LOW";
+    std::string_view medium = "MEDIUM";
+    std::string_view xhigh = "HIGH";
+};
+
+constexpr ThinkingLevels thinking_level_models[]{
+    {.model = "gemini-3-pro", .medium = "HIGH"},
+    {.model = "gemini-3-flash", .none = "MINIMAL"},
+    {.model = "gemini-3.1-pro"},
+    {.model = "gemini-3.1-flash-lite", .none = "MINIMAL"},
+    {.model = "gemini-3.1-flash-lite-image", .none = "MINIMAL", .low = "MINIMAL", .medium = "HIGH"},
+    {.model = "gemini-3.5-flash-lite", .none = "MINIMAL"},
+    {.model = "gemini-3.6-flash", .none = "MINIMAL"},
+    {.model = "gemini-3.8-flash"},
+    {.model = "gemini-4-carbon"},
+    {.model = "gemini-4-argon"},
+    {.model = "gemini-4-neon", .xhigh = "XHIGH"},
+    {.model = "gemini-4-hydrogen", .xhigh = "XHIGH"},
+};
+
+std::string_view thinking_model_name(std::string_view model) {
+    if (model.starts_with("models/")) model.remove_prefix(7);
+    if (model.ends_with("-latest")) model.remove_suffix(7);
+    constexpr std::string_view preview_tag = "-preview";
+    const auto preview = model.find(preview_tag);
+    if (preview != std::string_view::npos) {
+        const auto suffix = model.substr(preview + preview_tag.size());
+        if (suffix.empty() || suffix == "-customtools"
+            || (suffix.starts_with('-') && suffix.find_first_not_of("-0123456789") == std::string_view::npos)) {
+            model = model.substr(0, preview);
+        }
+    }
+    return model;
+}
+
+void add_thinking_config(Json& generation, std::string_view model, std::string_view effort) {
+    if (!valid_reasoning_effort(effort)) return;
+    model = thinking_model_name(model);
+    const bool pro = model == "gemini-2.5-pro";
+    if (pro || model == "gemini-2.5-flash" || model == "gemini-2.5-flash-lite") {
+        int budget = pro ? 128 : 0;
+        if (effort == "low") budget = 1024;
+        if (effort == "medium") budget = 4096;
+        if (effort == "high") budget = 8192;
+        if (effort == "xhigh") budget = 16384;
+        generation["thinkingConfig"] = {{"thinkingBudget", budget}};
+        return;
+    }
+
+    const auto* levels = std::ranges::find(thinking_level_models, model, &ThinkingLevels::model);
+    if (levels == std::ranges::end(thinking_level_models)) return;
+    std::string_view level = "HIGH";
+    if (effort == "none") level = levels->none;
+    if (effort == "low") level = levels->low;
+    if (effort == "medium") level = levels->medium;
+    if (effort == "xhigh") level = levels->xhigh;
+    generation["thinkingConfig"] = {{"thinkingLevel", level}};
+}
 
 void update_count(const Json& usage, const char* field,
     std::optional<std::uint64_t>& count) {
@@ -62,6 +125,7 @@ std::string build_google_request_body(
     Json generation{{"candidateCount", 1}};
     if (config.temperature) generation["temperature"] = *config.temperature;
     if (config.max_tokens) generation["maxOutputTokens"] = *config.max_tokens;
+    add_thinking_config(generation, config.model, config.reasoning_effort);
     body["generationConfig"] = std::move(generation);
     if (input.maintenance_tool) {
         add_maintenance_tools(body, ProviderApi::google);

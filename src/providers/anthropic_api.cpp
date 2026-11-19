@@ -3,12 +3,71 @@
 #include "providers/tool_calls.h"
 #include "util/json_serialization.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace cha {
 namespace {
 using Json = nlohmann::json;
 constexpr int default_max_tokens = 64000;
+
+struct ThinkingOptions {
+    std::string_view model;
+    std::string_view xhigh = "xhigh";
+    std::string_view none = "disabled";
+};
+
+// An empty xhigh field marks models that take a manual token budget.
+constexpr ThinkingOptions thinking_models[]{
+    {.model = "claude-opus-4-5", .xhigh = {}},
+    {.model = "claude-sonnet-4-5", .xhigh = {}},
+    {.model = "claude-haiku-4-5", .xhigh = {}},
+    {.model = "claude-opus-4-6", .xhigh = "max"},
+    {.model = "claude-sonnet-4-6", .xhigh = "max"},
+    {.model = "claude-opus-4-7"},
+    {.model = "claude-opus-4-8"},
+    {.model = "claude-opus-5"},
+    {.model = "claude-opus-5-5", .none = "adaptive"},
+    {.model = "claude-sonnet-5"},
+    {.model = "claude-sonnet-5-5", .none = "between_tools"},
+    {.model = "claude-haiku-5-5"},
+    {.model = "claude-fable-5", .none = "adaptive"},
+    {.model = "claude-fable-5-1", .none = "adaptive"},
+    {.model = "claude-fable-5-2", .none = "adaptive"},
+    {.model = "claude-mythos-preview", .xhigh = "max", .none = "adaptive"},
+    {.model = "claude-mythos-5", .none = "adaptive"},
+    {.model = "claude-mythos-5-1", .none = "adaptive"},
+    {.model = "claude-mythos-5-2", .none = "adaptive"},
+};
+
+std::string_view thinking_model_name(std::string_view model) {
+    if (model.ends_with("-latest")) model.remove_suffix(7);
+    if (model.size() > 9 && model[model.size() - 9] == '-'
+        && model.substr(model.size() - 8).find_first_not_of("0123456789") == std::string_view::npos) {
+        model.remove_suffix(9);
+    }
+    return model;
+}
+
+void add_thinking_config(Json& body, std::string_view model, std::string_view effort, int max_tokens) {
+    if (!valid_reasoning_effort(effort)) return;
+    const auto* options = std::ranges::find(thinking_models, thinking_model_name(model), &ThinkingOptions::model);
+    if (options == std::ranges::end(thinking_models)) return;
+
+    if (effort == "none") {
+        body["thinking"] = {{"type", options->none}};
+        if (options->none == "adaptive") body["output_config"] = {{"effort", "low"}};
+    } else if (!options->xhigh.empty()) {
+        body["thinking"] = {{"type", "adaptive"}};
+        body["output_config"] = {{"effort", effort == "xhigh" ? options->xhigh : effort}};
+    } else if (max_tokens > 1024) {
+        int budget = 1024;
+        if (effort == "medium") budget = 4096;
+        if (effort == "high") budget = 8192;
+        if (effort == "xhigh") budget = 16384;
+        body["thinking"] = {{"type", "enabled"}, {"budget_tokens", std::min(budget, max_tokens - 1)}};
+    }
+}
 
 void update_count(const Json& usage, const char* field, std::optional<std::uint64_t>& count) {
     if (const auto value = usage.find(field); value != usage.end()) {
@@ -41,8 +100,10 @@ std::string build_anthropic_request_body(
     if (!input.library_store_ids.empty() && (input.library_search || input.library_search_tool))
         throw std::logic_error("Native and application Library retrieval cannot be combined");
     if (text_sizes) *text_sizes = {};
+    const int max_tokens = config.max_tokens.value_or(default_max_tokens);
     Json body{{"model", config.model}, {"stream", config.stream},
-        {"max_tokens", config.max_tokens.value_or(default_max_tokens)}, {"messages", Json::array()}};
+        {"max_tokens", max_tokens}, {"messages", Json::array()}};
+    add_thinking_config(body, config.model, config.reasoning_effort, max_tokens);
     for (const auto& message : project_model_context(input, system_prompt)) {
         const bool system = message.role == ModelRole::system;
         if (text_sizes) {

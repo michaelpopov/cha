@@ -529,7 +529,7 @@ TEST(ApplicationMedia, GoogleCompressedSummaryUsesSelectedEffortAndRejectsPartia
         server.start();
         test::TestWorkspace fixture;
         fixture.write_provider("google", "host = '127.0.0.1'\nport = " + std::to_string(server.port())
-            + "\nmodel = 'gemini-test'\nbase_path = '/v1beta'\nmode = 'net'\napi = 'google'\n");
+            + "\nmodel = 'gemini-2.5-flash'\nbase_path = '/v1beta'\nmode = 'net'\napi = 'google'\n");
         auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
         const auto epoch = application->context_epoch();
         const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
@@ -551,12 +551,12 @@ TEST(ApplicationMedia, GoogleCompressedSummaryUsesSelectedEffortAndRejectsPartia
         else EXPECT_EQ(saved.document_id, note.id);
         ASSERT_EQ(server.requests().size(), 1u);
         const auto& wire = server.requests()[0];
-        EXPECT_TRUE(wire.starts_with("POST /v1beta/models/gemini-test:streamGenerateContent?alt=sse HTTP/1.1"));
+        EXPECT_TRUE(wire.starts_with("POST /v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse HTTP/1.1"));
         const auto body = Json::parse(wire.substr(wire.find("\r\n\r\n") + 4));
         EXPECT_TRUE(body.contains("systemInstruction"));
         EXPECT_TRUE(body.contains("contents"));
         EXPECT_FALSE(body.contains("reasoning_effort"));
-        EXPECT_FALSE(body.contains("thinkingConfig"));
+        EXPECT_EQ(body.at("generationConfig").at("thinkingConfig"), (Json{{"thinkingBudget", 8192}}));
         EXPECT_FALSE(body.contains("tools"));
         EXPECT_EQ(body.dump().find("tool_availability"), std::string::npos);
         application->request_shutdown();
@@ -574,7 +574,7 @@ TEST(ApplicationMedia, AnthropicCompressedSummaryUsesSelectedEffortAndRejectsPar
         server.start();
         test::TestWorkspace fixture;
         fixture.write_provider("anthropic", "host = '127.0.0.1'\nport = " + std::to_string(server.port())
-            + "\nmodel = 'claude-test'\nbase_path = ''\nmode = 'net'\nstream = false\napi = 'anthropic'\n");
+            + "\nmodel = 'claude-sonnet-4-6'\nbase_path = ''\nmode = 'net'\nstream = false\napi = 'anthropic'\n");
         auto application = Application::open(make_command(fixture, test::import_test_database(fixture.root())));
         const auto epoch = application->context_epoch();
         const auto note = application->create_note_item({}, NoteItemKind::note, "Long note", epoch);
@@ -602,7 +602,8 @@ TEST(ApplicationMedia, AnthropicCompressedSummaryUsesSelectedEffortAndRejectsPar
         EXPECT_TRUE(body.contains("messages"));
         EXPECT_EQ(body["max_tokens"], 64000);
         EXPECT_FALSE(body.contains("reasoning_effort"));
-        EXPECT_FALSE(body.contains("thinking"));
+        EXPECT_EQ(body.at("thinking"), (Json{{"type", "adaptive"}}));
+        EXPECT_EQ(body.at("output_config"), (Json{{"effort", "high"}}));
         EXPECT_FALSE(body.contains("tools"));
         EXPECT_EQ(body.dump().find("tool_availability"), std::string::npos);
         application->request_shutdown();

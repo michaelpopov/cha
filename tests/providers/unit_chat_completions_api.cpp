@@ -77,6 +77,23 @@ TEST(ChatCompletionsApi, ReportsExplicitRefusalsWithoutChangingAnswerText) {
     }
 }
 
+TEST(ChatCompletionsApi, UsesMaxCompletionTokensOnlyForDirectOpenAI) {
+    GenerationRequest request;
+    request.history = std::make_shared<const ModelHistory>();
+    request.run.prompt_text = "Hi";
+    ModelBackendConfig config{.host = "API.OPENAI.COM.", .model = "o3", .max_tokens = 123};
+    using Json = nlohmann::json;
+
+    const auto openai = Json::parse(build_chat_completions_request_body(request, config, ""));
+    EXPECT_EQ(openai.at("max_completion_tokens"), 123);
+    EXPECT_FALSE(openai.contains("max_tokens"));
+
+    config.host = "openrouter.ai";
+    const auto other = Json::parse(build_chat_completions_request_body(request, config, ""));
+    EXPECT_EQ(other.at("max_tokens"), 123);
+    EXPECT_FALSE(other.contains("max_completion_tokens"));
+}
+
 TEST(ChatCompletionsApi, OmitsUnsupportedReasoningForDirectMistralLarge) {
     GenerationRequest request;
     request.history = std::make_shared<const ModelHistory>();

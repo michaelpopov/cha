@@ -936,17 +936,17 @@ CharacterConfig load_character_config(
     const auto provider_id = optional_value<std::string>(table, path, "provider", "a string");
     const auto* provider = workspace && provider_id ? workspace->find_provider(*provider_id) : nullptr;
     const bool anthropic = provider && provider->config.api == ProviderApi::anthropic;
-    if (anthropic) {
-        for (const auto& [field, default_value] : {
-                 std::pair{"reasoning_effort", "none"}, {"web_search", "off"}}) {
-            if (table.contains(field) && table[field].value<std::string>() != default_value) {
-                warnings.emit(path, "Ignoring " + std::string(field) + " for Anthropic character in " + utf8_path(path));
-            }
-        }
+    if (anthropic && table.contains("web_search") && table["web_search"].value<std::string>() != "off") {
+        warnings.emit(path, "Ignoring web_search for Anthropic character in " + utf8_path(path));
     }
     auto reasoning_effort = anthropic ? table["reasoning_effort"].value<std::string>()
         : optional_value<std::string>(table, path, "reasoning_effort", "a string");
-    if (anthropic && reasoning_effort && !valid_reasoning_effort(*reasoning_effort)) reasoning_effort.reset();
+    if (reasoning_effort) normalize_legacy_reasoning_effort(*reasoning_effort, path, warnings);
+    if (anthropic && table.contains("reasoning_effort")
+        && (!reasoning_effort || !valid_reasoning_effort(*reasoning_effort))) {
+        warnings.emit(path, "Unsupported character reasoning_effort in " + utf8_path(path));
+        reasoning_effort.reset();
+    }
     CharacterConfig result{
         .display_name = optional_value<std::string>(
             table, path, "display_name", "a string"),
@@ -962,9 +962,6 @@ CharacterConfig load_character_config(
         .tags = definition ? load_tags(table, path) : std::vector<std::string>{},
         .prompt_variables = template_scope_from_toml(table, "prompt", utf8_path(path)),
     };
-    if (result.reasoning_effort) {
-        normalize_legacy_reasoning_effort(*result.reasoning_effort, path, warnings);
-    }
     if (!anthropic && table.contains("web_search")) {
         result.web_search = choice(
             table, path, "web_search", parse_web_search_mode, WebSearchMode::off);
@@ -1790,13 +1787,11 @@ CharacterAppearance resolve_character_references(
             std::string(subject) + " references unknown provider '"
             + *config.provider_id + "'");
     }
-    if (config.reasoning_effort) {
+    if (config.reasoning_effort && !valid_reasoning_effort(*config.reasoning_effort)) {
         if (provider && provider->config.api == ProviderApi::google) {
-            if (*config.reasoning_effort != default_reasoning_effort) {
-                warnings.emit(path, std::string(subject) + " ignores reasoning_effort for Google");
-            }
-            if (!valid_reasoning_effort(*config.reasoning_effort)) config.reasoning_effort.reset();
-        } else if (!valid_reasoning_effort(*config.reasoning_effort)) {
+            warnings.emit(path, "Unsupported character reasoning_effort in " + utf8_path(path));
+            config.reasoning_effort.reset();
+        } else {
             throw std::runtime_error("Character config '" + utf8_path(path)
                 + "' has unsupported reasoning_effort '" + *config.reasoning_effort + "'");
         }
@@ -2628,11 +2623,6 @@ CharacterDefinition Workspace::character_definition(
     if (character->web_search && *character->web_search != WebSearchMode::off
         && !provider_supports_web_search(provider.config)) {
         log_warn("Ignoring character web_search for selected provider '" + provider.id + "'");
-    }
-    if ((provider.config.api == ProviderApi::google || provider.config.api == ProviderApi::anthropic)
-        && provider.config.reasoning_effort != default_reasoning_effort
-        && (character->reasoning_effort || (overrides && overrides->reasoning_effort))) {
-        log_warn("Selected provider '" + provider.id + "' ignores character/session reasoning_effort");
     }
     std::string character_prompt = member->character_prompt;
     std::string description = character_description(character_prompt);

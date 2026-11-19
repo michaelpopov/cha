@@ -177,7 +177,7 @@ std::string build_chat_completions_request_body(
         body["temperature"] = *config.temperature;
     }
     if (config.max_tokens) {
-        body["max_tokens"] = *config.max_tokens;
+        body[is_direct_openai_host(config.host) ? "max_completion_tokens" : "max_tokens"] = *config.max_tokens;
     }
     if (config.stream) {
         body["stream_options"] = Json{{"include_usage", true}};

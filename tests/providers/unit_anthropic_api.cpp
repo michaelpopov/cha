@@ -75,6 +75,24 @@ TEST(AnthropicApi, ConfigurationAndCustomEndpointsIgnoreUnusedValues) {
     EXPECT_TRUE(provider_config_error(config));
 }
 
+TEST(AnthropicApi, EncodesExtraHighEffortForAdaptiveAndManualThinking) {
+    const GenerationRequest request{
+        .history = std::make_shared<const ModelHistory>(),
+        .run = {.author = {"human", "You"}, .prompt_text = "Hi"},
+    };
+    ModelBackendConfig config{.model = "claude-opus-4-6",
+        .reasoning_effort = "xhigh", .api = ProviderApi::anthropic};
+    const auto opus = Json::parse(build_anthropic_request_body(request, config, ""));
+    EXPECT_EQ(opus.at("thinking"), (Json{{"type", "adaptive"}}));
+    EXPECT_EQ(opus.at("output_config"), (Json{{"effort", "max"}}));
+
+    config.model = "claude-sonnet-4-5-20250929";
+    config.max_tokens = 12000;
+    const auto sonnet = Json::parse(build_anthropic_request_body(request, config, ""));
+    EXPECT_EQ(sonnet.at("thinking"), (Json{{"type", "enabled"}, {"budget_tokens", 11999}}));
+    EXPECT_FALSE(sonnet.contains("output_config"));
+}
+
 TEST(AnthropicApi, PlacesTheStepInstructionAfterTheNote) {
     const GenerationRequest request{
         .history = std::make_shared<const ModelHistory>(),
