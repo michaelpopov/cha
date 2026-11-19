@@ -669,7 +669,7 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                     candidate.data, storage::SqliteDatabase::Mode::read_write,
                     create.password);
                 storage::SqliteTransaction transaction(fresh);
-                sync_clear_outgoing(fresh);
+                sync_clear_outgoing(fresh, !app.command.chaweb_host);
                 for (const auto& [name, content] : default_prompt_config_files()) {
                     fresh.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)"
                                   " ON CONFLICT(name) DO NOTHING",
@@ -1118,6 +1118,16 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
     return result;
 }
 
+static void require_no_pending_sync(
+    const std::filesystem::path& path, std::string_view password) {
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only, password);
+    if (sync_has_pending(database)) {
+        throw ApplicationError(ErrorCode::invalid_argument,
+            "Changes are not sent to D1 yet. Try again when D1 can be reached, "
+            "or save the D1 credentials again.");
+    }
+}
+
 // The copy is made in maintenance. From then until finish_upload ends, other
 // maintenance is refused, so the saved ETag still describes the active vault.
 R2DatabaseUpload Application::Impl::VaultMaintenance::prepare_upload(
@@ -1132,16 +1142,7 @@ R2DatabaseUpload Application::Impl::VaultMaintenance::prepare_upload(
             storage = *r2;
             // Writers are excluded; the maintenance drain already collected
             // flags and attempted one send. Refuse while pending work remains.
-            {
-                storage::SqliteDatabase pending_db(
-                    vault.data, storage::SqliteDatabase::Mode::read_only,
-                    app.active_password);
-                if (sync_has_pending(pending_db)) {
-                    throw ApplicationError(
-                        ErrorCode::invalid_argument,
-                        "Changes are not sent to D1 yet. Try again when D1 can be reached.");
-                }
-            }
+            require_no_pending_sync(vault.data, app.active_password);
             R2DatabaseUpload upload(vault.data, vault.source, app.active_password);
             app.vault_upload_running = true;
             reserved = true;
@@ -1247,6 +1248,23 @@ Application::Impl::VaultMaintenance::check_database_upload(
     };
 }
 
+static bool covers_sync_receipts(
+    storage::SqliteDatabase& current, storage::SqliteDatabase& staged) {
+    if (!sync_has_receipt_schema(current)) return true;
+    auto required = current.prepare("SELECT op_id FROM sync_seen ORDER BY op_id");
+    if (!required.step()) return true;
+    if (!sync_has_receipt_schema(staged)) return false;
+
+    auto available = staged.prepare("SELECT op_id FROM sync_seen ORDER BY op_id");
+    bool has_available = available.step();
+    do {
+        const auto op_id = required.text(0);
+        while (has_available && available.text(0) < op_id) has_available = available.step();
+        if (!has_available || available.text(0) != op_id) return false;
+    } while (required.step());
+    return true;
+}
+
 R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
     std::uint64_t epoch, bool from_welcome) {
     std::optional<VaultDefinition> downloaded_vault;
@@ -1257,6 +1275,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
             const auto r2 = checked_key ? *checked_key : require_r2_key();
             const VaultDefinition active = app.current_vault_.get();
             BeforeR2Install before_install;
+            CheckR2Candidate check_candidate;
             if (from_welcome) {
                 before_install = [&](const std::filesystem::path& temporary, VaultDefinition definition) {
                     if (definition.password_protected) {
@@ -1264,10 +1283,23 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
                     }
                     clear_downloaded_inbox(temporary, definition.name);
                 };
+            } else if (!app.command.chaweb_host) {
+                require_no_pending_sync(active.data, app.active_password);
+                check_candidate = [&](const std::filesystem::path& temporary) {
+                    using Database = storage::SqliteDatabase;
+                    Database current(active.data, Database::Mode::read_only, app.active_password);
+                    Database staged(temporary, Database::Mode::read_only, app.active_password);
+                    if (!covers_sync_receipts(current, staged)) {
+                        throw ApplicationError(ErrorCode::invalid_argument,
+                            "The R2 copy is missing changes from this vault. Upload a fresh copy "
+                            "from a machine that has received all changes, then try again.");
+                    }
+                };
             }
             const auto transferred = download_database_from_r2(
                 active.data, active.source, r2, R2DatabaseLease::already_held,
-                app.active_password, [this] { return app.shutdown_requested(); }, before_install);
+                app.active_password, [this] { return app.shutdown_requested(); }, before_install,
+                check_candidate);
             app.clear_current_note();
             downloaded_vault = load_vault_definition_file(app.command.config_directory, active.source);
             vault::assign_vault_paths(*downloaded_vault, app.command);

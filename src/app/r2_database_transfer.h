@@ -45,6 +45,9 @@ public:
 using BeforeR2Install = std::function<void(
     const std::filesystem::path& temporary_database, VaultDefinition definition)>;
 
+// Desktop replacement validates the staged database before its outbox is cleared.
+using CheckR2Candidate = std::function<void(const std::filesystem::path& temporary_database)>;
+
 enum class R2DatabaseLease {
     acquire,
     already_held,
@@ -103,7 +106,8 @@ R2DatabaseTransfer download_database_from_r2(
     R2DatabaseLease lease = R2DatabaseLease::acquire,
     std::string_view database_password = {},
     const std::function<bool()>& cancelled = {},
-    const BeforeR2Install& before_install = {});
+    const BeforeR2Install& before_install = {},
+    const CheckR2Candidate& check_candidate = {});
 
 std::optional<std::string> get_r2_database_etag(
     std::string_view database_name,

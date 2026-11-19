@@ -1638,7 +1638,7 @@ struct WorkspaceConfigStore::Impl {
                 prune_orphan_sessions(*database, *surviving_forums);
             }
             if (desktop_host || surviving_forums) ensure_forum_rows(*database, candidate_forums);
-            if (clear_outgoing) sync_clear_outgoing(*database);
+            if (clear_outgoing) sync_clear_outgoing(*database, desktop_host);
             if (record_sync) record_config_edit(*database, sync_machine, committed_rows, rows);
             if (!op_id.empty()) sync_record_receipt(*database, op_id);
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {

@@ -51,7 +51,8 @@ struct QueuedRecord {
 void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid,
     std::string_view op_id = {});
 // Caller owns the transaction. Empties the queue and clears all note flags.
-void sync_clear_outgoing(storage::SqliteDatabase& database);
+// With discard_receipts, also deletes the receipts of the discarded rows.
+void sync_clear_outgoing(storage::SqliteDatabase& database, bool discard_receipts = true);
 // True when unsent records or flagged notes exist. False on databases that
 // predate the sync schema.
 [[nodiscard]] bool sync_has_pending(storage::SqliteDatabase& database);

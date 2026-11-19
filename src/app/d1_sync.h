@@ -31,7 +31,8 @@ public:
         // Desktop keeps all queues when D1 is full; cha-daemon still evicts a table.
         bool desktop_host = false;
         D1Client::Transport transport;
-        bool v2_for_tests = false;
+        // Operation IDs, receipts and q2/ queues. cha-daemon keeps the legacy queues.
+        bool use_v2 = false;
         // Reservation and store access; null in raw-DB tests.
         WorkspaceConfigStore* store = nullptr;
         // Live sessions for per-chat and global reservations; null skips reservation.

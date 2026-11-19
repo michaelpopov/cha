@@ -138,8 +138,10 @@ void sync_queue_delete(storage::SqliteDatabase& database, std::int64_t rowid,
     else database.prepare("DELETE FROM sync_queue WHERE op_id=?1", op_id).run();
 }
 
-void sync_clear_outgoing(storage::SqliteDatabase& database) {
+void sync_clear_outgoing(storage::SqliteDatabase& database, bool discard_receipts) {
     ensure_sync_schema(database);
+    if (discard_receipts && sync_has_receipt_schema(database))
+        database.execute("DELETE FROM sync_seen WHERE op_id IN (SELECT op_id FROM sync_queue)");
     database.prepare("DELETE FROM sync_queue").run();
     if (has_table(database, "note_items"))
         database.prepare("UPDATE note_items SET changed=0 WHERE changed<>0").run();

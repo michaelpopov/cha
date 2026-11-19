@@ -539,8 +539,14 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
     const std::filesystem::path remote =
         test::import_test_database(remote_workspace.root());
     seed_pending_sync(remote);
+    const std::string retained_id(32, 'a');
+    std::string pending_id;
     {
         storage::SqliteDatabase source(remote, storage::SqliteDatabase::Mode::read_write);
+        storage::SqliteTransaction transaction(source);
+        ensure_sync_schema(source, true);
+        pending_id = sync_queue_list(source).front().op_id;
+        sync_record_receipt(source, retained_id);
         source.execute(R"sql(
             CREATE TABLE legacy_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -554,6 +560,7 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
             DROP TABLE note_items;
             ALTER TABLE legacy_notes RENAME TO note_items;
         )sql");
+        transaction.commit();
     }
     checkpoint_workspace_session_database(remote, {}, false);
     const std::string remote_bytes = file_bytes(remote);
@@ -589,6 +596,8 @@ TEST(R2DatabaseTransfer, DownloadsANewDatabaseWithoutReplacingAnything) {
         EXPECT_TRUE(sync_queue_list(installed).empty());
         EXPECT_FALSE(sync_has_pending(installed));
         EXPECT_TRUE(sync_read_d1(installed));
+        EXPECT_TRUE(sync_seen(installed, retained_id));
+        EXPECT_FALSE(sync_seen(installed, pending_id));
         EXPECT_TRUE(installed.prepare("SELECT compressed_text FROM note_items WHERE name='Flagged'").step());
     }
     {

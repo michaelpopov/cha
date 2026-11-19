@@ -1123,12 +1123,12 @@ R2DatabaseTransfer upload_database_to_r2(
 
 static void cleanup_downloaded_database(
     const std::filesystem::path& temporary_path,
-    std::string_view password) {
+    std::string_view password, bool discard_receipts) {
     {
         storage::SqliteDatabase database(
             temporary_path, storage::SqliteDatabase::Mode::read_write, password);
         storage::SqliteTransaction transaction(database);
-        sync_clear_outgoing(database);
+        sync_clear_outgoing(database, discard_receipts);
         transaction.commit();
     }
     // Non-passive checkpoint uses TRUNCATE and rejects a busy checkpoint.
@@ -1143,7 +1143,8 @@ R2DatabaseTransfer download_database_from_r2(
     R2DatabaseLease lease_mode,
     std::string_view database_password,
     const std::function<bool()>& cancelled,
-    const BeforeR2Install& before_install) {
+    const BeforeR2Install& before_install,
+    const CheckR2Candidate& check_candidate) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
         std::filesystem::absolute(vault_definition_path).lexically_normal();
@@ -1196,7 +1197,9 @@ R2DatabaseTransfer download_database_from_r2(
         }
     });
 
-    cleanup_downloaded_database(database_temporary.get(), database_password);
+    if (check_candidate) check_candidate(database_temporary.get());
+    // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
+    cleanup_downloaded_database(database_temporary.get(), database_password, !before_install);
     // BeforeR2Install can clear the D1 inbox. After it starts, finish the installation.
     if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
     if (before_install) {
@@ -1332,7 +1335,8 @@ R2DatabaseTransfer download_new_database_from_r2(
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error("R2 download is not a valid CHA database");
     }
-    cleanup_downloaded_database(database_temporary.get(), {});
+    // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
+    cleanup_downloaded_database(database_temporary.get(), {}, !before_install);
     // BeforeR2Install can clear the D1 inbox. After it starts, finish the installation.
     if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
     if (before_install) {

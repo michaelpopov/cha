@@ -228,8 +228,7 @@ Application::Impl::Impl(
     const ApplicationCommand& selected_command,
     std::string selected_vault_password,
     RuntimeSettings selected_settings,
-    D1Client::Transport d1_transport,
-    bool d1_v2)
+    D1Client::Transport d1_transport)
     : command(selected_command),
       active_password(std::move(selected_vault_password)),
       settings(std::move(selected_settings)),
@@ -338,8 +337,7 @@ Application::Impl::Impl(
               const MaintenanceContext& context, const std::atomic_bool& cancelled) {
               return assistant->execute(name, arguments, context, cancelled);
           }),
-      d1_test_transport(std::move(d1_transport)),
-      d1_v2_for_tests(d1_v2) {
+      d1_test_transport(std::move(d1_transport)) {
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         .identity = {std::string(entrance_id), std::string(welcome_id)},
@@ -421,7 +419,7 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
         config.machine = command.machine;
         config.desktop_host = !command.chaweb_host;
         config.transport = d1_test_transport;
-        config.v2_for_tests = d1_v2_for_tests;
+        config.use_v2 = !command.chaweb_host;
         config.store = store.get();
         config.live_sessions = live_sessions.get();
         config.application_stopping = [this] { return stopping_flag.load(); };
@@ -568,8 +566,7 @@ std::unique_ptr<Application> Application::open(
     const ApplicationCommand& command,
     std::string vault_password,
     RuntimeSettings settings,
-    D1Client::Transport d1_transport_for_tests,
-    bool d1_v2_for_tests) {
+    D1Client::Transport d1_transport_for_tests) {
     for (const std::string& warning : command.warnings) log_warn(warning);
     if (command.vault.password_protected && vault_password.empty()) {
         throw VaultPasswordError(
@@ -582,7 +579,7 @@ std::unique_ptr<Application> Application::open(
     return std::unique_ptr<Application>(new Application(
         std::make_unique<Impl>(
             command, std::move(vault_password), std::move(settings),
-            std::move(d1_transport_for_tests), d1_v2_for_tests)));
+            std::move(d1_transport_for_tests))));
 }
 
 ApplicationBootstrap Application::bootstrap() {
@@ -1667,8 +1664,9 @@ D1StorageDetail Application::save_d1_storage(
         D1Client client(
             {request.account_id, request.database_id, *request.api_token},
             impl_->d1_test_transport);
-        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine);
-        if (const auto error = client.create_queue_table(table)) {
+        const bool v2 = !impl_->command.chaweb_host;
+        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine, v2);
+        if (const auto error = client.create_queue_table(table, v2)) {
             log_warn("D1 table creation failed: " + error->message);
             throw ApplicationError(
                 ErrorCode::invalid_argument,
@@ -1714,15 +1712,22 @@ void Application::disconnect_d1_storage(std::uint64_t epoch) {
 
     const auto& machine = impl_->command.machine;
     if (machine.empty() || !old->usable()) return;
-    try {
-        D1Client client({old->account_id, old->database_id, old->api_token},
-            impl_->d1_test_transport);
-        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine);
-        if (const auto error = client.drop_table(table))
-            log_warn("D1 disconnect remote drop failed: " + error->message);
-    } catch (const std::exception& error) {
-        log_warn(std::string("D1 disconnect remote drop failed: ") + error.what());
-    }
+    const bool v2 = !impl_->command.chaweb_host;
+    const auto drop_queue = [&](bool v2_table) {
+        try {
+            D1Client client({old->account_id, old->database_id, old->api_token},
+                impl_->d1_test_transport);
+            const auto table = sync_queue_table(impl_->current_vault_.get().name, machine, v2_table);
+            if (const auto error = client.drop_table(table);
+                error && (!v2 || error->failure != D1Client::Failure::missing_table)) {
+                log_warn("D1 disconnect remote drop failed: " + error->message);
+            }
+        } catch (const std::exception& error) {
+            log_warn(std::string("D1 disconnect remote drop failed: ") + error.what());
+        }
+    };
+    if (v2) drop_queue(true);
+    drop_queue(false);
 }
 
 OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {

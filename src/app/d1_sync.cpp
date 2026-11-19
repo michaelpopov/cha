@@ -108,7 +108,7 @@ void D1SyncWorker::halt_with_missing_table() {
 }
 
 bool D1SyncWorker::using_v2() const noexcept {
-    return config_.desktop_host && config_.v2_for_tests && static_cast<bool>(config_.transport);
+    return config_.use_v2;
 }
 
 void D1SyncWorker::report_v2(EventSeverity severity, const std::string& message) {

@@ -21,6 +21,7 @@
 #include <fstream>
 #include <future>
 #include <iomanip>
+#include <iterator>
 #include <thread>
 
 namespace cha {
@@ -94,7 +95,6 @@ struct MockD1 {
     std::condition_variable changed;
     std::vector<std::string> statements;
     std::vector<std::string> create_headers;
-    std::size_t reads{};
     nlohmann::json incoming = nlohmann::json::array();
     nlohmann::json sent = nlohmann::json::array();
     nlohmann::json incoming_v2 = nlohmann::json::array();
@@ -119,10 +119,7 @@ struct MockD1 {
                         local_v2_exists = true;
                     create_headers = headers;
                 }
-                if (sql.starts_with("SELECT rowid")) {
-                    ++reads;
-                    rows = incoming;
-                }
+                if (sql.starts_with("SELECT rowid")) rows = incoming;
                 if (sql.starts_with("SELECT seq")) rows = incoming_v2;
                 if (sql.starts_with("DELETE FROM")) {
                     if (sql.find("op_id IN") == std::string::npos) incoming.clear();
@@ -178,10 +175,16 @@ struct MockD1 {
         };
     }
 
-    bool wait_for_reads(std::size_t count = 1) {
+    bool wait_for_statement(std::string_view prefix, std::size_t count = 1) {
         std::unique_lock lock(mutex);
-        return changed.wait_for(lock, 5s, [&] { return reads >= count; });
+        return changed.wait_for(lock, 5s, [&] {
+            return std::ranges::count_if(statements,
+                [&](const auto& sql) { return sql.starts_with(prefix); })
+                >= static_cast<std::ptrdiff_t>(count);
+        });
     }
+
+    bool wait_for_reads(std::size_t count = 1) { return wait_for_statement("SELECT rowid", count); }
 
     std::size_t count(std::string_view prefix) {
         const std::lock_guard lock(mutex);
@@ -196,6 +199,18 @@ nlohmann::json ready_row(int seq, std::string_view id, std::string record) {
 
 SaveD1StorageRequest credentials() {
     return {.display_name = "D1", .account_id = "a", .database_id = "d", .api_token = "t"};
+}
+
+std::string file_bytes(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+SaveR2StorageRequest r2_credentials(int port) {
+    return {
+        .display_name = "R2", .url = "http://127.0.0.1:" + std::to_string(port) + "/cha-backups/",
+        .access_key_id = "k", .secret_key = "s",
+    };
 }
 
 void seed_d1(const std::filesystem::path& path) {
@@ -292,8 +307,6 @@ TEST(D1AppWiringTest, MalformedPieceMetadataSkipsOnlyTheBadRows) {
     EXPECT_TRUE(sync_note_find(db, {"After"}));
     EXPECT_FALSE(sync_note_find(db, {"Incomplete"}));
     EXPECT_FALSE(sync_note_find(db, {"Invalid"}));
-    EXPECT_FALSE(sync_has_receipt_schema(db));
-    EXPECT_EQ(mock.count("SELECT seq"), 0u);
     EXPECT_EQ(mock.count("DELETE FROM"), 1u);
 }
 
@@ -361,20 +374,33 @@ TEST(D1CredentialsTest, SaveCreatesTableFirstAndStartsWorker) {
     const auto database = test::import_test_database(workspace.root());
     auto command = make_d1_command(workspace, database);
     MockD1 mock;
+    mock.local_queue_exists = false;
+    mock.other_tables.clear();
     auto application = Application::open(command, {}, {}, mock.transport());
-    const auto epoch = application->context_epoch();
+    auto epoch = application->context_epoch();
     const auto saved = application->save_d1_storage(credentials(), epoch);
     EXPECT_EQ(saved.display_name, "D1");
     EXPECT_TRUE(saved.has_api_token);
-    ASSERT_TRUE(mock.wait_for_reads());
+    ASSERT_TRUE(mock.wait_for_statement("SELECT seq"));
+    application->request_shutdown();
+    ASSERT_TRUE(application->join_shutdown(5s));
+    application.reset();
+
+    mock.local_v2_exists = false;
+    application = Application::open(command, {}, {}, mock.transport());
+    epoch = application->context_epoch();
+    EXPECT_EQ(mock.count("CREATE TABLE"), 1u);
+    EXPECT_EQ(mock.count("SELECT seq"), 2u);
 
     auto unchanged = credentials();
     unchanged.api_token.reset();
     const auto saved_again = application->save_d1_storage(unchanged, epoch);
     EXPECT_EQ(saved_again.database_id, saved.database_id);
     EXPECT_TRUE(saved_again.has_api_token);
-    ASSERT_TRUE(mock.wait_for_reads(2));
+    ASSERT_TRUE(mock.wait_for_statement("SELECT seq", 3));
     EXPECT_EQ(mock.count("CREATE TABLE"), 2u);
+    EXPECT_EQ(mock.count("CREATE TABLE IF NOT EXISTS \"q2/Test/mac\""), 2u);
+    EXPECT_FALSE(mock.local_queue_exists);
     EXPECT_EQ(mock.create_headers, std::vector<std::string>{"Authorization: Bearer t"});
     application->request_shutdown();
     EXPECT_TRUE(application->join_shutdown(5s));
@@ -405,19 +431,55 @@ TEST(D1CredentialsTest, OfflineDisconnectClearsLocally) {
     const auto database = test::import_test_database(workspace.root());
     auto command = make_d1_command(workspace, database);
     MockD1 mock;
+    mock.other_tables = {"q2/Test/other"};
+    const std::string received_id(32, 'a');
+    mock.incoming_v2 = {ready_row(1, received_id, sync_make_record("note.create",
+        {{"path", {"Received"}}, {"item", "folder"}}))};
+    queue_work(database, "Sent");
     auto application = Application::open(command, {}, {}, mock.transport());
     const auto epoch = application->context_epoch();
     (void)application->save_d1_storage(credentials(), epoch);
-    ASSERT_TRUE(mock.wait_for_reads());
+    ASSERT_TRUE(mock.wait_for_statement("DELETE FROM \"q2/Test/mac\""));
+    const auto sent_id = mock.sent_v2.at(0).at("op_id").get<std::string>();
+    const auto snapshot = workspace.root() / "snapshot.sqlite3";
+    copy_workspace_session_database(database, snapshot);
+
     queue_work(database);
     flag_note(database);
+    std::string pending_id;
+    {
+        Database db(database, Database::Mode::read_only);
+        const auto pending = sync_queue_list(db);
+        ASSERT_EQ(pending.size(), 1u);
+        pending_id = pending.front().op_id;
+        EXPECT_TRUE(sync_seen(db, pending_id));
+    }
     mock.fail_drop = true;
     application->disconnect_d1_storage(epoch);
     EXPECT_FALSE(application->get_d1_storage(epoch).has_value());
-    EXPECT_EQ(mock.count("DROP TABLE"), 1u);
-    Database db(database, Database::Mode::read_only);
-    EXPECT_FALSE(sync_has_pending(db));
-    EXPECT_FALSE(sync_read_d1(db));
+    EXPECT_EQ(mock.count("DROP TABLE \"q2/Test/mac\""), 1u);
+    EXPECT_EQ(mock.count("DROP TABLE \"q/Test/mac\""), 1u);
+    {
+        Database db(database, Database::Mode::read_only);
+        EXPECT_FALSE(sync_has_pending(db));
+        EXPECT_FALSE(sync_read_d1(db));
+        EXPECT_FALSE(sync_seen(db, pending_id));
+        EXPECT_TRUE(sync_seen(db, sent_id));
+        EXPECT_TRUE(sync_seen(db, received_id));
+    }
+
+    // The saved snapshot lacks the discarded ID. Recovery recreates the local
+    // inbox if it has gone missing since the snapshot was taken.
+    mock.local_v2_exists = false;
+    MockHttpServer backup({http_response("application/toml", file_bytes(command.vault.source)),
+        http_response("application/vnd.sqlite3", file_bytes(snapshot))});
+    (void)application->save_r2_storage(r2_credentials(backup.port()), epoch);
+    backup.start();
+    (void)application->download_database(epoch);
+    backup.join();
+    EXPECT_EQ(mock.count("CREATE TABLE IF NOT EXISTS \"q2/Test/mac\""), 2u);
+    EXPECT_TRUE(application->get_d1_storage(application->context_epoch()));
+    EXPECT_EQ(backup.requests().size(), 2u);
     application->request_shutdown();
     EXPECT_TRUE(application->join_shutdown(5s));
 }
@@ -430,7 +492,7 @@ TEST(D1CredentialsTest, FailedDisconnectRetainsCredentialsQueueAndFlags) {
     auto application = Application::open(command, {}, {}, mock.transport());
     const auto epoch = application->context_epoch();
     (void)application->save_d1_storage(credentials(), epoch);
-    ASSERT_TRUE(mock.wait_for_reads());
+    ASSERT_TRUE(mock.wait_for_statement("SELECT seq"));
     queue_work(database);
     flag_note(database);
     force_next_workspace_config_fault(WorkspaceConfigFault::sqlite_commit);
@@ -438,7 +500,9 @@ TEST(D1CredentialsTest, FailedDisconnectRetainsCredentialsQueueAndFlags) {
     EXPECT_TRUE(application->get_d1_storage(epoch));
     EXPECT_EQ(mock.count("DROP TABLE"), 0u);
     Database db(database, Database::Mode::read_only);
-    EXPECT_EQ(sync_queue_list(db).size(), 1u);
+    const auto pending = sync_queue_list(db);
+    ASSERT_EQ(pending.size(), 1u);
+    EXPECT_TRUE(sync_seen(db, pending.front().op_id));
     auto flags = db.prepare("SELECT COUNT(*) FROM note_items WHERE changed=1");
     ASSERT_TRUE(flags.step());
     EXPECT_EQ(flags.integer(0), 1);
@@ -501,7 +565,7 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
             "chat.rename", {{"chat", {"remote", "session-from-d1"}}, {"label", "Shared chat"}})),
     };
     auto application = Application::open(
-        make_d1_command(workspace, database), {}, {}, mock.transport(), true);
+        make_d1_command(workspace, database), {}, {}, mock.transport());
     const auto chats = application->list_sessions("remote", application->context_epoch());
     ASSERT_EQ(chats.size(), 1u);
     EXPECT_EQ(chats.front().id, "session-from-d1");
@@ -644,7 +708,7 @@ TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
     const auto receiver_command = make_d1_command(receiver, receiver_path, "linux", protected_vault);
     MockD1 receive;
     receive.local_table = "q/Test/linux";
-    receive.other_tables = {"q/Test/mac"};
+    receive.other_tables = {"q2/Test/mac"};
     {
         auto application = Application::open(receiver_command, password, {}, receive.transport());
         (void)application->save_d1_storage(credentials(), application->context_epoch());
@@ -654,7 +718,7 @@ TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
     }
 
     MockD1 send;
-    send.other_tables = {"q/Test/linux"};
+    send.other_tables = {"q2/Test/linux"};
     auto application = Application::open(source_command, password, {}, send.transport());
     const auto epoch = application->context_epoch();
     (void)application->save_d1_storage(credentials(), epoch);
@@ -692,7 +756,7 @@ TEST_P(D1HandoffTest, CloseSendsEditsForTheOtherVaultToApplyOnOpen) {
         EXPECT_FALSE(sync_has_pending(db));
     }
 
-    receive.incoming = std::move(send.sent);
+    receive.incoming_v2 = std::move(send.sent_v2);
     auto reopened = Application::open(receiver_command, password, {}, receive.transport());
     const auto new_epoch = reopened->context_epoch();
     EXPECT_EQ(reopened->store().snapshot()->find_prompt("note-compression")->text, "Replicated prompt");
@@ -731,22 +795,23 @@ TEST(D1R2Test, UploadRefusedWhilePendingAndSucceedsAfterD1Recovers) {
     const auto database = test::import_test_database(workspace.root());
     auto command = make_d1_command(workspace, database);
     MockD1 mock;
+    mock.other_tables = {"q2/Test/other"};
     const std::string etag = "HTTP/1.1 200 OK\r\nETag: \"saved\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     MockHttpServer backup({http_response("text/plain", ""), etag, etag});
     auto application = Application::open(command, {}, {}, mock.transport());
     const auto epoch = application->context_epoch();
-    (void)application->save_r2_storage(
-        {.display_name = "R2", .url = "http://127.0.0.1:" + std::to_string(backup.port()) + "/cha-backups/",
-         .access_key_id = "k", .secret_key = "s"}, epoch);
+    (void)application->save_r2_storage(r2_credentials(backup.port()), epoch);
     (void)application->save_d1_storage(credentials(), epoch);
-    ASSERT_TRUE(mock.wait_for_reads());
+    ASSERT_TRUE(mock.wait_for_statement("SELECT seq"));
     queue_work(database);
     mock.fail_insert = true;
+    backup.start();
     try {
         (void)application->start_database_upload(std::nullopt, epoch);
         FAIL() << "The upload must fail before the snapshot.";
     } catch (const ApplicationError& error) {
-        EXPECT_STREQ(error.what(), "Changes are not sent to D1 yet. Try again when D1 can be reached.");
+        EXPECT_STREQ(error.what(), "Changes are not sent to D1 yet. Try again when D1 can be reached, "
+            "or save the D1 credentials again.");
     }
     EXPECT_EQ(application->state(), ApplicationState::running);
     EXPECT_EQ(mock.count("INSERT"), 1u);
@@ -756,8 +821,12 @@ TEST(D1R2Test, UploadRefusedWhilePendingAndSucceedsAfterD1Recovers) {
     }
     EXPECT_FALSE(backup.wait_for_requests(1, 0ms));
 
+    EXPECT_THROW((void)application->download_database(application->context_epoch()), ApplicationError);
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(mock.count("INSERT"), 2u);
+    EXPECT_FALSE(backup.wait_for_requests(1, 0ms));
+
     mock.fail_insert = false;
-    backup.start();
     const auto upload = application->start_database_upload(
         std::nullopt, application->context_epoch());
     const auto done = std::make_shared<std::promise<void>>();
@@ -768,7 +837,7 @@ TEST(D1R2Test, UploadRefusedWhilePendingAndSucceedsAfterD1Recovers) {
     ASSERT_TRUE(result && std::holds_alternative<nlohmann::json>(*result));
     backup.join();
     EXPECT_EQ(backup.requests().size(), 3u);
-    EXPECT_EQ(mock.count("INSERT"), 2u);
+    EXPECT_EQ(mock.count("INSERT"), 3u);
     {
         Database db(database, Database::Mode::read_only);
         EXPECT_FALSE(sync_has_pending(db));
@@ -777,15 +846,163 @@ TEST(D1R2Test, UploadRefusedWhilePendingAndSucceedsAfterD1Recovers) {
     EXPECT_TRUE(application->join_shutdown(5s));
 }
 
+TEST(D1R2Test, DownloadRefusesAnUncollectedNoteFlagBeforeR2) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    MockHttpServer backup({});
+    auto application = Application::open(make_d1_command(workspace, database));
+    auto epoch = application->context_epoch();
+    (void)application->save_r2_storage(r2_credentials(backup.port()), epoch);
+    flag_note(database);
+
+    try {
+        (void)application->download_database(epoch);
+        FAIL() << "Replacement must refuse the flagged note before downloading.";
+    } catch (const ApplicationError& error) {
+        EXPECT_STREQ(error.what(), "Changes are not sent to D1 yet. Try again when D1 can be reached, "
+            "or save the D1 credentials again.");
+    }
+    EXPECT_FALSE(backup.wait_for_requests(1, 0ms));
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    Database db(database, Database::Mode::read_only);
+    EXPECT_TRUE(sync_queue_list(db).empty());
+    EXPECT_TRUE(sync_has_pending(db));
+}
+
+TEST(D1R2Test, ProtectedDownloadChecksReceiptsAndReplaysOnlyNewerInboxWork) {
+    test::TestWorkspace workspace;
+    const auto database = test::import_test_database(workspace.root());
+    const std::string password = "replacement-password";
+    const auto command = make_d1_command(workspace, database, "mac", true);
+    seed_d1(database);
+    protect_workspace_session_database(database, password);
+
+    const auto old_snapshot = workspace.root() / "old.sqlite3";
+    copy_workspace_session_database(database, old_snapshot, password, password);
+    const std::string received_id(32, 'a');
+    const std::string newer_id(32, 'b');
+    const auto note_record = [](std::string_view name) {
+        return sync_make_record("note.create", {{"path", {name}}, {"item", "folder"}});
+    };
+    std::string authored_id;
+    {
+        Database current(database, Database::Mode::read_write, password);
+        {
+            storage::SqliteTransaction transaction(current);
+            ensure_sync_schema(current, true);
+            transaction.commit();
+        }
+        (void)note_create(current, std::nullopt, NoteItemKind::folder, "Authored", "mac");
+        authored_id = sync_queue_list(current).front().op_id;
+    }
+    const auto snapshot = workspace.root() / "covered.sqlite3";
+    copy_workspace_session_database(database, snapshot, password, password);
+    std::string staged_pending_id;
+    {
+        Database staged(snapshot, Database::Mode::read_write, password);
+        const auto authored = sync_queue_list(staged).front();
+        sync_queue_delete(staged, authored.rowid, authored.op_id);
+        (void)note_apply_record(staged, nlohmann::json::parse(note_record("Received")), received_id);
+        const auto note = note_create(staged, std::nullopt, NoteItemKind::note, "Staged", "mac");
+        staged.prepare("UPDATE note_items SET changed=1 WHERE id=?1", note.id).run();
+        staged_pending_id = sync_queue_list(staged).front().op_id;
+    }
+    checkpoint_workspace_session_database(snapshot, password, false);
+    const auto definition = file_bytes(command.vault.source);
+    MockHttpServer backup({http_response("application/toml", definition),
+        http_response("application/vnd.sqlite3", file_bytes(old_snapshot)),
+        http_response("application/toml", definition),
+        http_response("application/vnd.sqlite3", file_bytes(snapshot))});
+    {
+        const auto key = r2_credentials(backup.port());
+        auto store = WorkspaceConfigStore::open(database, password);
+        store->apply_r2_storage_create({.id = "api_key_2", .display_name = key.display_name,
+            .url = key.url, .access_key_id = key.access_key_id, .secret_key = *key.secret_key});
+    }
+
+    MockD1 mock;
+    mock.local_v2_exists = true;
+    mock.other_tables = {"q2/Test/other"};
+    mock.incoming_v2 = {ready_row(1, received_id, note_record("Received"))};
+    auto application = Application::open(command, password, {}, mock.transport());
+    ASSERT_EQ(mock.acknowledged_v2, nlohmann::json::array({received_id}));
+    ASSERT_EQ(mock.sent_v2.size(), 1u);
+    EXPECT_EQ(mock.sent_v2.at(0).at("op_id"), authored_id);
+    mock.incoming_v2 = {ready_row(1, authored_id, note_record("Authored")),
+        ready_row(2, received_id, note_record("Received")),
+        ready_row(3, newer_id, note_record("Newer"))};
+    const auto inbox = mock.incoming_v2;
+    const auto d1_requests = mock.count("");
+    checkpoint_workspace_session_database(database, password, false);
+    const auto current_bytes = file_bytes(database);
+    auto database_backup = database;
+    database_backup += ".bac";
+    auto vault_backup = command.vault.source;
+    vault_backup += ".bac";
+    std::ofstream(database_backup) << "old database backup";
+    std::ofstream(vault_backup) << "old definition backup";
+
+    backup.start();
+    try {
+        (void)application->download_database(application->context_epoch());
+        ADD_FAILURE() << "The old snapshot does not cover the active receipts.";
+    } catch (const ApplicationError& error) {
+        EXPECT_STREQ(error.what(), "The R2 copy is missing changes from this vault. Upload a fresh copy "
+            "from a machine that has received all changes, then try again.");
+    }
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(file_bytes(database), current_bytes);
+    EXPECT_EQ(file_bytes(command.vault.source), definition);
+    EXPECT_EQ(file_bytes(database_backup), "old database backup");
+    EXPECT_EQ(file_bytes(vault_backup), "old definition backup");
+    EXPECT_EQ(mock.count(""), d1_requests);
+    EXPECT_EQ(mock.incoming_v2, inbox);
+
+    (void)application->download_database(application->context_epoch());
+    backup.join();
+    ASSERT_EQ(backup.requests().size(), 4u);
+    EXPECT_TRUE(backup.requests()[0].starts_with("GET /cha-backups/workspace.sqlite3.toml "));
+    EXPECT_EQ(file_bytes(database_backup), current_bytes);
+    EXPECT_EQ(file_bytes(vault_backup), definition);
+    EXPECT_EQ(mock.acknowledged_v2, nlohmann::json::array({received_id, authored_id, received_id, newer_id}));
+    EXPECT_TRUE(mock.incoming_v2.empty());
+    Database installed(database, Database::Mode::read_only, password);
+    EXPECT_FALSE(sync_has_pending(installed));
+    EXPECT_FALSE(sync_seen(installed, staged_pending_id));
+    for (const auto& id : {authored_id, received_id, newer_id}) EXPECT_TRUE(sync_seen(installed, id));
+    auto notes = installed.prepare("SELECT name FROM note_items WHERE kind='folder' "
+        "AND (name LIKE 'Authored%' OR name LIKE 'Received%' OR name LIKE 'Newer%') ORDER BY name");
+    std::vector<std::string> applied;
+    while (notes.step()) applied.push_back(notes.text(0));
+    EXPECT_EQ(applied, (std::vector<std::string>{"Authored", "Newer", "Received"}));
+}
+
 TEST(D1VaultTest, CopyCleansDestinationRetainsSource) {
     test::TestWorkspace workspace;
     const auto source = test::import_test_database(workspace.root());
     seed_d1(source);
-    queue_work(source);
+    const std::string received_id(32, 'a');
+    std::string sent_id;
+    std::string pending_id;
+    {
+        Database original(source, Database::Mode::read_write);
+        storage::SqliteTransaction transaction(original);
+        ensure_sync_schema(original, true);
+        sync_record_receipt(original, received_id);
+        sync_queue_append(original, "sent record");
+        const auto sent = sync_queue_list(original).front();
+        sent_id = sent.op_id;
+        sync_queue_delete(original, sent.rowid, sent_id);
+        sync_queue_append(original, "pending record");
+        pending_id = sync_queue_list(original).front().op_id;
+        transaction.commit();
+    }
     flag_note(source);
     auto command = make_d1_command(workspace, source);
     MockD1 mock;
     mock.fail_insert = true;
+    mock.local_v2_exists = true;
+    mock.other_tables = {"q2/Test/other"};
     auto application = Application::open(command, {}, {}, mock.transport());
     const auto copy = application->create_vault(
         {.display_name = "Second", .copy_from = "Test", .password = {}},
@@ -793,8 +1010,12 @@ TEST(D1VaultTest, CopyCleansDestinationRetainsSource) {
     Database copied(copy.data, Database::Mode::read_only);
     EXPECT_FALSE(sync_has_pending(copied));
     EXPECT_TRUE(sync_read_d1(copied));
+    EXPECT_TRUE(sync_seen(copied, sent_id));
+    EXPECT_TRUE(sync_seen(copied, received_id));
+    EXPECT_FALSE(sync_seen(copied, pending_id));
     Database original(source, Database::Mode::read_only);
     EXPECT_TRUE(sync_has_pending(original));
+    EXPECT_TRUE(sync_seen(original, pending_id));
     application->request_shutdown();
     EXPECT_TRUE(application->join_shutdown(5s));
 }
@@ -838,7 +1059,7 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
         send.local_v2_exists = true;
         send.other_tables = {"q/Test/linux", "q2/Test/linux"};
         {
-            auto app = Application::open(source_command, {}, {}, send.transport(), true);
+            auto app = Application::open(source_command, {}, {}, send.transport());
             {
                 Database db(source_path, Database::Mode::read_write);
                 if (editing) {
@@ -869,7 +1090,7 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
         receive.local_v2_exists = true;
         receive.other_tables = {"q/Test/mac", "q2/Test/mac"};
         receive.incoming_v2 = send.sent_v2;
-        auto app = Application::open(receiver_command, {}, {}, receive.transport(), true);
+        auto app = Application::open(receiver_command, {}, {}, receive.transport());
         Database db(receiver_path, Database::Mode::read_only);
         const auto items = note_list(db);
         const auto received = std::ranges::find(items, chapter.id, &NoteItem::id);
@@ -900,12 +1121,12 @@ TEST(D1AppWiringTest, SwitchFlushesOldVaultAndUsesNewVaultPassword) {
     test::TestWorkspace workspace;
     const auto old_path = test::import_test_database(workspace.root());
     MockD1 mock;
-    mock.other_tables.insert(mock.other_tables.end(), {"q/Second/mac", "q/Second/other"});
+    mock.other_tables = {"q2/Test/other", "q2/Second/mac", "q2/Second/other"};
     auto application = Application::open(
         make_d1_command(workspace, old_path), {}, {}, mock.transport());
     const auto epoch = application->context_epoch();
     (void)application->save_d1_storage(credentials(), epoch);
-    ASSERT_TRUE(mock.wait_for_reads());
+    ASSERT_TRUE(mock.wait_for_statement("SELECT seq"));
 
     const auto second = application->create_vault(
         {.display_name = "Second", .copy_from = "Test", .password = "second-password"}, epoch);
@@ -918,10 +1139,8 @@ TEST(D1AppWiringTest, SwitchFlushesOldVaultAndUsesNewVaultPassword) {
     }
     {
         const std::lock_guard lock(mock.mutex);
-        mock.incoming = {
-            {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
-                "chat.rename", {{"chat", {"lobby", "session-from-d1"}}, {"label", "Peer chat"}})}},
-        };
+        mock.incoming_v2 = {ready_row(1, std::string(32, 'a'), sync_make_record(
+            "chat.rename", {{"chat", {"lobby", "session-from-d1"}}, {"label", "Peer chat"}}))};
     }
     const auto result = application->switch_vault("Second", "second-password", epoch);
     EXPECT_EQ(result.state, ApplicationState::running);
@@ -934,6 +1153,7 @@ TEST(D1AppWiringTest, SwitchFlushesOldVaultAndUsesNewVaultPassword) {
     EXPECT_FALSE(sync_has_pending(old_db));
     Database new_db(second.data, Database::Mode::read_only, "second-password");
     EXPECT_FALSE(sync_has_pending(new_db));
+    EXPECT_TRUE(sync_seen(new_db, std::string(32, 'a')));
     application->request_shutdown();
     EXPECT_TRUE(application->join_shutdown(5s));
 }
@@ -943,6 +1163,7 @@ TEST(D1ShutdownTest, FinalSendFinishesAfterTenSecondShutdownGrace) {
     const auto database = test::import_test_database(workspace.root());
     MockD1 mock;
     mock.insert_delay = 11s;
+    mock.other_tables = {"q2/Test/other"};
     auto application = Application::open(
         make_d1_command(workspace, database), {}, {}, mock.transport());
     (void)application->save_d1_storage(credentials(), application->context_epoch());
@@ -960,10 +1181,11 @@ TEST(D1ShutdownTest, FailedSendStopsAndRetainsTheUnsentQueue) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     MockD1 mock;
+    mock.other_tables = {"q2/Test/other"};
     auto application = Application::open(
         make_d1_command(workspace, database), {}, {}, mock.transport());
     (void)application->save_d1_storage(credentials(), application->context_epoch());
-    ASSERT_TRUE(mock.wait_for_reads());
+    ASSERT_TRUE(mock.wait_for_statement("SELECT seq"));
     queue_work(database, "First");
     queue_work(database, "Second");
     mock.fail_insert = true;
@@ -972,7 +1194,9 @@ TEST(D1ShutdownTest, FailedSendStopsAndRetainsTheUnsentQueue) {
     application.reset();
     Database db(database, Database::Mode::read_only);
     EXPECT_EQ(mock.count("INSERT"), 1u);
-    EXPECT_EQ(sync_queue_list(db).size(), 2u);
+    const auto pending = sync_queue_list(db);
+    ASSERT_EQ(pending.size(), 2u);
+    for (const auto& row : pending) EXPECT_TRUE(sync_seen(db, row.op_id));
 }
 
 } // namespace

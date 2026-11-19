@@ -833,7 +833,7 @@ struct SqliteD1 {
     D1SyncWorker::Config config(const std::filesystem::path& path, std::string machine = "mac") {
         return {
             .database_path = path, .vault = "Test", .machine = std::move(machine),
-            .desktop_host = true, .transport = transport(), .v2_for_tests = true,
+            .desktop_host = true, .transport = transport(), .use_v2 = true,
         };
     }
 
@@ -934,7 +934,7 @@ TEST(D1WorkerTest, NoRecipientsDeletesWithoutRequests) {
         D1Client client({"a", "d", "t"}, d1.transport());
         ASSERT_FALSE(client.create_queue_table(sync_queue_table("Test", "mac", v2), v2));
         auto config = d1.config(path);
-        config.v2_for_tests = v2;
+        config.use_v2 = v2;
         D1SyncWorker worker(std::move(config));
         worker.run_once();
 

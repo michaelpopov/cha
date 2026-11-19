@@ -24,8 +24,7 @@ struct Application::Impl {
         const ApplicationCommand& selected_command,
         std::string selected_vault_password,
         RuntimeSettings selected_settings,
-        D1Client::Transport d1_transport,
-        bool d1_v2);
+        D1Client::Transport d1_transport);
 
     static constexpr unsigned can_modify = 1U << 0;
 
@@ -203,7 +202,6 @@ struct Application::Impl {
     // Declared after its borrowed dependencies; BackgroundJobs joins in ~Impl.
     std::unique_ptr<NotesService> notes;
     D1Client::Transport d1_test_transport;
-    bool d1_v2_for_tests;
     std::mutex notes_changed_mutex;
     NotesChanged notes_changed;
     std::unique_ptr<D1SyncWorker> sync_worker;
