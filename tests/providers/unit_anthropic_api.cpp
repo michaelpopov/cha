@@ -91,6 +91,12 @@ TEST(AnthropicApi, EncodesExtraHighEffortForAdaptiveAndManualThinking) {
     const auto sonnet = Json::parse(build_anthropic_request_body(request, config, ""));
     EXPECT_EQ(sonnet.at("thinking"), (Json{{"type", "enabled"}, {"budget_tokens", 11999}}));
     EXPECT_FALSE(sonnet.contains("output_config"));
+
+    config.model = "claude-opus-5";
+    config.reasoning_effort = "none";
+    const auto none = Json::parse(build_anthropic_request_body(request, config, ""));
+    EXPECT_FALSE(none.contains("thinking"));
+    EXPECT_FALSE(none.contains("output_config"));
 }
 
 TEST(AnthropicApi, PlacesTheStepInstructionAfterTheNote) {

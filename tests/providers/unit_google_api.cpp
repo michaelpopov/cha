@@ -91,6 +91,10 @@ TEST(GoogleApi, EncodesTheHighestSupportedLevelForExtraHighEffort) {
     config.model = "gemini-3-flash-preview";
     const auto flash = Json::parse(build_google_request_body(request, config, ""));
     EXPECT_EQ(flash.at("generationConfig").at("thinkingConfig"), (Json{{"thinkingLevel", "HIGH"}}));
+
+    config.reasoning_effort = "none";
+    const auto none = Json::parse(build_google_request_body(request, config, ""));
+    EXPECT_FALSE(none.at("generationConfig").contains("thinkingConfig"));
 }
 
 TEST(GoogleApi, PlacesTheStepInstructionAfterTheNote) {

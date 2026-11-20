@@ -15,7 +15,6 @@ using Json = nlohmann::json;
 
 struct ThinkingLevels {
     std::string_view model;
-    std::string_view none = "LOW";
     std::string_view low = "LOW";
     std::string_view medium = "MEDIUM";
     std::string_view xhigh = "HIGH";
@@ -23,12 +22,12 @@ struct ThinkingLevels {
 
 constexpr ThinkingLevels thinking_level_models[]{
     {.model = "gemini-3-pro", .medium = "HIGH"},
-    {.model = "gemini-3-flash", .none = "MINIMAL"},
+    {.model = "gemini-3-flash"},
     {.model = "gemini-3.1-pro"},
-    {.model = "gemini-3.1-flash-lite", .none = "MINIMAL"},
-    {.model = "gemini-3.1-flash-lite-image", .none = "MINIMAL", .low = "MINIMAL", .medium = "HIGH"},
-    {.model = "gemini-3.5-flash-lite", .none = "MINIMAL"},
-    {.model = "gemini-3.6-flash", .none = "MINIMAL"},
+    {.model = "gemini-3.1-flash-lite"},
+    {.model = "gemini-3.1-flash-lite-image", .low = "MINIMAL", .medium = "HIGH"},
+    {.model = "gemini-3.5-flash-lite"},
+    {.model = "gemini-3.6-flash"},
     {.model = "gemini-3.8-flash"},
     {.model = "gemini-4-carbon"},
     {.model = "gemini-4-argon"},
@@ -52,12 +51,11 @@ std::string_view thinking_model_name(std::string_view model) {
 }
 
 void add_thinking_config(Json& generation, std::string_view model, std::string_view effort) {
-    if (!valid_reasoning_effort(effort)) return;
+    // None sends no thinking settings, so the model uses its own default.
+    if (effort == "none" || !valid_reasoning_effort(effort)) return;
     model = thinking_model_name(model);
-    const bool pro = model == "gemini-2.5-pro";
-    if (pro || model == "gemini-2.5-flash" || model == "gemini-2.5-flash-lite") {
-        int budget = pro ? 128 : 0;
-        if (effort == "low") budget = 1024;
+    if (model == "gemini-2.5-pro" || model == "gemini-2.5-flash" || model == "gemini-2.5-flash-lite") {
+        int budget = 1024;
         if (effort == "medium") budget = 4096;
         if (effort == "high") budget = 8192;
         if (effort == "xhigh") budget = 16384;
@@ -68,7 +66,6 @@ void add_thinking_config(Json& generation, std::string_view model, std::string_v
     const auto* levels = std::ranges::find(thinking_level_models, model, &ThinkingLevels::model);
     if (levels == std::ranges::end(thinking_level_models)) return;
     std::string_view level = "HIGH";
-    if (effort == "none") level = levels->none;
     if (effort == "low") level = levels->low;
     if (effort == "medium") level = levels->medium;
     if (effort == "xhigh") level = levels->xhigh;
