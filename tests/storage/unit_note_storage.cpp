@@ -815,6 +815,26 @@ TEST_F(NoteStorageTest, AnnotationsLifecycleAndSharedRecognition) {
     database_ = std::make_unique<Database>(path_, Database::Mode::read_write);
     EXPECT_EQ(note_list(*database_).front().id, annotation.id);
 }
+
+TEST_F(NoteStorageTest, SavingUnchangedAnnotationsSkipsTheFolderRebuild) {
+    const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Book");
+    const auto source = note_create(*database_, folder.id, NoteItemKind::note, "Source");
+    auto document = annotation_fixture()["document"];
+    ASSERT_TRUE(note_save(*database_, source.id, document));
+    const auto annotation = note_list(*database_).back();
+    ASSERT_EQ(annotation.kind, NoteItemKind::annotation);
+    const auto generated = note_get(*database_, annotation.id).document;
+
+    database_->execute("CREATE TRIGGER fail_annotation BEFORE UPDATE ON note_items "
+        "WHEN NEW.kind = 'annotation' BEGIN SELECT RAISE(ABORT, 'unexpected rebuild'); END");
+    document["content"].insert(document["content"].begin(), nlohmann::json::parse(R"json(
+        {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Unannotated introduction"}]}
+    )json"));
+    EXPECT_FALSE(note_save(*database_, source.id, document));
+    EXPECT_EQ(note_get(*database_, source.id).document, document);
+    EXPECT_EQ(note_get(*database_, annotation.id).document, generated);
+}
+
 TEST_F(NoteStorageTest, AnnotationReservedNamesScopeImportAndRollback) {
     for (const auto kind : {NoteItemKind::folder, NoteItemKind::note, NoteItemKind::annotation}) {
         EXPECT_THROW((void)note_create(*database_, {}, kind, "ANNOTATIONS"), NoteError);

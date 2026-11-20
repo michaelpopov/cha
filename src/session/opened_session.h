@@ -29,6 +29,7 @@ struct OpenedSession {
     // Optional initial presentation notice. Production currently leaves this
     // empty; test openers use it to exercise startup-notice behavior.
     std::optional<std::string> notice;
+    // Optional override for tests that observe snapshot capture.
     std::function<std::set<EntryId>()> cached_audio_entries;
     std::function<void(std::span<const TranscriptEntry>)> update_audio;
     // Host commands are handled on the owner thread before normal chat input.

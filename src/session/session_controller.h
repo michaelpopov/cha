@@ -24,6 +24,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -94,6 +95,7 @@ public:
     // controller's owner thread and only until the next mutation, so callers
     // must consume it synchronously.
     [[nodiscard]] ControllerView view() const noexcept;
+    [[nodiscard]] std::set<EntryId> cached_audio_entries() const;
 
     // --- Session commands (mutate, then report semantic changes) --------------
     [[nodiscard]] ControllerUpdate submit_prompt(

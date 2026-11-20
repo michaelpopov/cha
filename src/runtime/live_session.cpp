@@ -476,12 +476,11 @@ SessionSnapshot LiveSession::make_snapshot() {
         presentation(SessionLifecycle::running));
     snapshot.recent_pending = controller_->recent_pending();
     snapshot.discardable = controller_->discardable();
-    if (cached_audio_entries_) {
-        try {
-            snapshot.cached_audio_entries = cached_audio_entries_();
-        } catch (const std::exception& error) {
-            log_warn("Could not read audio cache status: " + std::string(error.what()));
-        }
+    try {
+        snapshot.cached_audio_entries = cached_audio_entries_
+            ? cached_audio_entries_() : controller_->cached_audio_entries();
+    } catch (const std::exception& error) {
+        log_warn("Could not read audio cache status: " + std::string(error.what()));
     }
     return snapshot;
 }

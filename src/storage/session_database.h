@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -88,6 +89,8 @@ public:
 
     SessionJournal(const SessionJournal&) = delete;
     SessionJournal& operator=(const SessionJournal&) = delete;
+
+    [[nodiscard]] std::set<EntryId> cached_audio_entries() const;
 
     // Machine name from app.toml for D1 sync. Empty disables recording.
     void set_sync_machine(std::string machine);

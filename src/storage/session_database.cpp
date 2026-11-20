@@ -642,6 +642,18 @@ SessionJournal::SessionJournal(std::filesystem::path path) {
 
 SessionJournal::~SessionJournal() = default;
 
+std::set<EntryId> SessionJournal::cached_audio_entries() const {
+    auto select = impl_->database.prepare(
+        "SELECT a.entry_id FROM entry_audio a "
+        "JOIN entries e USING (session_key, entry_id) "
+        "JOIN sessions s USING (session_key) "
+        "WHERE s.session_key = ?1 AND s.archived_at IS NULL AND e.epoch = s.history_epoch",
+        impl_->session_key);
+    std::set<EntryId> result;
+    while (select.step()) result.insert(static_cast<EntryId>(select.integer(0)));
+    return result;
+}
+
 void SessionJournal::set_sync_machine(std::string machine) {
     impl_->sync_machine = std::move(machine);
 }

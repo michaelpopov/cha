@@ -619,6 +619,28 @@ ExtractedAnnotations extract_annotations(const Json& doc) {
     walk(walk, doc);
     return result;
 }
+
+bool same_annotations(const Json& before, const Json& after) {
+    const auto old_annotations = extract_annotations(before);
+    const auto new_annotations = extract_annotations(after);
+    if (old_annotations.entries.size() != new_annotations.entries.size()) return false;
+
+    // Chapter IDs can shift when an unannotated heading is inserted. Compare
+    // the labels and transitions that the generated note uses.
+    int old_chapter = 0, new_chapter = 0;
+    for (std::size_t i = 0; i < old_annotations.entries.size(); ++i) {
+        const auto& old_entry = old_annotations.entries[i];
+        const auto& new_entry = new_annotations.entries[i];
+        if (old_entry.type != new_entry.type || old_entry.text != new_entry.text
+            || old_entry.ordinal != new_entry.ordinal
+            || old_annotations.chapters[old_entry.chapter_id] != new_annotations.chapters[new_entry.chapter_id]
+            || (old_chapter != old_entry.chapter_id) != (new_chapter != new_entry.chapter_id)) return false;
+        old_chapter = old_entry.chapter_id;
+        new_chapter = new_entry.chapter_id;
+    }
+    return true;
+}
+
 Json annotation_label(std::string_view text, int level) {
     return {{"type", "heading"}, {"attrs", {{"level", level}}}, {"content", Json::array({{{"type", "text"}, {"text", text}}})}};
 }
@@ -1408,7 +1430,7 @@ std::optional<NoteItem> note_find_item(storage::SqliteDatabase& database, std::i
 
 std::vector<NoteItem> note_list(storage::SqliteDatabase& database) {
     try {
-        storage::SqliteTransaction transaction(database);
+        storage::SqliteTransaction transaction(database, storage::SqliteTransaction::Mode::read);
         storage::SqliteStatement statement = database.prepare(
             std::string(note_item_select) + "WHERE n.compressed=0 ORDER BY n.id");
         std::vector<NoteItem> items;
@@ -1513,7 +1535,7 @@ int note_text_level(NoteTextMode mode) {
 
 NoteContent note_get(storage::SqliteDatabase& database, std::int64_t id, NoteTextMode mode) {
     try {
-        storage::SqliteTransaction transaction(database);
+        storage::SqliteTransaction transaction(database, storage::SqliteTransaction::Mode::read);
         storage::SqliteStatement statement = database.prepare(
             "SELECT n.kind, COALESCE(c.id, n.id), "
             "CASE WHEN c.id IS NULL THEN n.content_json ELSE c.content_json END, "
@@ -1576,12 +1598,24 @@ bool note_save(
         const bool compressed = id != owner.id;
         if (compressed && (!document.contains("type") || document["type"] != "doc"))
             fail(NoteFailure::invalid, "Compressed note content must have a doc root.");
-        if (owner.read_only) {
+        bool rebuild_annotations = !compressed;
+        const bool compare_annotations = !compressed && database.prepare(
+            "SELECT 1 FROM note_items WHERE IFNULL(parent_id, 0) = ?1 AND kind = 'annotation'",
+            parent_key(owner.parent_id)).step();
+        if (owner.read_only || compare_annotations) {
             auto stored = database.prepare("SELECT content_json FROM note_items WHERE id = ?1", id);
             if (!stored.step()) fail(NoteFailure::not_found, missing_note_message);
-            if (!read_only_note_change(parse_document(stored.blob(0), id), document)) {
+            std::optional<Json> previous;
+            try {
+                previous = parse_document(stored.blob(0), id);
+            } catch (const NoteError&) {
+                // An editable note can still be replaced if its old document is damaged.
+                if (owner.read_only) throw;
+            }
+            if (owner.read_only && !read_only_note_change(*previous, document)) {
                 fail(NoteFailure::invalid, "This note is read-only. Make it editable first.");
             }
+            if (compare_annotations && previous) rebuild_annotations = !same_annotations(*previous, document);
         }
         storage::SqliteStatement update = database.prepare(
             "UPDATE note_items SET content_json = ?1 "
@@ -1589,7 +1623,7 @@ bool note_save(
         update.bind_blob(1, compress_document(compact));
         update.bind(2, id);
         update.run();
-        const bool created = !compressed && rebuild_folder_annotations(database, owner.parent_id, true, &document);
+        const bool created = rebuild_annotations && rebuild_folder_annotations(database, owner.parent_id, true, &document);
         sync_flag_note(database, sync_machine, owner.id);
         transaction.commit();
         return created;
@@ -2293,15 +2327,6 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
         std::map<std::int64_t, std::int64_t> new_ids;
         std::vector<std::int64_t> folders;
         std::vector<std::int64_t> created;
-        const auto copy_audio = [&](std::int64_t source_id, std::int64_t target_id) {
-            auto clips = file.prepare("SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", source_id);
-            while (clips.step()) {
-                auto clip = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?1, ?2, ?3, ?4)",
-                    target_id, clips.integer(0), clips.text(1));
-                clip.bind_blob(4, clips.blob(2));
-                clip.run();
-            }
-        };
         const auto copy_item = [&](storage::SqliteStatement& row, std::optional<std::int64_t> new_parent) {
             const auto kind = row.text(1);
             if (kind != "folder" && kind != "note") fail(NoteFailure::invalid, not_export_message);
@@ -2340,12 +2365,11 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
                     database.prepare(
                         "UPDATE note_items SET scroll_top=? WHERE id=?",
                         versions.integer(2), document_id).run();
-                    if (level == 1) copy_audio(versions.integer(3), document_id);
+                    if (level == 1) new_ids[versions.integer(3)] = document_id;
                 }
             } else if (!row.is_null(8)) {
                 write_version_row(database, id, 0, encode_compressed_note(row.text(8), id));
             }
-            copy_audio(row.integer(0), id);
         };
         std::string columns = "SELECT id, kind, name, content_json, read_only, scroll_top";
         columns += has_levels ? ", summary_excluded, folder_summary" : ", 0, 0";
@@ -2369,6 +2393,24 @@ std::int64_t note_import_folder(storage::SqliteDatabase& database,
         if (stores.step() && file.prepare("SELECT 1 FROM folder_stores LIMIT 1").step())
             log_warn("Folder import ignored the store data in “" + root_name + "”.");
         writing.commit();
+
+        // Keep each document's audio complete if a clip fails to copy.
+        try {
+            for (const auto& [source_id, target_id] : new_ids) {
+                auto clips = file.prepare("SELECT ordinal, mime_type, audio FROM note_audio WHERE note_id = ?1", source_id);
+                if (!clips.step()) continue;
+                storage::SqliteTransaction audio_write(database);
+                do {
+                    auto clip = database.prepare("INSERT INTO note_audio (note_id, ordinal, mime_type, audio) VALUES (?1, ?2, ?3, ?4)",
+                        target_id, clips.integer(0), clips.text(1));
+                    clip.bind_blob(4, clips.blob(2));
+                    clip.run();
+                } while (clips.step());
+                audio_write.commit();
+            }
+        } catch (const std::runtime_error& error) {
+            log_warn("Folder import could not copy all audio for “" + root_name + "”: " + error.what());
+        }
         reading.commit();
         return new_ids.at(root_id);
     } catch (const std::runtime_error& error) {

@@ -469,6 +469,10 @@ ControllerView SessionController::view() const noexcept {
     };
 }
 
+std::set<EntryId> SessionController::cached_audio_entries() const {
+    return journal_.cached_audio_entries();
+}
+
 bool SessionController::is_generating() const noexcept {
     return pending_classification_.has_value() || generation_.has_value();
 }
