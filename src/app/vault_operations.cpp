@@ -737,9 +737,11 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         }
         if (!sync_same_vault(previous.name, candidate.name)) {
             // D1 queue tables carry the vault name; other machines keep the old name.
+            if (!active && previous.password_protected) {
+                throw std::invalid_argument("Open this protected vault before you rename it.");
+            }
             bool connected = active && app.api_keys->d1().has_value();
-            // A protected vault that is not active cannot be read without its password.
-            if (!active && !previous.password_protected) {
+            if (!active) {
                 try {
                     storage::SqliteDatabase database(
                         previous.data, storage::SqliteDatabase::Mode::read_only);
@@ -1136,11 +1138,13 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
 }
 
 static void require_no_pending_sync(
-    const std::filesystem::path& path, std::string_view password) {
+    const std::filesystem::path& path, std::string_view password, bool sync_stopped = false) {
     storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_only, password);
     if (sync_has_pending(database)) {
         throw ApplicationError(ErrorCode::invalid_argument,
-            "Changes are not sent to D1 yet. Try again when D1 can be reached, "
+            sync_stopped
+            ? "D1 sync has stopped. Select “Save D1 credentials” in Settings, then try the upload again."
+            : "Changes are not sent to D1 yet. Try again when D1 can be reached, "
             "or save the D1 credentials again.");
     }
 }
@@ -1159,7 +1163,8 @@ R2DatabaseUpload Application::Impl::VaultMaintenance::prepare_upload(
             storage = *r2;
             // Writers are excluded; the maintenance drain already collected
             // flags and attempted one send. Refuse while pending work remains.
-            require_no_pending_sync(vault.data, app.active_password);
+            require_no_pending_sync(vault.data, app.active_password,
+                app.sync_worker && app.sync_worker->stopped());
             R2DatabaseUpload upload(vault.data, vault.source, app.active_password);
             app.vault_upload_running = true;
             reserved = true;
@@ -1311,6 +1316,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
                             "The R2 copy is missing changes from this vault. Upload a fresh copy "
                             "from a machine that has received all changes, then try again.");
                     }
+                    validate_stored_workspace_configuration(staged);
                 };
             }
             const auto transferred = download_database_from_r2(

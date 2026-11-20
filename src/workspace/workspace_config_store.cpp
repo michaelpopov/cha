@@ -1063,6 +1063,10 @@ void commit_imported_rows(
 
 } // namespace
 
+void validate_stored_workspace_configuration(storage::SqliteDatabase& database) {
+    validate_configuration(read_workspace_config_files(database));
+}
+
 WorkspaceConfigTransfer import_workspace_configuration(
     const std::filesystem::path& source_directory,
     const std::filesystem::path& database_path,

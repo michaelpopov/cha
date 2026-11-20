@@ -484,14 +484,16 @@ TEST(R2DatabaseTransfer, ReadsDatabaseEtagWithHead) {
         "HEAD /cha-backups/workspace.sqlite3 HTTP/1.1"));
 }
 
-TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
+TEST(R2DatabaseTransfer, SavesDatabaseEtagAndCanReplaceWhenCompanionUploadFails) {
     for (const bool previously_uploaded : {false, true}) {
         SCOPED_TRACE(previously_uploaded);
         test::TestWorkspace workspace;
         const auto log_file = workspace.root() / "upload.log";
         UploadLogging logging(log_file);
         const auto database = test::import_test_database(workspace.root());
+        const auto remote_bytes = file_bytes(database);
         const auto vault = write_vault(database);
+        std::ofstream(vault, std::ios::app) << "parent = \"Base\"\n";
         if (previously_uploaded) {
             std::ofstream(vault, std::ios::app) << "r2_etag = \"previous-etag\"\n";
         }
@@ -500,6 +502,8 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
             etag_response("application/xml", "", "new-database-etag"),
             "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
             "Connection: close\r\n\r\n",
+            "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            etag_response("application/vnd.sqlite3", remote_bytes, "new-database-etag"),
         });
         const R2StorageKey key = storage(mock_url(server.port()));
         server.start();
@@ -509,8 +513,6 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
                 database, vault, key, R2DatabaseLease::acquire, {}, {},
                 previously_uploaded ? "previous-etag" : ""),
             R2HttpStatusError);
-        server.join();
-
         const auto log = file_bytes(log_file);
         EXPECT_NE(log.find("R2 database upload completed:"), std::string::npos);
         EXPECT_NE(log.find("R2 vault upload failed:"), std::string::npos);
@@ -522,7 +524,20 @@ TEST(R2DatabaseTransfer, SavesDatabaseEtagWhenCompanionUploadFails) {
         const VaultDefinition saved = load_vault_definition_file(workspace.root(), vault);
         EXPECT_EQ(saved.r2_etag, "new-database-etag");
         EXPECT_EQ(saved.data, std::filesystem::weakly_canonical(database));
-        ASSERT_EQ(server.requests().size(), 3U);
+
+        const auto replacement = download_database_from_r2(database, vault, key);
+        server.join();
+
+        EXPECT_EQ(replacement.byte_count, remote_bytes.size());
+        EXPECT_EQ(replacement.etag, "new-database-etag");
+        const auto installed = load_vault_definition_file(workspace.root(), vault);
+        EXPECT_EQ(installed.name, saved.name);
+        EXPECT_EQ(installed.data, saved.data);
+        EXPECT_EQ(installed.parent, "Base");
+        EXPECT_EQ(installed.r2_etag, "new-database-etag");
+        EXPECT_TRUE(std::filesystem::exists(database.string() + ".bac"));
+        EXPECT_TRUE(std::filesystem::exists(vault.string() + ".bac"));
+        ASSERT_EQ(server.requests().size(), 5U);
         EXPECT_TRUE(server.requests()[2].starts_with(
             "PUT /cha-backups/workspace.sqlite3.toml HTTP/1.1"));
 #ifndef _WIN32
@@ -842,29 +857,6 @@ TEST(R2DatabaseTransfer, InvalidDownloadLeavesBothFilesAndBackupsUntouched) {
     EXPECT_EQ(file_bytes(vault), original_vault);
     EXPECT_EQ(file_bytes(database_backup), "existing database backup");
     EXPECT_EQ(file_bytes(vault_backup), "existing vault backup");
-}
-
-TEST(R2DatabaseTransfer, ExplainsMissingVaultObjectFromLegacyUploads) {
-    test::TestWorkspace workspace;
-    const std::filesystem::path database =
-        test::import_test_database(workspace.root());
-    const std::filesystem::path vault = write_vault(database);
-    MockHttpServer server({
-        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
-        "Connection: close\r\n\r\n",
-    });
-    const R2StorageKey key = storage(mock_url(server.port()));
-    server.start();
-
-    try {
-        (void)download_database_from_r2(database, vault, key);
-        FAIL() << "expected a missing vault object to fail";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string(error.what()).find("legacy database-only upload"),
-            std::string::npos);
-    }
-    server.join();
 }
 
 TEST(R2DatabaseTransfer, RejectsInvalidR2KeyAndAnActiveLease) {

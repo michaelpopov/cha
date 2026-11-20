@@ -91,6 +91,13 @@ struct TwoVaults {
     ApplicationCommand command;
 };
 
+void add_conflicting_persona(const std::filesystem::path& path) {
+    storage::SqliteDatabase database(path, storage::SqliteDatabase::Mode::read_write);
+    database.execute("INSERT INTO config (name, content) "
+        "SELECT 'personas/duplicate/persona.toml', content FROM config "
+        "WHERE name = 'personas/beta/persona.toml'");
+}
+
 TEST(VaultMaintenance, EventsRejectOldEpochsAfterSwitchAndSameVaultReopen) {
     TwoVaults pair;
     auto application = Application::open(pair.command);
@@ -683,6 +690,34 @@ TEST(ApplicationVault, DownloadReplacesNotesAndOverwritesOneBackupIncludingOlder
     }
 }
 
+TEST(ApplicationVault, DownloadRefusesInvalidWorkspaceBeforeReplacingTheVault) {
+    TwoVaults pair;
+    const auto note = seed_notes(pair.database_a, "Local");
+    add_conflicting_persona(pair.database_b);
+    checkpoint_workspace_session_database(pair.database_b, {}, false);
+    ASSERT_EQ(inspect_workspace_session_database(pair.database_b), WorkspaceDatabaseState::valid_v2);
+    MockHttpServer server({
+        http_response("application/toml", "vault_name = \"A\"\ndata = \"a.sqlite3\"\nparent = \"B\"\n"),
+        http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
+    });
+    auto application = Application::open(pair.command);
+    set_r2(*application, server.port());
+    const auto epoch = application->context_epoch();
+    const auto local_note = application->get_note(note, epoch).document;
+    const auto definition = file_contents(pair.command.vault.source);
+    server.start();
+
+    EXPECT_THROW((void)application->download_database(epoch), WorkspaceConfigValidationError);
+    server.join();
+
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(application->current_vault().get().name, "A");
+    EXPECT_EQ(application->get_note(note, application->context_epoch()).document, local_note);
+    EXPECT_EQ(file_contents(pair.command.vault.source), definition);
+    EXPECT_FALSE(std::filesystem::exists(pair.database_a.string() + ".bac"));
+    EXPECT_FALSE(std::filesystem::exists(pair.command.vault.source.string() + ".bac"));
+}
+
 TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
     TwoVaults pair;
     const auto note = seed_notes(pair.database_a, "Destination");
@@ -926,6 +961,26 @@ TEST(ApplicationVault, SwitchAwayAndBackRestoresStoredSessions) {
     const auto table = read_toml_file(
         pair.command.config_directory / "app.toml", "config file");
     EXPECT_EQ(table["vault"].value<std::string>(), "A");
+}
+
+TEST(ApplicationVault, SwitchRefusesInvalidWorkspaceAndKeepsCurrentVaultUsable) {
+    TwoVaults pair;
+    add_conflicting_persona(pair.database_b);
+    ASSERT_EQ(inspect_workspace_session_database(pair.database_b), WorkspaceDatabaseState::valid_v2);
+    auto application = Application::open(pair.command);
+    const auto epoch = application->context_epoch();
+
+    try {
+        (void)application->switch_vault("B", {}, epoch);
+        ADD_FAILURE() << "Switch should refuse the duplicate persona name";
+    } catch (const WorkspaceConfigValidationError& error) {
+        EXPECT_STREQ(error.what(), "Persona name 'Beta' is not unique");
+    }
+
+    EXPECT_EQ(application->state(), ApplicationState::running);
+    EXPECT_EQ(application->context_epoch(), epoch);
+    EXPECT_EQ(application->current_vault().get().name, "A");
+    EXPECT_NO_THROW((void)application->create_session("lobby", "Still on A", epoch));
 }
 
 TEST(ApplicationVault, SwitchBackRecoversPendingSessions) {
@@ -1271,6 +1326,12 @@ TEST(ApplicationVault, RenameOfAD1ConnectedVaultIsRefusedExceptForLetterCase) {
     }
     EXPECT_EQ(application->update_vault(
         "A", {.display_name = "a"}, application->context_epoch()).name, "a");
+    (void)application->update_vault("B", {.display_name = "B", .password = "secret"},
+        application->context_epoch());
+    EXPECT_THROW((void)application->update_vault("B", {.display_name = "Renamed"},
+        application->context_epoch()), std::invalid_argument);
+    EXPECT_EQ(application->update_vault(
+        "B", {.display_name = "b"}, application->context_epoch()).name, "b");
 }
 
 TEST(ApplicationVault, SaveFileRejectsStaleEpochAndReplacesAtomically) {

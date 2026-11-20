@@ -1562,6 +1562,8 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 "Request " + std::string(method_name(method)) + " failed: "
                 + error.what());
             fail(ErrorCode::application_unavailable);
+        } catch (const WorkspaceConfigValidationError& error) {
+            fail(ErrorCode::invalid_argument, error.what());
         } catch (const std::runtime_error& error) {
             // The reply stays generic; the log keeps the reason.
             log_error(

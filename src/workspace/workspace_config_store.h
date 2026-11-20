@@ -65,6 +65,9 @@ WorkspaceConfigTransfer export_workspace_configuration(
     WorkspaceConfigLease lease = WorkspaceConfigLease::acquire,
     std::string_view database_password = {});
 
+// Load the stored configuration in memory to check it before opening the vault.
+void validate_stored_workspace_configuration(storage::SqliteDatabase& database);
+
 // Reported when database maintenance cannot restore a usable workspace.
 // The process must restart.
 class WorkspaceRestartRequiredError : public std::runtime_error {

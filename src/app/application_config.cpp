@@ -8,6 +8,7 @@
 #include "util/public_name.h"
 #include "util/text.h"
 #include "workspace/prompt_catalog.h"
+#include "workspace/workspace_config_store.h"
 
 #include <toml++/toml.hpp>
 
@@ -697,7 +698,11 @@ void require_switchable_database(
     std::string_view password) {
     const WorkspaceDatabaseState state =
         inspect_workspace_session_database(database, password);
-    if (state == WorkspaceDatabaseState::valid_v2) return;
+    if (state == WorkspaceDatabaseState::valid_v2) {
+        storage::SqliteDatabase candidate(database, storage::SqliteDatabase::Mode::read_only, password);
+        validate_stored_workspace_configuration(candidate);
+        return;
+    }
     if (state == WorkspaceDatabaseState::missing) {
         throw std::runtime_error(
             "Workspace session database '" + utf8_path(database)

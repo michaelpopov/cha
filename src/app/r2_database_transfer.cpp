@@ -1169,11 +1169,15 @@ R2DatabaseTransfer download_database_from_r2(
     };
     const auto web_database = before_install
         ? std::optional(fetch_database()) : std::nullopt;
-    const R2DatabaseTransfer vault_download = download_file(
-        vault_temporary.get(), vault_object, storage, cancelled,
-        "R2 vault definition was not found. The bucket may contain a legacy "
-              "database-only upload; upload with the current CHA version "
-              "before downloading.");
+    std::optional<R2DatabaseTransfer> vault_download;
+    try {
+        vault_download = download_file(
+            vault_temporary.get(), vault_object, storage, cancelled,
+            "R2 vault definition was not found. The bucket may contain a legacy "
+            "database-only upload; upload with the current CHA version before downloading.");
+    } catch (const R2ObjectNotFoundError&) {
+        if (before_install) throw;
+    }
     const R2DatabaseTransfer database_download = web_database
         ? *web_database : download_file(database_temporary.get(), database_name, storage, cancelled);
     if (inspect_workspace_session_database(
@@ -1182,20 +1186,22 @@ R2DatabaseTransfer download_database_from_r2(
         throw std::runtime_error(
             "R2 download is not a valid CHA database");
     }
-    const VaultDefinition downloaded = load_vault_definition_file(
-        vault.parent_path(), vault_temporary.get());
-    if (!same_vault_name(downloaded.name, local.name)) {
-        throw std::runtime_error(
-            "R2 vault definition does not match the selected local vault");
-    }
-    rewrite_toml_file(vault_temporary.get(), [&](toml::table& table) {
-        table.insert_or_assign("data", utf8_path(database));
-        if (!database_download.etag.empty()) {
-            table.insert_or_assign("r2_etag", database_download.etag);
-        } else {
-            table.erase("r2_etag");
+    if (vault_download) {
+        const VaultDefinition downloaded = load_vault_definition_file(
+            vault.parent_path(), vault_temporary.get());
+        if (!same_vault_name(downloaded.name, local.name)) {
+            throw std::runtime_error(
+                "R2 vault definition does not match the selected local vault");
         }
-    });
+    }
+    auto table = read_toml_file(vault_download ? vault_temporary.get() : vault, "config file");
+    table.insert_or_assign("data", utf8_path(database));
+    if (!database_download.etag.empty()) {
+        table.insert_or_assign("r2_etag", database_download.etag);
+    } else {
+        table.erase("r2_etag");
+    }
+    write_toml_file(vault_temporary.get(), table);
 
     if (check_candidate) check_candidate(database_temporary.get());
     // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
@@ -1210,7 +1216,7 @@ R2DatabaseTransfer download_database_from_r2(
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
     return {
-        .byte_count = vault_download.byte_count + database_download.byte_count,
+        .byte_count = database_download.byte_count + (vault_download ? vault_download->byte_count : 0),
         .etag = database_download.etag,
     };
 }
