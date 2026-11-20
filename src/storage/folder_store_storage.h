@@ -2,12 +2,10 @@
 
 #include "providers/folder_store_types.h"
 #include "storage/note_storage.h"
-#include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
 
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,9 +38,7 @@ struct FolderStoreCapture {
     std::vector<FolderStoreDocument> documents;
 };
 
-// Caller owns the schema transaction. The statements are idempotent and drop
-// the old folder store tables.
-void create_folder_store_schema(storage::SqliteDatabase& database);
+void drop_legacy_folder_tables(storage::SqliteDatabase& database);
 
 [[nodiscard]] std::string_view folder_store_service_name(FolderStoreService service);
 [[nodiscard]] FolderStoreService parse_folder_store_service(std::string_view value);
@@ -56,28 +52,9 @@ void folder_store_validate_document_size(FolderStoreService service, std::size_t
 
 [[nodiscard]] std::optional<NoteItem> folder_store_require_folder(
     storage::SqliteDatabase& database, std::int64_t folder_id);
-[[nodiscard]] std::vector<std::int64_t> folder_store_folder_ids_in_subtree(
-    storage::SqliteDatabase& database, std::int64_t folder_id);
-[[nodiscard]] std::vector<std::int64_t> session_folder_ids(
-    storage::SqliteDatabase& database, SessionKey session_key);
-
-// Caller owns the transaction.
-void folder_store_delete_session_folders_in_subtree(
-    storage::SqliteDatabase& database, std::int64_t folder_id);
 [[nodiscard]] FolderStoreCapture folder_store_capture(
     storage::SqliteDatabase& database,
     std::int64_t folder_id,
     FolderStoreService service);
-
-void session_folder_insert(
-    storage::SqliteDatabase& database, SessionKey session_key, std::int64_t folder_id);
-void session_folder_delete(
-    storage::SqliteDatabase& database, SessionKey session_key, std::int64_t folder_id);
-void session_folder_clear(
-    storage::SqliteDatabase& database, SessionKey session_key);
-void session_folder_prune(
-    storage::SqliteDatabase& database,
-    SessionKey session_key,
-    std::span<const std::int64_t> folder_ids);
 
 } // namespace cha

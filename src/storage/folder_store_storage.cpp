@@ -24,13 +24,6 @@ void require_positive_id(std::int64_t id, std::string_view name) {
     }
 }
 
-bool table_exists(storage::SqliteDatabase& database, std::string_view name) {
-    auto statement = database.prepare(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1");
-    statement.bind(1, name);
-    return statement.step();
-}
-
 std::string escape_metadata(std::string_view text) {
     std::string out;
     out.reserve(text.size());
@@ -92,16 +85,11 @@ std::string ancestor_path(
 
 } // namespace
 
-void create_folder_store_schema(storage::SqliteDatabase& database) {
+void drop_legacy_folder_tables(storage::SqliteDatabase& database) {
     database.execute(R"sql(
 DROP TABLE IF EXISTS folder_store_files;
 DROP TABLE IF EXISTS folder_stores;
-
-CREATE TABLE IF NOT EXISTS session_folders (
-    session_key INTEGER NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
-    folder_id INTEGER NOT NULL CHECK (folder_id > 0),
-    PRIMARY KEY (session_key, folder_id)
-) STRICT;
+DROP TABLE IF EXISTS session_folders;
 )sql");
 }
 
@@ -182,44 +170,6 @@ std::optional<NoteItem> folder_store_require_folder(
     auto item = note_find_item(database, folder_id);
     if (!item || item->kind != NoteItemKind::folder) return std::nullopt;
     return item;
-}
-
-std::vector<std::int64_t> folder_store_folder_ids_in_subtree(
-    storage::SqliteDatabase& database, std::int64_t folder_id) {
-    std::vector<std::int64_t> ids;
-    auto row = database.prepare(
-        "WITH RECURSIVE tree(id) AS ("
-        "SELECT id FROM note_items WHERE id = ?1 AND kind = 'folder' "
-        "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id = t.id "
-        "WHERE n.kind = 'folder') "
-        "SELECT id FROM tree ORDER BY id",
-        folder_id);
-    while (row.step()) ids.push_back(row.integer(0));
-    return ids;
-}
-
-std::vector<std::int64_t> session_folder_ids(
-    storage::SqliteDatabase& database, SessionKey session_key) {
-    std::vector<std::int64_t> ids;
-    if (!table_exists(database, "session_folders")) return ids;
-    auto row = database.prepare(
-        "SELECT folder_id FROM session_folders WHERE session_key = ?1 ORDER BY folder_id",
-        session_key);
-    while (row.step()) ids.push_back(row.integer(0));
-    return ids;
-}
-
-void folder_store_delete_session_folders_in_subtree(
-    storage::SqliteDatabase& database, std::int64_t folder_id) {
-    if (!table_exists(database, "session_folders")) return;
-    database.prepare(
-        "DELETE FROM session_folders WHERE folder_id IN ("
-        "WITH RECURSIVE tree(id) AS ("
-        "SELECT id FROM note_items WHERE id = ?1 AND kind = 'folder' "
-        "UNION ALL SELECT n.id FROM note_items n JOIN tree t ON n.parent_id = t.id "
-        "WHERE n.kind = 'folder') SELECT id FROM tree)",
-        folder_id)
-        .run();
 }
 
 namespace {
@@ -329,43 +279,6 @@ FolderStoreCapture folder_store_capture(storage::SqliteDatabase& database,
         return capture_impl(database, folder_id, service);
     } catch (const std::bad_alloc&) {
         throw FolderStoreError("Could not allocate memory for the folder snapshot.");
-    }
-}
-
-void session_folder_insert(
-    storage::SqliteDatabase& database, SessionKey session_key, std::int64_t folder_id) {
-    require_positive_id(folder_id, "Folder ID");
-    database.prepare(
-        "INSERT OR IGNORE INTO session_folders (session_key, folder_id) VALUES (?1, ?2)",
-        session_key,
-        folder_id)
-        .run();
-}
-
-void session_folder_delete(
-    storage::SqliteDatabase& database, SessionKey session_key, std::int64_t folder_id) {
-    database.prepare(
-        "DELETE FROM session_folders WHERE session_key = ?1 AND folder_id = ?2",
-        session_key,
-        folder_id)
-        .run();
-}
-
-void session_folder_clear(
-    storage::SqliteDatabase& database, SessionKey session_key) {
-    if (!table_exists(database, "session_folders")) return;
-    database.prepare(
-        "DELETE FROM session_folders WHERE session_key = ?1", session_key)
-        .run();
-}
-
-void session_folder_prune(
-    storage::SqliteDatabase& database,
-    SessionKey session_key,
-    std::span<const std::int64_t> folder_ids) {
-    if (!table_exists(database, "session_folders")) return;
-    for (const auto folder_id : folder_ids) {
-        session_folder_delete(database, session_key, folder_id);
     }
 }
 

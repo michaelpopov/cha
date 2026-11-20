@@ -115,7 +115,6 @@ TEST(WebRead, UsesWebReaderFirstAndKeepsItsFinalUrlAndEmptyTitle) {
     settings.web_reader_url = "http://127.0.0.1:" + std::to_string(server.port()) + "/";
     settings.web_reader_enabled = true;
     settings.read_provider = "firecrawl";
-    settings.web_reader_api_key_id = "reserved-reader-key";
     const auto output = Json::parse(read_page(settings, "https://example.org/original#section",
         "private-key", std::atomic_bool{false}, "invalid-fallback-endpoint"));
     server.join();

@@ -1396,9 +1396,6 @@ std::set<CredentialPair> credential_destination_pairs(
             add_credential_pair(
                 pairs, "firecrawl",
                 resolve_key_reference(workspace, text(table, "firecrawl_api_key"), {}));
-            add_credential_pair(
-                pairs, url_credential_destination(text(table, "web_reader_url")),
-                resolve_key_reference(workspace, text(table, "web_reader_api_key"), {}));
         } else if (row.name == "system/notes/config.toml") {
             add_credential_pair(
                 pairs, url_credential_destination(text(table, "audio_url")),
@@ -1526,7 +1523,7 @@ struct WorkspaceConfigStore::Impl {
         {
             storage::SqliteTransaction transaction(*database);
             create_note_items_schema(*database);
-            create_folder_store_schema(*database);
+            drop_legacy_folder_tables(*database);
             create_event_history_schema(*database);
             ensure_sync_schema(*database);
             transaction.commit();
@@ -2987,12 +2984,6 @@ NoteItem WorkspaceConfigStore::rename_note_item(
 void WorkspaceConfigStore::delete_note_item(std::int64_t id) {
     const std::lock_guard lock(impl_->mutex);
     note_delete(*impl_->database, id, impl_->sync_machine);
-}
-
-std::vector<std::int64_t> WorkspaceConfigStore::folder_ids_in_subtree(
-    std::int64_t folder_id) const {
-    const std::lock_guard lock(impl_->mutex);
-    return folder_store_folder_ids_in_subtree(*impl_->database, folder_id);
 }
 
 std::optional<NoteItem> WorkspaceConfigStore::get_note_item(std::int64_t id) const {

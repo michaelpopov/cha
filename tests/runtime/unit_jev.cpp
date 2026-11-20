@@ -146,7 +146,6 @@ TEST(WebReadConfiguration, PersistsReaderAndKeyAcrossReloadAndExport) {
     {
         ApiKeyStore keys(*store);
         settings.firecrawl_api_key_id = keys.create("Firecrawl", "fc-secret").id;
-        settings.web_reader_api_key_id = keys.create("web_reader", "reader-secret").id;
     }
     store->apply_web_search_update(settings);
     store.reset();
@@ -155,7 +154,6 @@ TEST(WebReadConfiguration, PersistsReaderAndKeyAcrossReloadAndExport) {
     EXPECT_TRUE(reloaded->snapshot()->web_search().web_reader_enabled);
     EXPECT_EQ(reloaded->snapshot()->web_search().firecrawl_api_key_id, settings.firecrawl_api_key_id);
     EXPECT_EQ(reloaded->snapshot()->web_search().web_reader_url, settings.web_reader_url);
-    EXPECT_EQ(reloaded->snapshot()->web_search().web_reader_api_key_id, settings.web_reader_api_key_id);
     const auto exported = fixture.root() / "exported";
     (void)export_workspace_configuration(database, exported, WorkspaceConfigLease::already_held);
     const auto copy = Workspace::load(exported).web_search();
@@ -163,7 +161,6 @@ TEST(WebReadConfiguration, PersistsReaderAndKeyAcrossReloadAndExport) {
     EXPECT_TRUE(copy.web_reader_enabled);
     EXPECT_EQ(copy.firecrawl_api_key_id, settings.firecrawl_api_key_id);
     EXPECT_EQ(copy.web_reader_url, settings.web_reader_url);
-    EXPECT_EQ(copy.web_reader_api_key_id, settings.web_reader_api_key_id);
     // Unknown reader settings do not disable a valid search configuration.
     const auto path = exported / "system/web-search/config.toml";
     std::ofstream(path) << "provider='brave'\ntool_enabled=true\nread_provider='jina'\njina_api_key=123\n";

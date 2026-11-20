@@ -492,14 +492,6 @@ TEST_F(ForumLibraryTest, MixedMulticastAndAssistantUseNativeLibraryWithoutAttach
     send(*second);
     EXPECT_TRUE(requests.back().library_store_ids.empty());
     EXPECT_EQ(definitions.back()->system_prompt.find("Forum Library catalogue"), std::string::npos);
-    // Attachment and detachment do not select stores.
-    const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Unrelated");
-    ASSERT_TRUE(c->add_item(folder.id).input_consumed);
-    send(*c);
-    EXPECT_EQ(requests.back().library_store_ids, (std::vector<std::string>{"vs_a", "vs_b"}));
-    ASSERT_TRUE(c->detach_folder(folder.id).input_consumed);
-    send(*c);
-    EXPECT_EQ(requests.back().library_store_ids, (std::vector<std::string>{"vs_a", "vs_b"}));
 }
 
 TEST_F(ForumLibraryTest, DefaultMasksSessionChoicesAndPreservesEffortAndCharacterSettings) {
@@ -683,41 +675,18 @@ TEST_F(ForumLibraryTest, NamingAndProviderFailureKeepExistingBoundaries) {
     EXPECT_EQ(log().find("same-secret"), std::string::npos);
 }
 
-TEST_F(SessionOpenTest, FolderAttachNeedsNoStoreAndRollsBackWhenItsNoticeFails) {
-    const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
-    const auto stored = sessions_->create("lobby", "Race");
-    const auto prepared = sessions_->prepare(stored.identity);
-    auto opened = open(stored.identity);
-    const auto& controller = opened.controller;
-    SessionJournal journal(prepared.database_path, prepared.session_key);
-    storage::SqliteDatabase failure_db(prepared.database_path, storage::SqliteDatabase::Mode::read_write);
-    failure_db.execute("CREATE TRIGGER reject_folder_notice BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'notice failure'); END");
-    EXPECT_FALSE(controller->add_item(folder.id).input_consumed);
-    EXPECT_TRUE(journal.folder_ids().empty());
-    EXPECT_TRUE(controller->view().transcript.entries.empty());
-    failure_db.execute("DROP TRIGGER reject_folder_notice");
-    EXPECT_TRUE(controller->add_item(folder.id).input_consumed);
-    EXPECT_EQ(journal.folder_ids(), (std::vector<std::int64_t>{folder.id}));
-}
-
-TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsLibraryAndAttachUsesTheActiveVault) {
-    const auto folder = store_->create_note_item({}, NoteItemKind::folder, "Research");
+TEST_F(SessionOpenTest, WelcomeMaintenanceSkipsLibrary) {
     auto prepared = sessions_->prepare({std::string(entrance_id), std::string(welcome_id)});
     std::vector<GenerationRequest> requests;
     bool reject = false;
     Providers providers([&](auto) { return std::make_unique<LibraryRequestBackend>(requests, reject); }, [](auto work) { work(); });
-    int lookups = 0;
     auto controller = SessionController::from_workspace([&] { return store_->snapshot(); },
         [&](auto id) { return store_->get_note_text(id, true); },
-        [&](auto id) { ++lookups; return store_->get_note_item(id); },
+        [&](auto id) { return store_->get_note_item(id); },
         std::string(workspace_assistant_id), std::string(workspace_guest_id),
         prepared.database_path, prepared.session_key, prepared.database_password, providers,
         std::make_shared<test::TestNotifier>(), prepared.restore, prepared.identity, 0, {});
-    ASSERT_TRUE(controller->add_item(folder.id).input_consumed);
-    EXPECT_TRUE(requests.empty());
-    const auto before = lookups;
     (void)controller->submit_prompt(workspace_guest_id, "Maintenance");
-    EXPECT_EQ(lookups, before);
     ASSERT_EQ(requests.size(), 1u);
     EXPECT_TRUE(requests[0].maintenance_tool);
     EXPECT_TRUE(requests[0].library_store_ids.empty());

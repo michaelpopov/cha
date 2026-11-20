@@ -425,8 +425,8 @@ is separately available through vault_config_read; saved host values may differ
 from process values until restart.
 
 CHA keeps no record of uploaded stores; the upload Events name them.
-`sessions` shows where folders are attached. `notes` includes folders and annotations, Ref
-IDs, audio clip metadata, and saved pending audio attempt details. `sessions`
+`notes` includes folders and annotations, Ref IDs, audio clip metadata, and
+saved pending audio attempt details. `sessions`
 includes live flags, saved toolbar overrides, attachment metadata and counts;
 `session_entries` includes entry metadata and byte lengths. Events and pending
 work remain in assistant_events. Inspection never returns session or note text,

@@ -41,9 +41,8 @@ edits the shared guide for every character.
 - Events: recent results of background jobs, such as note audio and compression.
 - Personas, Characters, Forums, Vaults, Styles, and Voices manage those items.
 
-A note or a folder is attached to a chat by its CHA Ref ID (Copy Ref ID in
-Notes). Characters on network providers search attached folders while they
-answer. `/detach <Ref ID>` removes a folder attached in the chat.
+Attach a copy of a note to a chat by sending its CHA Ref ID (Copy Ref ID in
+Notes). Characters can search the forum Library when they answer.
 
 The chat toolbar's Model and Effort change the selected character's provider
 and effort for the current session only; Default uses the character's settings.

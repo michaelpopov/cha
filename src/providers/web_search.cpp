@@ -487,8 +487,6 @@ std::string read_page(const WorkspaceWebSearch& config, std::string_view url,
     const std::function<void()>& on_fallback, bool include_images) {
     if (cancelled.load()) return {};
     if (config.web_reader_enabled) {
-        if (!config.web_reader_api_key_id.empty())
-            log_warn("web_reader API key is saved but unused; the service has no API-key authentication contract");
         try {
             return read_web_reader(url, config.web_reader_url, cancelled, output_byte_limit, include_images);
         } catch (const WebToolError&) {

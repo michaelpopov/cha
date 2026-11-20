@@ -119,7 +119,6 @@ struct WorkspaceWebSearch {
     std::string firecrawl_api_key_id;
     std::string web_reader_url;
     bool web_reader_enabled{false};
-    std::string web_reader_api_key_id;
 };
 
 struct WorkspaceVoiceProviderOutput {

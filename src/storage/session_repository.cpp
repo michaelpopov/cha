@@ -108,22 +108,6 @@ nlohmann::json session_overrides(Database& database, std::int64_t session_key) {
     return result;
 }
 
-nlohmann::json session_folders(Database& database, std::int64_t session_key) {
-    Statement statement = database.prepare(
-        "SELECT folder_id FROM session_folders WHERE session_key = ?1 "
-        "ORDER BY folder_id",
-        session_key);
-    auto result = nlohmann::json::array();
-    while (statement.step()) {
-        const std::int64_t folder_id = statement.integer(0);
-        result.push_back({
-            {"folder_id", folder_id},
-            {"ref_id", note_item_ref_id(folder_id)},
-        });
-    }
-    return result;
-}
-
 nlohmann::json session_notes(Database& database, std::int64_t session_key) {
     Statement statement = database.prepare(
         "SELECT sn.note_id, sn.name, "
@@ -204,13 +188,9 @@ void SessionRepository::MaintenanceGuard::retarget(
     std::filesystem::path database_path,
     std::string database_password) {
     const bool path_changed = repository_->database_path_ != database_path;
-    if (path_changed) {
-        SessionJournal welcome(repository_->temporary_database_path_);
-        welcome.clear_folder_associations();
-        if (repository_->temporary_session_per_vault_) {
-            repository_->temporary_database_path_ =
-                repository_->prepare_temporary_database(database_path);
-        }
+    if (path_changed && repository_->temporary_session_per_vault_) {
+        repository_->temporary_database_path_ =
+            repository_->prepare_temporary_database(database_path);
     }
     repository_->database_path_ = std::move(database_path);
     repository_->database_password_ = std::move(database_password);
@@ -284,7 +264,11 @@ std::filesystem::path SessionRepository::prepare_temporary_database(
             filename.push_back(hex[byte & 0xf]);
         }
         path = welcome_directory_ / (filename + ".sqlite3");
-        if (std::filesystem::exists(path)) return path;
+        if (std::filesystem::exists(path)) {
+            Database database(path, Database::Mode::read_write);
+            drop_legacy_folder_tables(database);
+            return path;
+        }
     }
     if (!create_session_database(
             path,
@@ -431,7 +415,6 @@ nlohmann::json SessionRepository::inspect_sessions(std::string_view forum_id) co
                 ? nlohmann::json(nullptr)
                 : nlohmann::json(sessions.integer(11))},
             {"overrides", session_overrides(database, session_key)},
-            {"folders", session_folders(database, session_key)},
             {"notes", session_notes(database, session_key)},
             {"files", session_files(database, session_key)},
         });

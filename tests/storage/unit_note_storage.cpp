@@ -1,7 +1,6 @@
 #include "storage/note_storage.h"
 #include "session/summary_prompt_cache.h"
 #include "storage/event_storage.h"
-#include "storage/folder_store_storage.h"
 #include "storage/session_label.h"
 #include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
@@ -619,7 +618,6 @@ TEST_F(NoteStorageTest, ForumsPreserveLegacyNoteContentAndAnnotationsAtomically)
 
 TEST_F(NoteStorageTest, ForumsPreserveLegacyAndEmptyFolderIdentity) {
     create_event_history_schema(*database_);
-    create_folder_store_schema(*database_);
     const auto legacy = note_create(*database_, {}, NoteItemKind::folder, "Forums");
     const auto child = note_create(*database_, legacy.id, NoteItemKind::note, "Chapter");
     {
@@ -976,12 +974,10 @@ class NoteFolderExportTest : public NoteStorageTest {
 protected:
     void SetUp() override {
         NoteStorageTest::SetUp();
-        create_folder_store_schema(*database_);
         create_event_history_schema(*database_);
         target_path_ = workspace_.root() / "target.sqlite3";
         create_empty_workspace_session_database(target_path_);
         target_ = std::make_unique<Database>(target_path_, Database::Mode::read_write);
-        create_folder_store_schema(*target_);
     }
 
     std::optional<NoteItem> target_item(std::optional<std::int64_t> parent_id, std::string_view name) {
@@ -2473,12 +2469,7 @@ TEST_F(NoteStorageTest, DeleteCascadesAndDoesNotReuseIds) {
         *database_, child.id, NoteItemKind::note, "Grandchild");
     const auto sibling = note_create(
         *database_, std::nullopt, NoteItemKind::note, "Sibling");
-    database_->execute("INSERT INTO forums (forum_id) VALUES ('refs')");
-    database_->execute("INSERT INTO sessions (forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) VALUES (1,'s','S',0,1,1,1)");
-    session_folder_insert(*database_, 1, root.id);
-    session_folder_insert(*database_, 1, child.id);
     note_delete(*database_, root.id);
-    EXPECT_TRUE(session_folder_ids(*database_, 1).empty());
     const auto remaining = note_list(*database_);
     ASSERT_EQ(remaining.size(), 1U);
     EXPECT_EQ(remaining.front().id, sibling.id);

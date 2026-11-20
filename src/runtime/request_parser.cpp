@@ -594,7 +594,7 @@ WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
         (void)value;
         if (key != "provider" && key != "api_key" && key != "tool_enabled"
             && key != "read_provider" && key != "firecrawl_api_key" && key != "web_reader_url"
-            && key != "web_reader_enabled" && key != "web_reader_api_key")
+            && key != "web_reader_enabled")
             log_warn("Ignoring unused web search field: " + key);
     }
     return {required_field<std::string>(json, "provider"),
@@ -603,8 +603,7 @@ WebSearchSettings parse_web_search_settings(const nlohmann::json& json) {
         json.contains("read_provider") ? required_field<std::string>(json, "read_provider") : "off",
         json.contains("firecrawl_api_key") ? required_field<std::string>(json, "firecrawl_api_key") : "",
         json.contains("web_reader_url") ? required_field<std::string>(json, "web_reader_url") : "",
-        json.contains("web_reader_enabled") ? required_field<bool>(json, "web_reader_enabled") : false,
-        json.contains("web_reader_api_key") ? required_field<std::string>(json, "web_reader_api_key") : ""};
+        json.contains("web_reader_enabled") ? required_field<bool>(json, "web_reader_enabled") : false};
 }
 
 VoiceInputSettings parse_voice_input_settings(const nlohmann::json& json) {

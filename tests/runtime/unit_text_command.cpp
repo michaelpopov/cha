@@ -19,7 +19,7 @@ TEST(Command, ParsesOnlySupportedCommands) {
         {"/cover", CommandKind::unknown},
         {"/uncover", CommandKind::unknown},
         {"/clear", CommandKind::clear},
-        {"/detach ##00000B", CommandKind::detach},
+        {"/detach ##00000B", CommandKind::unknown},
         {"/clear\t", CommandKind::clear},
         {"/clearer", CommandKind::unknown},
         {"/info", CommandKind::unknown},
@@ -38,7 +38,7 @@ TEST(Command, ParsesOnlySupportedCommands) {
     const Command multicast = parse_command("/mcast @One, @Two. Question");
     EXPECT_EQ(multicast.kind, CommandKind::mcast);
     EXPECT_EQ(multicast.argument, "@One, @Two. Question");
-    EXPECT_EQ(command_names(), "/mcast, /clear, /detach");
+    EXPECT_EQ(command_names(), "/mcast, /clear");
 }
 
 } // namespace

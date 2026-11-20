@@ -292,23 +292,6 @@ nlohmann::json stored_notes(const std::filesystem::path& path, std::string_view 
     return {{"items", items}, {"audio", audio}, {"sequence", sequence.step() ? sequence.integer(0) : 0}};
 }
 
-TEST(ApplicationVault, ChildCopyAcceptsSourceWithoutFolderStoreSchema) {
-    TwoVaults pair;
-    (void)seed_notes(pair.database_b, "Older source");
-    const auto before = stored_notes(pair.database_b);
-    {
-        storage::SqliteDatabase source(pair.database_b, storage::SqliteDatabase::Mode::read_write);
-        source.execute("DROP TABLE session_folders");
-    }
-    auto application = Application::open(pair.command);
-    const auto child = application->create_vault({.display_name = "Child", .copy_from = "B"}, application->context_epoch());
-    EXPECT_EQ(stored_notes(child.data), before);
-    (void)application->switch_vault("Child", {}, application->context_epoch());
-    EXPECT_EQ(stored_notes(pair.database_b), before);
-    storage::SqliteDatabase source(pair.database_b, storage::SqliteDatabase::Mode::read_only);
-    EXPECT_FALSE(source.prepare("SELECT 1 FROM sqlite_master WHERE name = 'session_folders'").step());
-}
-
 TEST(ApplicationVault, NotesFollowWholeCopiesProtectionAndEmptyNewVaults) {
     TwoVaults pair;
     const auto note = seed_notes(pair.database_a, "Original");

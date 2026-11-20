@@ -267,9 +267,7 @@ TEST_F(ChatSyncTest, SelfNoteMovesOnlyWhenShared) {
 TEST_F(ChatSyncTest, InitialIncludesAttachmentsAndSettingsInOrder) {
     make_chat_session(*database_, "f1", "s-init", "New session");
     const auto key = session_key_for(*database_, "f1", "s-init");
-    // Seed a note and folder for attachments.
     const auto note = note_create(*database_, std::nullopt, NoteItemKind::note, "N");
-    const auto folder = note_create(*database_, std::nullopt, NoteItemKind::folder, "F");
     {
         SessionJournal journal(path_, key);
         journal.set_sync_machine(std::string(sync_machine));
@@ -278,20 +276,18 @@ TEST_F(ChatSyncTest, InitialIncludesAttachmentsAndSettingsInOrder) {
         const NoteText copy{note.id, "N", "body"};
         (void)journal.add_note(copy, 3);
         (void)journal.add_text_file("f.txt", "data", 4);
-        (void)journal.add_folder(folder.id, "F", 5);
         journal.set_character_settings("c1", {.provider_id = "p", .reasoning_effort = std::nullopt});
         // Still temporary: nothing.
         EXPECT_TRUE(sync_queue_list(*database_).empty());
         journal.rename("Shared");
     }
     auto records = queued_records(*database_);
-    // Turn + note + file + folder + character.
-    ASSERT_GE(records.size(), 5u);
+    // Turn + note + file + character.
+    ASSERT_GE(records.size(), 4u);
     EXPECT_EQ(records[0]["kind"], "chat.entries");
     EXPECT_EQ(records[1]["kind"], "chat.add_note");
     EXPECT_EQ(records[2]["kind"], "chat.add_file");
-    EXPECT_EQ(records[3]["kind"], "chat.add_folder");
-    EXPECT_EQ(records[4]["kind"], "chat.character");
+    EXPECT_EQ(records[3]["kind"], "chat.character");
 }
 
 TEST_F(ChatSyncTest, UnchangedAutomaticNoteCopyWritesNoNoticeOrSyncRecord) {
@@ -1120,6 +1116,40 @@ TEST(D1WorkerTest, SplitSendRetriesFromFirstPiece) {
     Database database(path, Database::Mode::read_only);
     EXPECT_TRUE(sync_queue_list(database).empty());
     EXPECT_TRUE(sync_seen(database, id));
+}
+
+TEST(D1WorkerTest, ObsoleteFolderRecordsAreAcknowledgedWithoutAnEvent) {
+    test::TestWorkspace workspace;
+    const auto path = test::import_test_database(workspace.root());
+    {
+        Database database(path, Database::Mode::read_write);
+        add_d1_key(database);
+    }
+    auto store = WorkspaceConfigStore::open(path);
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    const std::string inbox = "q2/Test/mac";
+    const std::string legacy = "q/Test/mac";
+    const std::string id(32, 'a');
+    const nlohmann::json fields{
+        {"chat", {"lobby", "old-chat"}}, {"label", "Old chat"}, {"path", {"Missing folder"}},
+    };
+    ASSERT_FALSE(client.create_queue_table(inbox, true));
+    ASSERT_FALSE(client.create_queue_table(legacy));
+    ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, sync_make_record("chat.add_folder", fields), id));
+    ASSERT_FALSE(client.insert_piece({legacy}, 1, 1, sync_make_record("chat.detach_folder", fields)));
+
+    auto config = d1.config(path);
+    config.store = store.get();
+    D1SyncWorker worker(std::move(config));
+    worker.run_once();
+
+    EXPECT_TRUE(d1.ids(inbox).empty());
+    EXPECT_FALSE(d1.queue.prepare("SELECT 1 FROM \"q/Test/mac\"").step());
+    EXPECT_TRUE(store->list_events().empty());
+    Database database(path, Database::Mode::read_only);
+    EXPECT_TRUE(sync_seen(database, id));
+    EXPECT_FALSE(database.prepare("SELECT 1 FROM sessions WHERE session_id='old-chat'").step());
 }
 
 TEST(D1WorkerTest, InvalidRecordsSkippedAndAcked) {

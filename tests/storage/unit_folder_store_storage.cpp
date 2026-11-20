@@ -1,19 +1,13 @@
 #include "storage/folder_store_storage.h"
-#include "storage/event_storage.h"
-#include "storage/session_database.h"
 #include "storage/sqlite_storage.h"
-#include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
 #include "workspace/workspace_config_store.h"
 
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
 
-#include <chrono>
-#include <future>
 #include <filesystem>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace cha {
@@ -58,7 +52,7 @@ bool table_exists(Database& database, std::string_view name) {
     return row.step();
 }
 
-TEST_F(FolderStoreStorageTest, OpeningAnOlderVaultDropsStoreLinksAndKeepsChatFolders) {
+TEST_F(FolderStoreStorageTest, OpeningAnOlderVaultDropsLegacyFolderTables) {
     // The schema of earlier CHA versions, with a ready store and a file.
     database_->execute(R"sql(
 CREATE TABLE folder_stores (
@@ -79,6 +73,11 @@ CREATE TABLE folder_store_files (
     file_id TEXT NOT NULL,
     PRIMARY KEY (store_id, file_id)
 ) STRICT;
+CREATE TABLE session_folders (
+    session_key INTEGER NOT NULL REFERENCES sessions(session_key) ON DELETE CASCADE,
+    folder_id INTEGER NOT NULL CHECK (folder_id > 0),
+    PRIMARY KEY (session_key, folder_id)
+) STRICT;
 )sql");
     const auto folder = note_create(*database_, {}, NoteItemKind::folder, "Research");
     (void)note_create(*database_, folder.id, NoteItemKind::note, "Log");
@@ -90,21 +89,9 @@ CREATE TABLE folder_store_files (
     Database check(path_, Database::Mode::read_only);
     EXPECT_FALSE(table_exists(check, "folder_stores"));
     EXPECT_FALSE(table_exists(check, "folder_store_files"));
-    EXPECT_TRUE(table_exists(check, "session_folders"));
+    EXPECT_FALSE(table_exists(check, "session_folders"));
     store->delete_note_item(folder.id);
     EXPECT_FALSE(store->get_note_item(folder.id));
-}
-
-TEST(FolderStoreSchema, WelcomeAndTestJournalsIncludeOnlyChatFolderTables) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "welcome.sqlite3";
-    ASSERT_TRUE(create_session_database(path, {.id = "welcome", .forum = "entrance", .label = "Welcome"}));
-    Database database(path, Database::Mode::read_write);
-    EXPECT_TRUE(table_exists(database, "session_folders"));
-    EXPECT_FALSE(table_exists(database, "folder_stores"));
-    SessionJournal journal(path);
-    journal.clear_history();
-    EXPECT_TRUE(journal.folder_ids().empty());
 }
 
 TEST_F(FolderStoreStorageTest, RequireFolderRejectsNotes) {
@@ -160,81 +147,6 @@ TEST_F(FolderStoreStorageTest, CaptureFailsADamagedNonemptyDocument) {
     EXPECT_THROW((void)folder_store_capture(*database_, folder.id, FolderStoreService::openai), FolderStoreError);
 }
 
-TEST(FolderStoreJournal, AttachDetachClearAndNoticeRollback) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "journal.sqlite3";
-    ASSERT_TRUE(create_session_database(path, {.id = "s", .forum = "f", .label = "S"}));
-    Database database(path, Database::Mode::read_write);
-    const auto folder = note_create(database, {}, NoteItemKind::folder, "Research");
-    const auto note = note_create(database, folder.id, NoteItemKind::note, "Log");
-    note_save(database, note.id, text_doc("body"));
-    SessionJournal journal(path);
-    const auto added = journal.add_folder(folder.id, "Research", 1);
-    EXPECT_NE(std::string(added.text).find("Added folder"), std::string::npos);
-    EXPECT_EQ(journal.folder_ids(), std::vector<std::int64_t>({folder.id}));
-    const auto again = journal.add_folder(folder.id, "Research", 2);
-    EXPECT_NE(std::string(again.text).find("already attached"), std::string::npos);
-    const auto detached = journal.detach_folder(folder.id, "Research", 4);
-    EXPECT_NE(std::string(detached.text).find("Removed folder"), std::string::npos);
-    const auto repeated = journal.detach_folder(folder.id, "", 5);
-    EXPECT_NE(std::string(repeated.text).find("not attached"), std::string::npos);
-    EXPECT_NE(std::string(repeated.text).find(note_item_ref_id(folder.id)), std::string::npos);
-    (void)journal.add_folder(folder.id, "Research", 6, [&](std::int64_t) { return true; });
-    journal.clear_history();
-    EXPECT_TRUE(journal.folder_ids().empty());
-}
-
-TEST(FolderStoreJournal, NoticeFailureRollsBackTheAssociation) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "journal.sqlite3";
-    ASSERT_TRUE(create_session_database(path, {.id = "s", .forum = "f", .label = "S"}));
-    SessionJournal journal(path);
-    Database failure_db(path, Database::Mode::read_write);
-    failure_db.execute("CREATE TRIGGER reject_notice BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'notice failure'); END");
-    EXPECT_THROW((void)journal.add_folder(1, "Research", 1, [](std::int64_t) { return true; }), std::exception);
-    EXPECT_TRUE(journal.folder_ids().empty());
-}
-
-TEST(FolderStoreJournal, PersistentAttachAndDeleteSerializeOnSeparateConnections) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "race.sqlite3";
-    create_empty_workspace_session_database(path);
-    Database writer(path, Database::Mode::read_write);
-    writer.execute("INSERT INTO forums (forum_id) VALUES ('f')");
-    writer.execute(
-        "INSERT INTO sessions (forum_key, session_id, label, updated_at, history_epoch, "
-        "next_entry_id, next_request_id) VALUES (1, 's', 'S', 0, 1, 1, 1)");
-    const auto folder = note_create(writer, {}, NoteItemKind::folder, "Research");
-    const auto note = note_create(writer, folder.id, NoteItemKind::note, "Log");
-    note_save(writer, note.id, text_doc("body"));
-    // Hold the deletion uncommitted while another journal connection attempts
-    // BEGIN IMMEDIATE. It must wait, then recheck the folder after this commit.
-    storage::SqliteTransaction deletion(writer);
-    folder_store_delete_session_folders_in_subtree(writer, folder.id);
-    note_delete_in_transaction(writer, folder.id);
-    std::promise<void> attaching;
-    auto attempted = attaching.get_future();
-    auto attach = std::async(std::launch::async, [&] {
-        SessionJournal journal(path, 1);
-        attaching.set_value();
-        try {
-            (void)journal.add_folder(folder.id, "Research", 1);
-            return std::string("unexpected attachment");
-        } catch (const std::invalid_argument& error) {
-            return std::string(error.what());
-        }
-    });
-    EXPECT_EQ(attempted.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-    EXPECT_EQ(attach.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
-    deletion.commit();
-    EXPECT_EQ(attach.get(), "That folder does not exist.");
-    Database check(path, Database::Mode::read_only);
-    auto dangling = check.prepare(
-        "SELECT COUNT(*) FROM session_folders");
-    ASSERT_TRUE(dangling.step());
-    EXPECT_EQ(dangling.integer(0), 0);
-}
-
 TEST(FolderStoreRefId, EncodesCompleteNumericIds) {
     EXPECT_EQ(note_item_ref_id(1), "##000001");
     EXPECT_EQ(note_item_ref_id(11), "##00000B");
@@ -281,36 +193,6 @@ TEST(FolderStoreLimits, ChecksFinalByteBoundariesWithoutTruncation) {
             EXPECT_NE(std::string(error.what()).find("11"), std::string::npos);
         }
     }
-}
-
-TEST(FolderStoreJournal, DetachNoticeFailureKeepsTheAssociation) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "journal.sqlite3";
-    ASSERT_TRUE(create_session_database(path, {.id = "s", .forum = "f", .label = "S"}));
-    SessionJournal journal(path);
-    (void)journal.add_folder(11, "Research", 1, [](auto) { return true; });
-    Database database(path, Database::Mode::read_write);
-    database.execute("CREATE TRIGGER reject_notice BEFORE INSERT ON entries BEGIN SELECT RAISE(ABORT, 'notice failure'); END");
-    EXPECT_THROW((void)journal.detach_folder(11, "Research", 2), std::exception);
-    EXPECT_EQ(journal.folder_ids(), std::vector<std::int64_t>({11}));
-}
-
-TEST(FolderStoreJournal, AssociationsAreSessionScopedAndCascadeWithSessionDeletion) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "journal.sqlite3";
-    ASSERT_TRUE(create_session_database(path, {.id = "s", .forum = "f", .label = "S"}));
-    Database database(path, Database::Mode::read_write);
-    database.execute("INSERT INTO sessions (forum_key, session_id, label, updated_at, history_epoch, next_entry_id, next_request_id) VALUES (1,'other','Other',0,1,1,1)");
-    SessionJournal first(path, 1), second(path, 2);
-    (void)first.add_folder(11, "First", 1, [](auto) { return true; });
-    (void)second.add_folder(22, "Second", 1, [](auto) { return true; });
-    first.clear_history();
-    EXPECT_TRUE(first.folder_ids().empty());
-    EXPECT_EQ(second.folder_ids(), std::vector<std::int64_t>({22}));
-    database.execute("DELETE FROM sessions WHERE session_key=2");
-    auto row = database.prepare("SELECT COUNT(*) FROM session_folders");
-    ASSERT_TRUE(row.step());
-    EXPECT_EQ(row.integer(0), 0);
 }
 
 } // namespace

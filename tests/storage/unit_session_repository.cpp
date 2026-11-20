@@ -139,14 +139,13 @@ protected:
     std::filesystem::path welcome_;
 };
 
-TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptAndCopies) {
+TEST_F(SessionRepositoryTest, WelcomeKeepsTranscriptAndCopiesAcrossVaultChanges) {
     auto repository = make_repository();
     const auto prepared = repository.prepare(temporary_identity());
     {
         SessionJournal journal(prepared.database_path, prepared.session_key);
-        (void)journal.add_folder(11, "Research", 1, [](auto) { return true; });
-        (void)journal.add_text_file("Notes", "copied text", 2);
-        (void)journal.add_note({21, "Explicit", "explicit vault text"}, 3);
+        (void)journal.add_text_file("Notes", "copied text", 1);
+        (void)journal.add_note({21, "Explicit", "explicit vault text"}, 2);
     }
     {
         auto maintenance = repository.reserve_maintenance();
@@ -154,7 +153,6 @@ TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptA
     }
     {
         SessionJournal journal(prepared.database_path, prepared.session_key);
-        EXPECT_EQ(journal.folder_ids(), std::vector<std::int64_t>({11}));
         EXPECT_NE(journal.notes_prompt().find("explicit vault text"), std::string::npos);
     }
     const auto target = fixture_.root() / "other.sqlite3";
@@ -164,9 +162,8 @@ TEST_F(SessionRepositoryTest, WelcomeFolderRefsFollowVaultPathButKeepTranscriptA
         maintenance.retarget(target);
     }
     SessionJournal journal(prepared.database_path, prepared.session_key);
-    EXPECT_TRUE(journal.folder_ids().empty());
     EXPECT_EQ(journal.notes_prompt(), "# Note: Explicit\n\nexplicit vault text\n\n# File: Notes\n\ncopied text");
-    EXPECT_EQ(repository.history(temporary_identity()).size(), 3U);
+    EXPECT_EQ(repository.history(temporary_identity()).size(), 2U);
 }
 
 TEST_F(SessionRepositoryTest, EntryAudioPersistsAndIsScopedToItsSession) {

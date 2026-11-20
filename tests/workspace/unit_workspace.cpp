@@ -2444,6 +2444,23 @@ TEST(Workspace, HarmlessUnknownFieldsLoadWithPathAwareWarnings) {
     EXPECT_NE(logged.find(voice_warning->message), std::string::npos);
 }
 
+TEST(Workspace, ObsoleteWebReaderKeyLoadsWithWarning) {
+    test::TestWorkspace fixture;
+    const auto path = fixture.root() / "system" / "web-search" / "config.toml";
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream(path) << "web_reader_enabled = true\nweb_reader_url = 'http://reader.example:8087'\n"
+                           "web_reader_api_key = 'old-key'\n";
+    const auto log_file = fixture.root() / "web-reader-warnings.log";
+    initialize_diagnostic_logging(log_file, "warn");
+    const auto workspace = Workspace::load(fixture.root());
+    shutdown_diagnostic_logging();
+
+    EXPECT_TRUE(workspace.web_search().web_reader_enabled);
+    EXPECT_EQ(workspace.web_search().web_reader_url, "http://reader.example:8087");
+    EXPECT_NE(file_bytes(log_file).find("Ignoring unused web search field: web_reader_api_key"),
+        std::string::npos);
+}
+
 TEST(Workspace, InvalidActiveConfigurationStillFailsWithHarmlessFields) {
     test::TestWorkspace fixture;
     fixture.write_character_config(

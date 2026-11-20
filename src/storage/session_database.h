@@ -6,11 +6,9 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <set>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -102,20 +100,6 @@ public:
         const NoteText& note, EntryId entry_id, bool skip_unchanged = false);
     [[nodiscard]] TranscriptEntry add_text_file(
         std::string_view name, std::string_view text, EntryId entry_id);
-    // Persistent attach rechecks that the folder exists on this journal
-    // connection when welcome_exists is empty. Welcome supplies a vault callback.
-    [[nodiscard]] TranscriptEntry add_folder(
-        std::int64_t folder_id,
-        std::string_view folder_name,
-        EntryId entry_id,
-        std::function<bool(std::int64_t)> welcome_exists = {});
-    [[nodiscard]] TranscriptEntry detach_folder(
-        std::int64_t folder_id,
-        std::string_view folder_name,
-        EntryId entry_id);
-    [[nodiscard]] std::vector<std::int64_t> folder_ids() const;
-    void prune_folders(std::span<const std::int64_t> folder_ids);
-    void clear_folder_associations();
     // Returns the note copies and the file copies for the system prompt.
     [[nodiscard]] std::string notes_prompt() const;
     void complete_turn(RequestId request_id, const TranscriptEntry& response);

@@ -520,7 +520,6 @@ void WorkspaceConfigEditor::write_web_search(const WorkspaceWebSearch& settings)
     }
     table.insert("web_reader_url", web_reader_url);
     table.insert("web_reader_enabled", settings.web_reader_enabled);
-    table.insert("web_reader_api_key", settings.web_reader_api_key_id);
     write_toml(workspace_.root_ / "system" / "web-search" / "config.toml", table);
 }
 

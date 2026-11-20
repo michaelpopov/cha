@@ -398,6 +398,16 @@ ApplyResult apply_complete_record(
         return skip("invalid record", "Skipped incoming sync record with no kind.");
     }
     try {
+        if (kind == "chat.add_folder" || kind == "chat.detach_folder") {
+            if (!op_id.empty()) {
+                Database database(config.database_path, Database::Mode::read_write, config.database_password);
+                storage::SqliteTransaction transaction(database);
+                if (!sync_seen(database, op_id)) sync_record_receipt(database, op_id);
+                transaction.commit();
+            }
+            log_warn("Ignoring obsolete D1 chat record: " + kind);
+            return {ApplyOutcome::applied};
+        }
         if (kind.rfind("note.", 0) == 0) {
             Database database(config.database_path, Database::Mode::read_write, config.database_password);
             if (note_apply_record(database, envelope, op_id)) notes_changed = true;

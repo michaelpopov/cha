@@ -787,21 +787,6 @@ TEST_F(FolderStoreOperationsTest, DrainDoesNotJoinAWorkerWaitingForTheLifecycleL
     EXPECT_TRUE(finished_cv_.wait_for(lock, 5s, [&] { return finished_.contains(operation.operation_id); }));
 }
 
-TEST_F(FolderStoreOperationsTest, ChildVaultCopyKeepsChatFolderRefs) {
-    {
-        storage::SqliteDatabase source(database_, storage::SqliteDatabase::Mode::read_write);
-        source.execute("INSERT INTO sessions (forum_key,session_id,label,updated_at,history_epoch,next_entry_id,next_request_id) SELECT forum_key,'store-ref','Store ref',0,1,1,1 FROM forums LIMIT 1");
-        source.prepare("INSERT INTO session_folders (session_key, folder_id) SELECT session_key, ?1 FROM sessions LIMIT 1", folder_.id).run();
-    }
-    const auto copy = application_->create_vault(
-        {.display_name = "Child", .copy_from = "Test"}, epoch_);
-    storage::SqliteDatabase destination(copy.data, storage::SqliteDatabase::Mode::read_only);
-    EXPECT_FALSE(destination.prepare("SELECT 1 FROM sqlite_master WHERE name = 'folder_stores'").step());
-    auto refs = destination.prepare("SELECT folder_id FROM session_folders");
-    ASSERT_TRUE(refs.step());
-    EXPECT_EQ(refs.integer(0), folder_.id);
-}
-
 TEST_F(FolderStoreOperationsTest, LostAllocationResponseStopsWithoutAutomaticReplay) {
     int calls = 0;
     application_->set_folder_store_transport_for_tests([&](const auto& request, const auto&) {

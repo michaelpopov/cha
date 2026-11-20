@@ -108,7 +108,6 @@ public:
     void refresh_presentation();
     // Stores a configuration notice, or queues it while an answer is active.
     void record_configuration_notice(std::string text, std::string error_code = {});
-    void prune_folder_associations(std::vector<std::int64_t> folder_ids);
     [[nodiscard]] std::shared_ptr<app::SessionOutput> output() const {
         return output_;
     }

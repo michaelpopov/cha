@@ -1566,24 +1566,5 @@ TEST(ChaWebAdapter, StopAfterASavedRepairStoresTheNotice) {
     server.join();
 }
 
-
-TEST_F(ChaWebAdapterTest, SharedFolderReferenceAndDetachCommandsDoNotGenerateAnAnswer) {
-    const auto epoch = application_->context_epoch();
-    const auto folder = application_->create_note_item({}, NoteItemKind::folder, "Research", epoch);
-    const auto id = create_session();
-    const auto uri = session_path("lobby", id);
-    const auto ref = note_item_ref_id(folder.id);
-    EXPECT_EQ(post(uri + "/input", text_body(ref)).status, 204);
-    auto snapshot = get(uri).json;
-    EXPECT_EQ(snapshot["generation"]["active"], false);
-    EXPECT_EQ(snapshot["transcript"].back()["text"], "Added folder “Research” to this chat.");
-    EXPECT_EQ(post(uri + "/input", text_body("/detach " + ref)).status, 204);
-    snapshot = get(uri).json;
-    EXPECT_EQ(snapshot["generation"]["active"], false);
-    EXPECT_EQ(snapshot["transcript"].back()["text"], "Removed folder “Research” from this chat.");
-    EXPECT_EQ(post(uri + "/input", text_body("/detach " + ref)).status, 204);
-    EXPECT_EQ(get(uri).json["transcript"].back()["text"], "Folder “Research” is not attached to this chat.");
-}
-
 } // namespace
 } // namespace cha::daemon

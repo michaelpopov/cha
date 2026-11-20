@@ -489,7 +489,6 @@ struct WebSearchSettings {
     std::string firecrawl_api_key;
     std::string web_reader_url;
     bool web_reader_enabled{false};
-    std::string web_reader_api_key;
 };
 
 struct VoiceInputSettings {

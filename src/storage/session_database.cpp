@@ -1,6 +1,5 @@
 #include "storage/session_database.h"
 
-#include "storage/folder_store_storage.h"
 #include "storage/not_found_error.h"
 #include "storage/note_storage.h"
 #include "storage/session_timestamp.h"
@@ -786,95 +785,6 @@ TranscriptEntry SessionJournal::add_text_file(
     return entry;
 }
 
-namespace {
-
-std::string folder_label(std::int64_t folder_id, std::string_view name) {
-    if (!name.empty()) return "“" + std::string(name) + "”";
-    return note_item_ref_id(folder_id);
-}
-
-} // namespace
-
-TranscriptEntry SessionJournal::add_folder(
-    std::int64_t folder_id,
-    std::string_view folder_name,
-    EntryId entry_id,
-    std::function<bool(std::int64_t)> welcome_exists) {
-    Transaction transaction(impl_->database);
-    Statement existing = impl_->database.prepare(
-        "SELECT 1 FROM session_folders WHERE session_key = ?1 AND folder_id = ?2",
-        impl_->session_key, folder_id);
-    const bool already = existing.step();
-    if (!already) {
-        const bool exists = welcome_exists
-            ? welcome_exists(folder_id)
-            : folder_store_require_folder(impl_->database, folder_id).has_value();
-        if (!exists) throw std::invalid_argument("That folder does not exist.");
-        session_folder_insert(impl_->database, impl_->session_key, folder_id);
-    }
-    TranscriptEntry entry = make_notice_entry(entry_id, already
-        ? "Folder " + folder_label(folder_id, folder_name) + " is already attached to this chat."
-        : "Added folder " + folder_label(folder_id, folder_name) + " to this chat.");
-    insert_entry(impl_->database, impl_->session_key,
-        current_epoch(impl_->database, impl_->session_key), entry);
-    touch_session(impl_->database, impl_->session_key);
-    if (!already) {
-        if (const auto identity = impl_->shared_chat()) {
-            sync_enqueue_chat(impl_->database, *identity, "chat.add_folder",
-                {{"path", sync_note_path(impl_->database, folder_id)}});
-        }
-    }
-    transaction.commit();
-    return entry;
-}
-
-TranscriptEntry SessionJournal::detach_folder(
-    std::int64_t folder_id,
-    std::string_view folder_name,
-    EntryId entry_id) {
-    Transaction transaction(impl_->database);
-    Statement existing = impl_->database.prepare(
-        "SELECT 1 FROM session_folders WHERE session_key = ?1 AND folder_id = ?2",
-        impl_->session_key, folder_id);
-    const bool attached = existing.step();
-    if (attached) {
-        session_folder_delete(impl_->database, impl_->session_key, folder_id);
-    }
-    TranscriptEntry entry = make_notice_entry(entry_id, attached
-        ? "Removed folder " + folder_label(folder_id, folder_name) + " from this chat."
-        : "Folder " + folder_label(folder_id, folder_name) + " is not attached to this chat.");
-    insert_entry(impl_->database, impl_->session_key,
-        current_epoch(impl_->database, impl_->session_key), entry);
-    touch_session(impl_->database, impl_->session_key);
-    if (attached) {
-        if (const auto identity = impl_->shared_chat()) {
-            auto source = impl_->database.prepare("SELECT 1 FROM note_items WHERE id=?1", folder_id);
-            if (source.step()) {
-                sync_enqueue_chat(impl_->database, *identity, "chat.detach_folder",
-                    {{"path", sync_note_path(impl_->database, folder_id)}});
-            }
-        }
-    }
-    transaction.commit();
-    return entry;
-}
-
-std::vector<std::int64_t> SessionJournal::folder_ids() const {
-    return session_folder_ids(impl_->database, impl_->session_key);
-}
-
-void SessionJournal::prune_folders(std::span<const std::int64_t> folder_ids) {
-    Transaction transaction(impl_->database);
-    session_folder_prune(impl_->database, impl_->session_key, folder_ids);
-    transaction.commit();
-}
-
-void SessionJournal::clear_folder_associations() {
-    Transaction transaction(impl_->database);
-    session_folder_clear(impl_->database, impl_->session_key);
-    transaction.commit();
-}
-
 std::string SessionJournal::notes_prompt() const {
     Statement notes = impl_->database.prepare(
         "SELECT name, text FROM session_notes WHERE session_key = ?1 ORDER BY note_id",
@@ -1015,7 +925,6 @@ void SessionJournal::clear_history() {
     Statement files = impl_->database.prepare(
         "DELETE FROM session_files WHERE session_key = ?1", impl_->session_key);
     files.run();
-    session_folder_clear(impl_->database, impl_->session_key);
     touch_session(impl_->database, impl_->session_key);
     if (const auto identity = impl_->shared_chat()) {
         if (was_shared)

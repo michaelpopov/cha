@@ -25,7 +25,6 @@
 #include <memory>
 #include <optional>
 #include <set>
-#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -104,10 +103,6 @@ public:
         std::string handle = {},
         std::shared_ptr<SubmissionState> submission = {},
         std::optional<CurrentNote> current_note = {});
-    [[nodiscard]] ControllerUpdate add_item(
-        std::int64_t item_id, std::shared_ptr<SubmissionState> submission = {});
-    [[nodiscard]] ControllerUpdate detach_folder(
-        std::int64_t folder_id, std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate add_note(
         std::int64_t note_id, std::shared_ptr<SubmissionState> submission = {});
     [[nodiscard]] ControllerUpdate add_text_file(
@@ -144,7 +139,6 @@ public:
     [[nodiscard]] std::uint64_t context_epoch() const noexcept { return context_epoch_; }
     // Queues the notice while an answer is active. Returns true when it was stored now.
     bool record_configuration_notice(std::string text, std::string error_code = {});
-    void prune_folder_associations(std::span<const std::int64_t> folder_ids);
     [[nodiscard]] bool classification_pending() const noexcept { return pending_classification_.has_value(); }
     // Reads the selected note for note detection. A missing note, or no Jev, means none.
     [[nodiscard]] std::optional<CurrentNote> current_note(std::optional<std::int64_t> id) const;

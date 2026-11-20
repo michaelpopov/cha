@@ -1677,7 +1677,7 @@ WorkspaceWebSearch load_web_search_settings(
         const auto table = read_toml(source, path, "web search config");
         static constexpr std::string_view fields[]{
             "provider", "api_key", "tool_enabled",
-            "read_provider", "firecrawl_api_key", "web_reader_url", "web_reader_enabled", "web_reader_api_key"};
+            "read_provider", "firecrawl_api_key", "web_reader_url", "web_reader_enabled"};
         for (const auto& [key, value] : table) {
             (void)value;
             if (std::ranges::find(fields, key.str()) == std::end(fields))
@@ -1692,7 +1692,6 @@ WorkspaceWebSearch load_web_search_settings(
             .firecrawl_api_key_id = table["firecrawl_api_key"].value_or(std::string{}),
             .web_reader_url = table["web_reader_url"].value_or(std::string{}),
             .web_reader_enabled = table["web_reader_enabled"].value_or(false),
-            .web_reader_api_key_id = table["web_reader_api_key"].value_or(std::string{}),
         };
         if (result.provider != "brave" && result.provider != "tavily") {
             warnings.emit(

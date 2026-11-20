@@ -2475,7 +2475,6 @@ describe('web search settings', () => {
         provider: 'brave', api_key: 'removed-search-key', tool_enabled: true,
         read_provider: 'firecrawl', firecrawl_api_key: 'removed-firecrawl-key',
         web_reader_url: 'http://192.168.86.39:8087', web_reader_enabled: webReaderEnabled,
-        web_reader_api_key: '',
       }),
       listApiKeys: async () => [],
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
@@ -2508,7 +2507,7 @@ describe('web search settings', () => {
     await user.type(screen.getByLabelText('web_reader URL'), 'http://192.168.86.39:8087');
     await user.click(save);
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      web_reader_enabled: true, web_reader_url: 'http://192.168.86.39:8087', web_reader_api_key: '',
+      web_reader_enabled: true, web_reader_url: 'http://192.168.86.39:8087',
     }));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(save).toBeDisabled();
@@ -2542,14 +2541,14 @@ describe('web search settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       provider: 'tavily', api_key: 'key-1', tool_enabled: true,
-      read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
+      read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false,
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(enabled);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       provider: 'tavily', api_key: 'key-1', tool_enabled: false,
-      read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
+      read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false,
     });
   });
 
@@ -2573,65 +2572,59 @@ describe('web search settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       tool_enabled: false, provider: 'brave', api_key: '',
-      read_provider: 'firecrawl', firecrawl_api_key: 'fc', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
+      read_provider: 'firecrawl', firecrawl_api_key: 'fc', web_reader_url: '', web_reader_enabled: false,
     });
     expect(screen.getByRole('checkbox', { name: 'On-demand web search' })).not.toBeChecked();
     await user.selectOptions(reader, 'off');
     expect(screen.queryByLabelText('Firecrawl API key')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith(expect.objectContaining({
-      read_provider: 'off', firecrawl_api_key: 'fc', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
+      read_provider: 'off', firecrawl_api_key: 'fc', web_reader_url: '', web_reader_enabled: false,
     }));
     await user.selectOptions(reader, 'firecrawl');
     expect(screen.getByLabelText('Firecrawl API key')).toHaveValue('fc');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
 
-  it('saves independent reader settings with an optional key and retains them when disabled', async () => {
+  it('saves independent reader settings and retains them when disabled', async () => {
     const user = userEvent.setup();
     const saveWebSearchSettings = vi.fn(async (settings) => settings);
     render(<WebSearchSettingsScreen client={fixtureClient({
       listApiKeys: async () => [
         { id: 'fc', display_name: 'Firecrawl key', has_value: true, cloud_store: 'none', used_by: [] },
-        { id: 'reader', display_name: 'web_reader key', has_value: true, cloud_store: 'none', used_by: [] },
       ],
       saveWebSearchSettings,
     })} dispatch={vi.fn()} navigate={vi.fn()} state={initialAppState} />);
     const enabled = await screen.findByLabelText('Use web_reader');
     const url = screen.getByLabelText('web_reader URL');
-    const key = screen.getByLabelText('web_reader API key');
+    expect(screen.queryByLabelText('web_reader API key')).not.toBeInTheDocument();
     expect(url).toBeDisabled();
-    expect(key).toBeDisabled();
     await user.click(enabled);
-    expect(key).toHaveValue('');
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     await user.type(url, 'http://192.168.86.39:8087');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith({
       provider: 'brave', api_key: '', tool_enabled: false,
       read_provider: 'off', firecrawl_api_key: '', web_reader_url: 'http://192.168.86.39:8087',
-      web_reader_enabled: true, web_reader_api_key: '',
+      web_reader_enabled: true,
     });
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText('Page reading provider'), 'firecrawl');
     await user.selectOptions(screen.getByLabelText('Firecrawl API key'), 'fc');
-    await user.selectOptions(key, 'reader');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith(expect.objectContaining({
       read_provider: 'firecrawl', firecrawl_api_key: 'fc', web_reader_enabled: true,
-      web_reader_api_key: 'reader', web_reader_url: 'http://192.168.86.39:8087',
+      web_reader_url: 'http://192.168.86.39:8087',
     }));
     await user.click(enabled);
     expect(url).toBeDisabled();
-    expect(key).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenLastCalledWith(expect.objectContaining({
       read_provider: 'firecrawl', firecrawl_api_key: 'fc', web_reader_enabled: false,
-      web_reader_api_key: 'reader', web_reader_url: 'http://192.168.86.39:8087',
+      web_reader_url: 'http://192.168.86.39:8087',
     }));
     await user.click(enabled);
     expect(url).toHaveValue('http://192.168.86.39:8087');
-    expect(key).toHaveValue('reader');
   });
 
   it('enables on-demand search without a query provider or pre-search', async () => {
@@ -2648,7 +2641,7 @@ describe('web search settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(saveWebSearchSettings).toHaveBeenCalledWith({
       tool_enabled: true, provider: 'brave', api_key: 'key-1',
-      read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
+      read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false,
     });
   });
 
@@ -2657,7 +2650,7 @@ describe('web search settings', () => {
     render(<WebSearchSettingsScreen client={fixtureClient({
       getWebSearchSettings: async () => ({
         provider: 'brave', api_key: '', tool_enabled: false,
-        read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false, web_reader_api_key: '',
+        read_provider: 'off', firecrawl_api_key: '', web_reader_url: '', web_reader_enabled: false,
       }),
       saveWebSearchSettings: async () => {
         throw new ChaError('invalid_argument', 'Search settings could not be saved.');

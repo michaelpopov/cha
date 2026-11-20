@@ -1118,19 +1118,6 @@ TEST_F(BridgeRouterTest, WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl) 
     settings["read_provider"] = "firecrawl";
     ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
     EXPECT_EQ(call("apiKey.list")["result"][0]["used_by"], nlohmann::json::array({"Page reading"}));
-    const auto reader = call("apiKey.create", {{"display_name", "web_reader"}, {"value", "reader-secret"}, {"cloud_store", "none"}});
-    ASSERT_TRUE(reader["ok"]);
-    settings["web_reader_api_key"] = reader["result"]["id"];
-    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
-    EXPECT_EQ(call("webSearch.get")["result"], settings);
-    const auto key_list = call("apiKey.list")["result"];
-    for (const auto& key : key_list) {
-        if (key["id"] == reader["result"]["id"])
-            EXPECT_EQ(key["used_by"], nlohmann::json::array({"web_reader"}));
-    }
-    // This reserved key has no authentication role in the service yet.
-    settings["web_reader_api_key"] = "obsolete-reader-key";
-    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
     settings["read_provider"] = "off";
     settings["web_reader_enabled"] = false;
     settings["web_reader_url"] = "ftp://obsolete";
@@ -1139,22 +1126,21 @@ TEST_F(BridgeRouterTest, WebReaderSettingsWorkWithoutKeysAndValidateTheBaseUrl) 
     EXPECT_EQ(call("webSearch.get")["result"], settings);
     settings.erase("web_reader_url");
     settings.erase("web_reader_enabled");
-    settings.erase("web_reader_api_key");
     ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"]["web_reader_url"], "");
     EXPECT_FALSE(call("webSearch.get")["result"]["web_reader_enabled"].get<bool>());
-    EXPECT_EQ(call("webSearch.get")["result"]["web_reader_api_key"], "");
 }
 
 TEST_F(BridgeRouterTest, WebSearchSettingsRoundTripAndIgnoreObsoletePreliminarySearchSettings) {
     bootstrap_epoch();
     const nlohmann::json disabled = {
         {"provider", "brave"}, {"api_key", ""}, {"tool_enabled", false},
-        {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"web_reader_url", ""}, {"web_reader_enabled", false}, {"web_reader_api_key", ""}};
+        {"read_provider", "off"}, {"firecrawl_api_key", ""}, {"web_reader_url", ""}, {"web_reader_enabled", false}};
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
     auto obsolete = disabled;
     obsolete["enabled"] = true;
     obsolete["query_provider"] = 123;
+    obsolete["web_reader_api_key"] = 123;
     ASSERT_TRUE(call("webSearch.save", obsolete)["ok"]);
     EXPECT_EQ(call("webSearch.get")["result"], disabled);
     obsolete["provider"] = "google";

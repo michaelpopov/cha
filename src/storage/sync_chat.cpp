@@ -315,23 +315,6 @@ void sync_record_chat_initial(
         }
     }
     {
-        auto folders = database.prepare(
-            "SELECT folder_id FROM session_folders WHERE session_key=?1 ORDER BY folder_id",
-            session_key);
-        while (folders.step()) {
-            const std::int64_t folder_id = folders.integer(0);
-            std::vector<std::string> path;
-            try {
-                path = sync_note_path(database, folder_id);
-            } catch (...) {
-                continue;
-            }
-            nlohmann::json fields;
-            fields["path"] = path;
-            append_record(database, identity, "chat.add_folder", std::move(fields));
-        }
-    }
-    {
         auto settings = database.prepare(
             "SELECT character_id, provider_id, reasoning_effort "
             "FROM session_character_settings WHERE session_key=?1 ORDER BY character_id",
@@ -371,18 +354,12 @@ std::vector<std::string> parse_path(const nlohmann::json& value) {
     return path;
 }
 
-std::int64_t require_attachment(
-    Database& database, const nlohmann::json& path, NoteItemKind kind) {
+std::int64_t require_note_attachment(Database& database, const nlohmann::json& path) {
     const auto found = sync_note_find(database, parse_path(path));
     if (found) {
-        auto query = database.prepare("SELECT kind FROM note_items WHERE id=?1", *found);
-        if (query.step()) {
-            const auto stored_kind = query.text(0);
-            if (kind == NoteItemKind::folder ? stored_kind == "folder"
-                : stored_kind == "note" || stored_kind == "annotation") {
-                return *found;
-            }
-        }
+        auto query = database.prepare(
+            "SELECT 1 FROM note_items WHERE id=?1 AND kind IN ('note', 'annotation')", *found);
+        if (query.step()) return *found;
     }
     throw std::runtime_error("Incoming chat attachment was not found.");
 }
@@ -466,7 +443,6 @@ bool sync_apply_chat_record(Database& database, const nlohmann::json& record,
         database.prepare("DELETE FROM turns WHERE session_key=?1", session_key).run();
         database.prepare("DELETE FROM session_notes WHERE session_key=?1", session_key).run();
         database.prepare("DELETE FROM session_files WHERE session_key=?1", session_key).run();
-        database.prepare("DELETE FROM session_folders WHERE session_key=?1", session_key).run();
         touch(database, session_key);
     } else if (kind == "chat.delete_turn") {
         const auto position = integer_field(record.at("turn"));
@@ -482,7 +458,7 @@ bool sync_apply_chat_record(Database& database, const nlohmann::json& record,
             session_key, target).run();
         touch(database, session_key);
     } else if (kind == "chat.add_note") {
-        const auto note = require_attachment(database, record.at("path"), NoteItemKind::note);
+        const auto note = require_note_attachment(database, record.at("path"));
         const std::string name = record.at("name").get<std::string>();
         const std::string text = record.at("text").get<std::string>();
         if (text.size() > text_file_byte_limit)
@@ -518,31 +494,6 @@ bool sync_apply_chat_record(Database& database, const nlohmann::json& record,
         TranscriptEntry notice = make_notice_entry(1, refresh
             ? "Updated this chat\u2019s copy of file \u201c" + name + "\u201d."
             : "Added file \u201c" + name + "\u201d to this chat.");
-        const std::int64_t entry_id = allocate_entry(database, session_key);
-        notice.id = static_cast<std::uint64_t>(entry_id);
-        insert_entry_row(database, session_key, entry_id, std::nullopt, notice);
-        touch(database, session_key);
-    } else if (kind == "chat.add_folder") {
-        const auto path = parse_path(record.at("path"));
-        const auto folder = require_attachment(database, record.at("path"), NoteItemKind::folder);
-        database.prepare(
-            "INSERT INTO session_folders (session_key, folder_id) VALUES (?1, ?2) "
-            "ON CONFLICT DO NOTHING",
-            session_key, folder).run();
-        TranscriptEntry notice = make_notice_entry(
-            1, "Added folder \u201c" + path.back() + "\u201d to this chat.");
-        const std::int64_t entry_id = allocate_entry(database, session_key);
-        notice.id = static_cast<std::uint64_t>(entry_id);
-        insert_entry_row(database, session_key, entry_id, std::nullopt, notice);
-        touch(database, session_key);
-    } else if (kind == "chat.detach_folder") {
-        const auto path = parse_path(record.at("path"));
-        const auto folder = require_attachment(database, record.at("path"), NoteItemKind::folder);
-        database.prepare(
-            "DELETE FROM session_folders WHERE session_key=?1 AND folder_id=?2",
-            session_key, folder).run();
-        TranscriptEntry notice = make_notice_entry(
-            1, "Removed folder \u201c" + path.back() + "\u201d from this chat.");
         const std::int64_t entry_id = allocate_entry(database, session_key);
         notice.id = static_cast<std::uint64_t>(entry_id);
         insert_entry_row(database, session_key, entry_id, std::nullopt, notice);

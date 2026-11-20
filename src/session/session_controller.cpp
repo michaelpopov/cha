@@ -529,58 +529,6 @@ void SessionController::record_monologue(
     require_snapshot(update);
 }
 
-ControllerUpdate SessionController::add_item(
-    std::int64_t item_id, std::shared_ptr<SubmissionState> submission) {
-    if (submission && submission->expired()) return {.notice = "Submission expired"};
-    if (shutdown_) return {.notice = "Request could not be dispatched"};
-    if (is_generating()) return busy_notice();
-    try {
-        const auto attached = journal_.folder_ids();
-        const bool duplicate = std::find(attached.begin(), attached.end(), item_id) != attached.end();
-        const auto item = read_item_(item_id);
-        if (!duplicate && (!item || item->kind != NoteItemKind::folder))
-            return add_note(item_id, std::move(submission));
-        const auto exists = [this](std::int64_t id) {
-            const auto folder = read_item_(id);
-            return folder && folder->kind == NoteItemKind::folder;
-        };
-        if (submission && submission->expired()) return {.notice = "Submission expired"};
-        const bool welcome = identity_.forum_id == workspace_entrance_id && identity_.session_id == welcome_id;
-        auto entry = journal_.add_folder(item_id, item ? item->name : "", next_entry_id_,
-            welcome ? std::function<bool(std::int64_t)>(exists) : std::function<bool(std::int64_t)>{});
-        ++next_entry_id_;
-        transcript_.add_entry(std::move(entry));
-        ControllerUpdate update{.state = SnapshotRequired{}, .input_consumed = true, .notice = ""};
-        publish_recent(update);
-        return update;
-    } catch (const std::exception& error) {
-        log_warn("Could not add folder to chat: " + std::string(error.what()));
-        return {.notice = "The folder could not be added to this chat. Try again."};
-    }
-}
-
-ControllerUpdate SessionController::detach_folder(
-    std::int64_t folder_id, std::shared_ptr<SubmissionState> submission) {
-    if (submission && submission->expired()) return {.notice = "Submission expired"};
-    if (shutdown_) return {.notice = "Request could not be dispatched"};
-    if (is_generating()) return busy_notice();
-    try {
-        std::string name;
-        try { if (const auto item = read_item_(folder_id)) name = item->name; }
-        catch (const std::exception&) { /* Detach also works without metadata. */ }
-        if (submission && submission->expired()) return {.notice = "Submission expired"};
-        auto entry = journal_.detach_folder(folder_id, name, next_entry_id_);
-        ++next_entry_id_;
-        transcript_.add_entry(std::move(entry));
-        ControllerUpdate update{.state = SnapshotRequired{}, .input_consumed = true, .notice = ""};
-        publish_recent(update);
-        return update;
-    } catch (const std::exception& error) {
-        log_warn("Could not detach folder: " + std::string(error.what()));
-        return {.notice = "The folder could not be detached. Try again."};
-    }
-}
-
 ControllerUpdate SessionController::add_note(
     std::int64_t note_id, std::shared_ptr<SubmissionState> submission) {
     if (submission && submission->expired()) return {.notice = "Submission expired"};
@@ -1141,13 +1089,6 @@ void SessionController::flush_configuration_notices() {
         append_configuration_notice(std::move(notice.text), std::move(notice.error_code));
     }
     pending_notices_.clear();
-}
-
-void SessionController::prune_folder_associations(
-    std::span<const std::int64_t> folder_ids) {
-    persist("prune folder associations", [this, folder_ids] {
-        journal_.prune_folders(folder_ids);
-    });
 }
 
 bool SessionController::record_configuration_notice(std::string text, std::string error_code) {

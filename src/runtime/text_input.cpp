@@ -22,7 +22,6 @@ struct CommandDescriptor {
 constexpr std::array descriptors{
     CommandDescriptor{"/mcast", CommandKind::mcast},
     CommandDescriptor{"/clear", CommandKind::clear},
-    CommandDescriptor{"/detach", CommandKind::detach},
 };
 
 // Returns no update when the text is a prompt that starts with a path.
@@ -244,7 +243,7 @@ CommandResult handle_text_input(
         return result;
     }
     if (const auto note_id = parse_item_reference(input)) {
-        result.session = controller.add_item(*note_id, std::move(submission));
+        result.session = controller.add_note(*note_id, std::move(submission));
         result.clear_input = result.session.input_consumed;
         return result;
     }
@@ -282,17 +281,6 @@ CommandResult handle_text_input(
     if (command.kind == CommandKind::mcast) {
         return handle_multicast_input(controller, author_id, command.argument,
             std::move(submission), std::move(current_note));
-    }
-    if (command.kind == CommandKind::detach) {
-        const auto id = parse_item_reference(command.argument);
-        if (!id || *id == 0) {
-            result.clear_input = true;
-            result.session.notice = "Usage: /detach <Ref ID>";
-        } else {
-            result.session = controller.detach_folder(*id, std::move(submission));
-            result.clear_input = result.session.input_consumed;
-        }
-        return result;
     }
     if (command.kind == CommandKind::clear) {
         if (!command.argument.empty()) {

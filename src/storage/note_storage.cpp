@@ -1897,7 +1897,6 @@ void delete_item(storage::SqliteDatabase& database, std::int64_t id) {
             "Audio generation abandoned for " + note_audio_target(*attempt) + ": note deleted.");
         database.prepare("DELETE FROM note_audio_attempts WHERE id=?", attempt_id).run();
     }
-    folder_store_delete_session_folders_in_subtree(database, id);
     storage::SqliteStatement statement = database.prepare(
         "DELETE FROM note_items WHERE id = ?1");
     statement.bind(1, id);

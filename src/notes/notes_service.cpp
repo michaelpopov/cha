@@ -1,5 +1,4 @@
 #include "notes/notes_service_internal.h"
-#include "util/logging.h"
 
 namespace cha::app {
 namespace {
@@ -172,12 +171,8 @@ void NotesService::delete_note_item(std::int64_t id, std::uint64_t epoch) {
         if (impl_->folder_store_blocks_delete(id)) {
             throw ApplicationError(ErrorCode::invalid_argument, "A store operation is running for this folder.");
         }
-        const auto folder_ids = impl_->store->folder_ids_in_subtree(id);
         impl_->store->delete_note_item(id);
         impl_->interrupt_abandoned_audio();
-        if (!folder_ids.empty() && !impl_->live_sessions->post_welcome_folder_prune(epoch, folder_ids)) {
-            log_warn("Could not enqueue Welcome folder prune.");
-        }
     } catch (const NoteError& error) {
         rethrow_note(error);
     }
