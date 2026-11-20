@@ -68,7 +68,7 @@ ProviderSelection note_editing_provider(const Workspace& workspace, std::string_
 
 // Bind legacy names to a stable reference, so deleting a key cannot make a
 // waiting job select a different key later created with that name.
-void bind_note_api_key(ModelBackendConfig& config, ApiKeyStore* api_keys) {
+void bind_note_api_key(ModelBackendConfig& config, const Workspace& workspace) {
     if (config.mode != Mode::net || config.auth != ProviderAuth::none) {
         if (!config.api_key_id.empty() || !config.api_key_env.empty())
             log_warn("Ignoring unused Notes provider API key settings.");
@@ -78,8 +78,10 @@ void bind_note_api_key(ModelBackendConfig& config, ApiKeyStore* api_keys) {
         return;
     }
     if (config.api_key_id.empty() && !config.api_key_env.empty()) {
-        const auto key = api_keys->find_by_name(config.api_key_env);
-        if (!key) throw ApplicationError(ErrorCode::invalid_argument, "Select an existing compression API key in Settings.");
+        const auto keys = workspace.api_keys();
+        if (std::ranges::count(keys, config.api_key_env, &SavedApiKey::display_name) != 1)
+            throw ApplicationError(ErrorCode::invalid_argument, "Select an existing compression API key in Settings.");
+        const auto key = std::ranges::find(keys, config.api_key_env, &SavedApiKey::display_name);
         config.api_key_id = key->id;
         config.api_key_env.clear();
     }
@@ -101,7 +103,7 @@ SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, Open
     std::string_view provider_id = {}, const std::string& effort = {}) {
     auto provider = note_editing_provider(workspace, provider_id, effort);
     provider.config.timeout_s = 7200;
-    bind_note_api_key(provider.config, api_keys);
+    bind_note_api_key(provider.config, workspace);
     if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
         && oauth->status().state != OpenAiOAuthState::connected)
         throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
@@ -157,17 +159,6 @@ NotePromptAnswer collect_note_prompt(ProviderClient& client, const SharedCharact
     }
     if (gemini_flex) cost->add(estimate_gemini_flex_token_cost(config, answer.result));
     return answer;
-}
-
-NotePromptAnswer run_note_prompt(const SharedCharacterDefinition& definition, std::string text,
-    OpenAiOAuth* oauth, ApiKeyStore* api_keys, const std::atomic_bool& cancel) {
-    std::unique_ptr<ProviderClient> client;
-    try {
-        client = std::make_unique<ProviderClient>(definition, oauth, api_keys);
-    } catch (const std::exception& error) {
-        throw ApplicationError(ErrorCode::invalid_argument, error.what());
-    }
-    return collect_note_prompt(*client, definition, std::move(text), cancel);
 }
 
 bool is_youtube_url(std::string_view url) {
@@ -275,18 +266,12 @@ bool has_long_page_paragraph(std::string_view markdown) {
     return characters > limit;
 }
 
-std::string format_note_page(const Workspace& workspace, std::string text, std::string& title,
-    bool youtube, OpenAiOAuth* oauth, ApiKeyStore* api_keys, const std::atomic_bool& cancel) {
+std::string format_note_page(ProviderClient& client, const SharedCharacterDefinition& definition,
+    std::string text, std::string& title, bool youtube, const std::atomic_bool& cancel) {
     title = trim_view(title);
     if (title.empty()) title = transcript_title(text);
     if (!title.empty() && transcript_title(text) != title) text = "# " + title + "\n\n" + text;
-    const auto& prompt = *workspace.find_prompt(youtube ? "youtube-transcript" : "page-formatting");
-    const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
-        .character = {prompt.id, prompt.display_name},
-        .provider = note_editing_provider(workspace),
-        .system_prompt = prompt.text,
-    });
-    auto answer = run_note_prompt(definition, std::move(text), oauth, api_keys, cancel);
+    auto answer = collect_note_prompt(client, definition, std::move(text), cancel);
     const auto& result = answer.result;
     if (cancel.load() || result.outcome == GenerationOutcome::cancelled) {
         throw ApplicationError(ErrorCode::operation_cancelled, "The operation was cancelled.");
@@ -449,7 +434,7 @@ std::shared_ptr<OperationReply> NotesService::test_flex(std::string provider_id,
     const auto* provider = workspace->find_provider(provider_id);
     if (!provider) throw ApplicationError(ErrorCode::not_found, "That provider was not found.");
     auto config = provider->config;
-    bind_note_api_key(config, impl_->api_keys);
+    bind_note_api_key(config, *workspace);
     if (!eligible_for_flex_processing(config))
         throw ApplicationError(ErrorCode::invalid_argument, "CHA does not use Flex with this provider.");
     config.flex_processing = true;
@@ -461,10 +446,19 @@ std::shared_ptr<OperationReply> NotesService::test_flex(std::string provider_id,
         .character = {"flex-test", "Flex Test"}, .provider = {provider->id, std::move(config)},
     });
     auto reply = std::make_shared<OperationReply>();
-    if (!impl_->background_jobs.launch([owner = impl_.get(), reply, definition](std::atomic_bool& cancel) {
+    std::shared_ptr<ProviderClient> client;
+    try {
+        client = std::make_shared<ProviderClient>(definition, impl_->openai_auth, impl_->api_keys);
+    } catch (const std::exception& error) {
+        reply->fail(ErrorCode::invalid_argument, "Flex test failed: " + std::string(error.what()));
+        return reply;
+    } catch (...) {
+        reply->fail(ErrorCode::internal_error, "Flex test failed. Try again.");
+        return reply;
+    }
+    if (!impl_->background_jobs.launch([reply, definition, client = std::move(client)](std::atomic_bool& cancel) {
         try {
-            ProviderClient client(definition, owner->openai_auth, owner->api_keys);
-            const auto answer = collect_note_prompt(client, definition, "Reply with OK.", cancel);
+            const auto answer = collect_note_prompt(*client, definition, "Reply with OK.", cancel);
             if (cancel.load() || answer.result.outcome == GenerationOutcome::cancelled)
                 reply->fail(ErrorCode::operation_cancelled, "The operation was cancelled.");
             else if (const auto failure = flex_test_failure(answer.result))
@@ -1039,16 +1033,30 @@ std::shared_ptr<OperationReply> NotesService::read_note_page(
                     }
                     const bool youtube = is_youtube_url(url) || is_youtube_url(page.at("url").get<std::string>());
                     if (youtube || has_long_page_paragraph(page.at("markdown").get_ref<const std::string&>())) {
-                        {
-                            // The provider call uses vault credentials; do not start it after a vault change.
+                        const auto& prompt = *workspace->find_prompt(
+                            youtube ? "youtube-transcript" : "page-formatting");
+                        auto [client, definition] = [&] {
                             const std::lock_guard lifecycle(owner->lifecycle_mutex);
                             owner->require_admitted(epoch);
-                        }
+                            auto provider = note_editing_provider(*workspace);
+                            bind_note_api_key(provider.config, *workspace);
+                            auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
+                                .character = {prompt.id, prompt.display_name},
+                                .provider = std::move(provider),
+                                .system_prompt = prompt.text,
+                            });
+                            try {
+                                auto formatter = std::make_unique<ProviderClient>(
+                                    definition, owner->openai_auth, owner->api_keys);
+                                return std::pair{std::move(formatter), std::move(definition)};
+                            } catch (const std::exception& error) {
+                                throw ApplicationError(ErrorCode::invalid_argument, error.what());
+                            }
+                        }();
                         if (progress) progress(youtube ? "formatting_transcript" : "formatting_article");
                         auto title = page.at("title").get<std::string>();
-                        page["markdown"] = format_note_page(*workspace,
-                            page.at("markdown").get<std::string>(), title, youtube, owner->openai_auth,
-                            owner->api_keys, cancel);
+                        page["markdown"] = format_note_page(*client, definition,
+                            page.at("markdown").get<std::string>(), title, youtube, cancel);
                         page["title"] = std::move(title);
                     }
                     reply->complete({{"url", page.at("url")}, {"title", page.at("title")},

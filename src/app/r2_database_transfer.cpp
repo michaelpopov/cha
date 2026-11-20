@@ -1206,7 +1206,7 @@ R2DatabaseTransfer download_database_from_r2(
     if (check_candidate) check_candidate(database_temporary.get());
     // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
     cleanup_downloaded_database(database_temporary.get(), database_password, !before_install);
-    // BeforeR2Install can clear the D1 inbox. After it starts, finish the installation.
+    // Check cancellation before validating the final installation candidate.
     if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
     if (before_install) {
         auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
@@ -1343,7 +1343,7 @@ R2DatabaseTransfer download_new_database_from_r2(
     }
     // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
     cleanup_downloaded_database(database_temporary.get(), {}, !before_install);
-    // BeforeR2Install can clear the D1 inbox. After it starts, finish the installation.
+    // Check cancellation before validating the final installation candidate.
     if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
     if (before_install) {
         auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());

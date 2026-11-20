@@ -419,11 +419,22 @@ TEST(ApplicationVault, WelcomeRefreshWarnsLocallyAndReopensWithABackup) {
     pair.command.machine = "this-machine";
     const auto definition = "vault_name = \"A\"\ndata = \"a.sqlite3\"\n";
     (void)seed_notes(pair.database_b, "New snapshot");
+    {
+        storage::SqliteDatabase database(pair.database_b, storage::SqliteDatabase::Mode::read_write);
+        database.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)",
+            "system/keys/api_key_1/config.toml",
+            "display_name = 'D1'\ntype = 'D1'\naccount_id = 'a'\ndatabase_id = 'd'\napi_token = 't'\n").run();
+    }
     MockHttpServer server({
         http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
         http_response("application/toml", definition),
     });
-    auto web = Application::open(pair.command);
+    std::atomic<unsigned> d1_requests{};
+    auto web = Application::open(pair.command, {}, {},
+        [&](const std::string&, const std::string&, const auto&) {
+            ++d1_requests;
+            return std::pair<long, std::string>{500, "{}"};
+        });
     set_r2(*web, server.port());
     const auto local_note = web->create_note_item({}, NoteItemKind::note, "Keep in backup", web->context_epoch());
     const auto epoch = web->context_epoch();
@@ -446,6 +457,7 @@ TEST(ApplicationVault, WelcomeRefreshWarnsLocallyAndReopensWithABackup) {
         return row.at(0) == local_note.id && row.at(3) == "Keep in backup";
     }));
     EXPECT_EQ(stored_notes(pair.database_a), stored_notes(pair.database_b));
+    EXPECT_EQ(d1_requests, 0u);
 }
 
 TEST(ApplicationVault, WelcomeReportsMissingR2DatabaseWithDurableNotFoundCode) {
@@ -490,7 +502,7 @@ TEST(ApplicationVault, WelcomeReportsMissingR2DatabaseWithDurableNotFoundCode) {
     }
 }
 
-TEST(ApplicationVault, WelcomeRemoteOpenChecksCollisionBeforeClearingDownloadedInbox) {
+TEST(ApplicationVault, WelcomeRemoteOpenChecksCollisionAndNeverContactsD1) {
     for (const bool collision : {true, false}) {
         SCOPED_TRACE(collision);
         TwoVaults pair;
@@ -510,28 +522,11 @@ TEST(ApplicationVault, WelcomeRemoteOpenChecksCollisionBeforeClearingDownloadedI
                 + "\ndata = \"elsewhere.sqlite3\"\n"),
             http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
         });
-        std::vector<std::string> statements;
-        std::mutex statements_mutex;
-        bool inbox_created = false;
+        std::atomic<unsigned> d1_requests{};
         auto web = Application::open(pair.command, {}, {},
-            [&](const std::string& url, const std::string& body, const auto&) {
-                EXPECT_NE(url.find("/accounts/download-account/d1/database/download-db/"), std::string::npos);
-                const auto sql = nlohmann::json::parse(body).at("batch").at(0).at("sql").get<std::string>();
-                const std::lock_guard lock(statements_mutex);
-                statements.push_back(sql);
-                if (sql.starts_with("DELETE FROM")) {
-                    return std::pair<long, std::string>{400,
-                        R"({"success":false,"errors":[{"message":"no such table: q"}]})"};
-                }
-                auto rows = nlohmann::json::array();
-                if (sql.starts_with("CREATE TABLE")) inbox_created = true;
-                if (sql.starts_with("SELECT name FROM sqlite_master") && inbox_created)
-                    rows.push_back({{"name", "q/Companion Name/this-machine"}});
-                return std::pair<long, std::string>{200, nlohmann::json{
-                    {"success", true}, {"result", nlohmann::json::array({
-                        {{"success", true}, {"results", rows}},
-                    })},
-                }.dump()};
+            [&](const std::string&, const std::string&, const auto&) {
+                ++d1_requests;
+                return std::pair<long, std::string>{500, "{}"};
             });
         set_r2(*web, server.port());
         const auto epoch = web->context_epoch();
@@ -542,23 +537,12 @@ TEST(ApplicationVault, WelcomeRemoteOpenChecksCollisionBeforeClearingDownloadedI
             EXPECT_EQ(web->current_vault().get().name, "A");
             EXPECT_EQ(web->context_epoch(), epoch);
             EXPECT_FALSE(std::filesystem::exists(pair.command.config_directory / "Exact File.sqlite3"));
-            const std::lock_guard lock(statements_mutex);
-            EXPECT_TRUE(statements.empty());
         } else {
             ASSERT_TRUE(wait_for_welcome_notice(*web, "Downloaded and opened vault 'Companion Name'."));
             EXPECT_EQ(web->current_vault().get().name, name);
             EXPECT_GT(web->context_epoch(), epoch);
             EXPECT_TRUE(std::filesystem::exists(pair.command.config_directory / "Exact File.sqlite3"));
             expect_no_download_files(pair.command.config_directory);
-            {
-                const std::lock_guard lock(statements_mutex);
-                ASSERT_GE(statements.size(), 4u);
-                EXPECT_EQ(statements[0], "DELETE FROM \"q/Companion Name/this-machine\"");
-                EXPECT_TRUE(statements[1].starts_with("SELECT name FROM sqlite_master"));
-                EXPECT_TRUE(statements[2].starts_with("CREATE TABLE"));
-                EXPECT_NE(std::find_if(statements.begin() + 3, statements.end(),
-                    [](const auto& sql) { return sql.starts_with("SELECT rowid"); }), statements.end());
-            }
             constexpr auto notice = "Downloading vault 'Exact File' from R2.";
             EXPECT_EQ(welcome_transcript(*web).find(notice), std::string::npos);
             (void)web->switch_vault("A", {}, web->context_epoch());
@@ -566,17 +550,23 @@ TEST(ApplicationVault, WelcomeRemoteOpenChecksCollisionBeforeClearingDownloadedI
             EXPECT_NE(on_a.find(notice), std::string::npos);
             EXPECT_EQ(on_a.find("Downloaded and opened vault 'Companion Name'."), std::string::npos);
         }
+        EXPECT_EQ(d1_requests, 0u);
         server.join();
         EXPECT_TRUE(server.requests()[1].starts_with("GET /bucket/Exact%20File.sqlite3 HTTP/1.1"));
     }
 }
 
-TEST(ApplicationVault, WelcomeRemoteOpenStopDuringInboxClearSavesWithoutOpening) {
+TEST(ApplicationVault, WelcomeRemoteOpenStopAfterSaveLeavesPreviousVaultOpen) {
     TwoVaults pair;
     pair.command.chaweb_host = true;
     pair.command.machine = "this-machine";
     std::atomic_bool host_stop{false};
-    pair.command.host_stop_requested = &host_stop;
+    const auto saved_database = pair.command.config_directory / "Exact File.sqlite3";
+    pair.command.host_stop_requested = [&] {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(saved_database, error)) host_stop = true;
+        return host_stop.load();
+    };
     {
         storage::SqliteDatabase database(pair.database_b, storage::SqliteDatabase::Mode::read_write);
         database.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)",
@@ -588,12 +578,7 @@ TEST(ApplicationVault, WelcomeRemoteOpenStopDuringInboxClearSavesWithoutOpening)
         http_response("application/toml", "vault_name = \"Stopped\"\ndata = \"elsewhere.sqlite3\"\n"),
         http_response("application/vnd.sqlite3", file_contents(pair.database_b)),
     });
-    auto web = Application::open(pair.command, {}, {},
-        [&](const std::string&, const std::string&, const auto&) {
-            host_stop = true; // The daemon gets SIGTERM while D1 clears the inbox.
-            return std::pair<long, std::string>{400,
-                R"({"success":false,"errors":[{"message":"no such table: q"}]})"};
-        });
+    auto web = Application::open(pair.command);
     set_r2(*web, server.port());
     server.start();
     ASSERT_TRUE(welcome_input(*web, "/open Exact File").session.input_consumed);
@@ -747,6 +732,43 @@ TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
     EXPECT_EQ(stored_notes(pair.database_a), before);
 }
 
+TEST(ApplicationVault, ForumEditsAndImportKeepSessionMirrorMappingsCurrent) {
+    TwoVaults pair;
+    const auto mirror = pair.workspace_a.root() / "mirror";
+    const auto exported = pair.workspace_a.root() / "export";
+    pair.command.vault.mirror = mirror;
+    pair.command.vault.modify = exported;
+    pair.command.vaults.front() = pair.command.vault;
+    auto app = Application::open(pair.command);
+    const auto first = app->create_forum(
+        {.display_name = "First forum", .persona_id = "alpha"}, app->context_epoch());
+    ASSERT_EQ(first.summary.id, "forum_1");
+    (void)app->create_session("forum_1", "Shared label", app->context_epoch());
+    const auto archive = mirror / "First forum" / "Shared label.md";
+    ASSERT_TRUE(std::filesystem::is_regular_file(archive));
+    const auto archive_contents = file_contents(archive);
+    app->delete_forum("forum_1", app->context_epoch());
+
+    const auto replacement = app->create_forum(
+        {.display_name = "Replacement", .persona_id = "alpha"}, app->context_epoch());
+    ASSERT_EQ(replacement.summary.id, "forum_1");
+    (void)app->create_session("forum_1", "Shared label", app->context_epoch());
+    EXPECT_EQ(file_contents(mirror / "Replacement" / "Shared label.md"), archive_contents);
+
+    (void)app->export_configuration(app->context_epoch());
+    pair.workspace_b.add_forum("imported", "Imported", "guide");
+    std::filesystem::copy(pair.workspace_b.root() / "forums" / "imported",
+        exported / "forums" / "imported", std::filesystem::copy_options::recursive);
+    (void)app->import_configuration(app->context_epoch());
+    (void)app->create_session("imported", "Imported chat", app->context_epoch());
+    (void)app->create_session("forum_1", "After import", app->context_epoch());
+    EXPECT_EQ(file_contents(mirror / "Imported" / "Imported chat.md"),
+        "<!-- CHA session: Imported chat -->\n");
+    EXPECT_EQ(file_contents(mirror / "Replacement" / "After import.md"),
+        "<!-- CHA session: After import -->\n");
+    EXPECT_EQ(file_contents(archive), archive_contents);
+}
+
 TEST(ApplicationVault, PicturesFollowTheCurrentVaultAndRejectStaleEpochs) {
     TwoVaults pair;
     std::ofstream(pair.workspace_a.root() / "characters/guide/PICTURE.png") << "A";
@@ -802,6 +824,7 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndRefusesMaintenanceU
             {"switch", [&] { (void)application->switch_vault("B", {}, application->context_epoch()); }},
             {"download", [&] { (void)application->download_database(application->context_epoch()); }},
             {"upload", [&] { (void)application->start_database_upload({}, application->context_epoch()); }},
+            {"upload check", [&] { (void)application->check_database_upload(application->context_epoch()); }},
         };
         for (const auto& [name, operation] : maintenance) {
             SCOPED_TRACE(name);
@@ -820,6 +843,7 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndRefusesMaintenanceU
     use_vault.get();
     EXPECT_GT(wait_upload(upload)["byte_count"].get<std::uintmax_t>(), 0U);
     server.join();
+    EXPECT_EQ(server.requests().size(), 3u);
     EXPECT_EQ(application->current_vault().get().name, "A");
     EXPECT_EQ(application->current_vault().get().r2_etag, "uploaded-etag");
     EXPECT_EQ(read_toml_file(pair.command.vault.source, "vault")["r2_etag"].value<std::string>(),
@@ -832,6 +856,41 @@ TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndRefusesMaintenanceU
     auto session = copy.prepare("SELECT count(*) FROM sessions WHERE label = 'Created during upload'");
     ASSERT_TRUE(session.step());
     EXPECT_EQ(session.integer(0), 0);
+}
+
+TEST(ApplicationVault, UploadInvalidatesAnOutstandingR2UploadCheck) {
+    TwoVaults pair;
+    pair.command.vault.r2_etag = "old-etag";
+    pair.command.vaults.front() = pair.command.vault;
+    const std::string old_etag = "HTTP/1.1 200 OK\r\nETag: \"old-etag\"\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    const std::string uploaded_etag = "HTTP/1.1 200 OK\r\nETag: \"uploaded-etag\"\r\n"
+        "Content-Length: 0\r\nConnection: close\r\n\r\n";
+    MockHttpServer server({old_etag, http_response("text/plain", ""), uploaded_etag,
+        uploaded_etag, uploaded_etag});
+    server.pause_before_response(1, true);
+    auto app = Application::open(pair.command);
+    set_r2(*app, server.port());
+    server.start();
+    const auto epoch = app->context_epoch();
+    auto pending_check = std::async(std::launch::async, [&] {
+        return app->check_database_upload(epoch);
+    });
+    ASSERT_TRUE(server.wait_for_requests(1, 2s));
+    const auto upload = app->start_database_upload({}, epoch);
+    EXPECT_GT(wait_upload(upload)["byte_count"].get<std::uintmax_t>(), 0u);
+    server.resume_responses();
+    try {
+        (void)pending_check.get();
+        ADD_FAILURE() << "Expected stale upload check";
+    } catch (const ApplicationError& error) {
+        EXPECT_EQ(error.code, ErrorCode::vault_changed);
+    }
+    const auto fresh = app->check_database_upload(app->context_epoch());
+    EXPECT_EQ(fresh.status, R2EtagStatus::match);
+    EXPECT_EQ(fresh.etag, "uploaded-etag");
+    server.join();
+    EXPECT_TRUE(server.requests().front().starts_with("HEAD "));
 }
 
 TEST(ApplicationVault, FailedCompanionUploadKeepsTheVaultUsableAndRemembersTheDatabaseEtag) {
@@ -1304,8 +1363,10 @@ TEST(ApplicationVault, RenameOfAD1ConnectedVaultIsRefusedExceptForLetterCase) {
     auto application = Application::open(pair.command);
     for (const std::string_view name : {"A", "B"}) { // Active and inactive vaults.
         SCOPED_TRACE(name);
+        const auto epoch = application->context_epoch();
         EXPECT_THROW((void)application->update_vault(
-            name, {.display_name = "Renamed"}, application->context_epoch()), std::invalid_argument);
+            name, {.display_name = "Renamed"}, epoch), std::invalid_argument);
+        EXPECT_EQ(application->context_epoch(), epoch);
     }
     EXPECT_EQ(application->update_vault(
         "A", {.display_name = "a"}, application->context_epoch()).name, "a");

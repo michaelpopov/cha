@@ -1300,7 +1300,7 @@ describe('Settings screens', () => {
   });
 
 
-  it.each([['key', 'google'], ['oauth', 'google'], ['key', 'anthropic'], ['oauth', 'anthropic']] as const)('switches from %s credentials to %s and clears hidden effort on Test and Save', async (credential, api) => {
+  it.each([['key', 'google'], ['oauth', 'google'], ['key', 'anthropic'], ['oauth', 'anthropic']] as const)('switches from %s credentials to %s and keeps effort available on Test and Save', async (credential, api) => {
     const configured: ProviderDetail = {
       ...provider, reasoning_effort: 'high', api: 'responses',
       host: api === 'google' ? 'generativelanguage.googleapis.com' : credential === 'key' ? 'openrouter.ai' : 'api.anthropic.com',
@@ -1324,7 +1324,9 @@ describe('Settings screens', () => {
     const baseUrl = await screen.findByLabelText('Base URL');
     await userEvent.selectOptions(screen.getByLabelText('API format'), api);
     expect(screen.getByRole('option', { name: api === 'google' ? 'Google (Gemini)' : 'Anthropic' })).toBeInTheDocument();
-    expect(screen.queryByLabelText('Reasoning effort')).not.toBeInTheDocument();
+    const reasoning = screen.getByLabelText('Reasoning effort');
+    expect(reasoning).toHaveValue('high');
+    await userEvent.selectOptions(reasoning, 'low');
     expect(screen.queryByLabelText('Inference targets')).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'OpenAI OAuth' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Credentials')).toHaveValue(credential === 'key' ? 'api_key_1' : '');
@@ -1333,15 +1335,16 @@ describe('Settings screens', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Test' }));
     expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
       api, auth: 'none', api_key: credential === 'key' ? 'api_key_1' : null,
-      reasoning_effort: 'none', base_path: configured.base_path, model: configured.model,
+      reasoning_effort: 'low', base_path: configured.base_path, model: configured.model,
       temperature: api === 'anthropic' ? null : 0.8,
     }));
     await screen.findByText('Provider responded successfully.');
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
-      api, auth: 'none', reasoning_effort: 'none',
+      api, auth: 'none', reasoning_effort: 'low',
       api_key: credential === 'key' ? 'api_key_1' : null,
     }));
+    expect(reasoning).toHaveValue('low');
   });
 
   it('saves the provider reasoning effort', async () => {

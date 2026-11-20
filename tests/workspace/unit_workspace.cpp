@@ -439,6 +439,30 @@ TEST(Workspace, CreatesUpdatesAssignsAndDeletesVoices) {
 }
 
 
+TEST(Workspace, NativeProvidersLoadAndInheritEffortFromToml) {
+    for (const std::string api : {"google", "anthropic"}) {
+        for (const std::string field : {"reasoning_effort = 'high'\n", "",
+                 "reasoning_effort = 'obsolete'\n", "reasoning_effort = 42\n"}) {
+            SCOPED_TRACE(api + ": " + field);
+            test::TestWorkspace fixture;
+            fixture.write_provider("native", "host = 'proxy.example'\nport = 443\nhttps = true\n"
+                "mode = 'net'\nmodel = 'test-model'\napi = '" + api + "'\n" + field);
+            fixture.write_character_config("display_name = 'Guide'\nprovider = 'native'\n");
+            LoadWarningCollector warnings;
+            const auto workspace = Workspace::load(fixture.root(), &warnings);
+            const auto* provider = workspace.find_provider("native");
+            ASSERT_NE(provider, nullptr);
+            const bool valid = field.find("high") != std::string::npos;
+            EXPECT_EQ(provider->config.reasoning_effort, valid ? "high" : "none");
+            EXPECT_EQ(workspace.resolve_character_settings("lobby", "guide").config.reasoning_effort,
+                valid ? "high" : "none");
+            EXPECT_EQ(std::ranges::count_if(warnings, [](const auto& warning) {
+                return warning.message.find("provider reasoning_effort") != std::string::npos;
+            }), !valid && !field.empty() ? 1 : 0);
+        }
+    }
+}
+
 TEST(Workspace, GoogleIgnoresUnusedSettingsAndCharacterOverridesWithWarnings) {
     test::TestWorkspace fixture;
     fixture.write_provider("google", "host = 'generativelanguage.googleapis.com'\nport = 443\nhttps = true\n"

@@ -216,7 +216,7 @@ std::optional<std::string_view> provider_config_error(
             || config.base_path.find_first_of("?# \t\r\n") != std::string::npos)) {
         return "has invalid base_path";
     }
-    if (config.api != ProviderApi::google && config.api != ProviderApi::anthropic && !valid_reasoning_effort(config.reasoning_effort)) {
+    if (!valid_reasoning_effort(config.reasoning_effort)) {
         return "has invalid reasoning_effort";
     }
     if (config.api != ProviderApi::google && config.api != ProviderApi::anthropic && !valid_openrouter_targets(config)) {

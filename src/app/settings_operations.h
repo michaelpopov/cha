@@ -7,6 +7,7 @@
 #include "workspace/workspace.h"
 
 #include <atomic>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -64,13 +65,12 @@ namespace cha::app::settings {
     std::string_view id,
     const nlohmann::json& body);
 void delete_provider(WorkspaceConfigStore& store, LiveSessionManager& live_sessions, std::string_view id);
-void test_provider(
+[[nodiscard]] std::function<void(const std::atomic_bool&)> prepare_provider_test(
     const Workspace& workspace,
     std::string_view id,
     const nlohmann::json& body,
     OpenAiOAuth& openai_auth,
-    ApiKeyStore& api_keys,
-    const std::atomic_bool& cancellation);
+    ApiKeyStore& api_keys);
 
 [[nodiscard]] std::vector<PromptSummary> list_prompts(const Workspace& workspace);
 [[nodiscard]] PromptDetail get_prompt(const WorkspaceConfigStore& store, std::string_view id);

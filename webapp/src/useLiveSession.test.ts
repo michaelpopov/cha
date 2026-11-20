@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 import type { ChaClient, OpenSessionResult } from './api/client';
+import { ChaError } from './api/client';
 import type { SessionEventHandlers } from './api/events';
 import type { LeaveNoteThen } from './notes/useNoteLeave';
 import { useNoteLeave } from './notes/useNoteLeave';
@@ -66,6 +67,39 @@ function deferred<T = void>() {
   });
   return { promise, resolve };
 }
+
+it.each(['success', 'deleted', 'superseded'] as const)(
+  'refreshes bootstrap only for a current live-session reopen (%s)',
+  async (outcome) => {
+    const reopening = deferred<OpenSessionResult>();
+    const session = { forum_id: 'lobby', session_id: 'test' };
+    const openSession = vi.fn(async () => session).mockImplementationOnce(async () => session)
+      .mockImplementationOnce(() => outcome === 'deleted'
+        ? Promise.reject(new ChaError('not_found', 'The session was deleted.'))
+        : reopening.promise);
+    const { view, events, refreshBootstrap } = harness({ openSession });
+    const liveSnapshot = { ...snapshotFixture, session_id: session.session_id };
+    await act(async () => {
+      await view.result.current.live.openConversation(session.forum_id, session.session_id);
+    });
+    act(() => events.handlers[0].onSnapshot(liveSnapshot));
+    refreshBootstrap.mockClear();
+    await act(async () => events.handlers[0].onSnapshot({
+      ...liveSnapshot, lifecycle: 'stopping', shutdown_reason: 'reloading',
+    }));
+    if (outcome !== 'deleted') expect(refreshBootstrap).not.toHaveBeenCalled();
+    if (outcome === 'superseded') act(() => view.result.current.live.clearVaultContext());
+    await act(async () => reopening.resolve(session));
+
+    expect(refreshBootstrap).toHaveBeenCalledTimes(outcome === 'superseded' ? 0 : 1);
+    if (outcome === 'success') {
+      act(() => events.handlers[1].onSnapshot(liveSnapshot));
+      expect(refreshBootstrap).toHaveBeenCalledTimes(1);
+    } else {
+      expect(events.handlers).toHaveLength(1);
+    }
+  },
+);
 
 function openSave(overrides: Partial<NoteSaveHandle> = {}): NoteSaveHandle {
   return {

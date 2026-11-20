@@ -101,8 +101,6 @@ struct Application::Impl {
             std::uint64_t epoch);
         void post_welcome_notice(std::string text, std::string error_code = {});
         R2StorageKey require_r2_key() const;
-        void clear_downloaded_inbox(
-            const std::filesystem::path& database, std::string_view name);
         VaultDefinition save_r2_vault_locked(
             std::string_view name, const R2StorageKey& r2, bool from_welcome);
         void switch_vault_locked(const VaultDefinition& target, std::string password,

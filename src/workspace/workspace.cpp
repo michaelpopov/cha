@@ -289,7 +289,7 @@ WorkspaceProvider load_provider(
     const std::string protocol = anthropic ? "Anthropic" : "Google";
     if (unused_options) {
         for (const auto& [field, default_value] : {
-                 std::pair{"reasoning_effort", "none"}, {"reasoning_format", "auto"},
+                 std::pair{"reasoning_format", "auto"},
                  {"cache_retention", "short"}, {"web_search", "off"}}) {
             if (table.contains(field) && table[field].value<std::string>() != default_value) {
                 warnings.emit(path, "Ignoring " + std::string(field) + " for " + protocol + " provider in " + utf8_path(path));
@@ -350,10 +350,11 @@ WorkspaceProvider load_provider(
         },
     };
 
-    if (auto effort = unused_options ? std::nullopt : optional_value<std::string>(
-            table, path, "reasoning_effort", "a string")) {
-        normalize_legacy_reasoning_effort(*effort, path, warnings);
-        if (valid_reasoning_effort(*effort)) {
+    auto effort = unused_options ? table["reasoning_effort"].value<std::string>()
+        : optional_value<std::string>(table, path, "reasoning_effort", "a string");
+    if (effort) normalize_legacy_reasoning_effort(*effort, path, warnings);
+    if (table.contains("reasoning_effort")) {
+        if (effort && valid_reasoning_effort(*effort)) {
             provider.config.reasoning_effort = *effort;
         } else {
             warnings.emit(

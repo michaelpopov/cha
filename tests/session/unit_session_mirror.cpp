@@ -3,6 +3,7 @@
 #include "storage/session_repository.h"
 #include "support/test_web_graph.h"
 #include "support/test_workspace.h"
+#include "workspace/workspace.h"
 
 #include <gtest/gtest.h>
 
@@ -57,6 +58,33 @@ TEST(SessionMirror, WritesActiveSessionsUnderForumDisplayNameAndNumbersDuplicate
     EXPECT_EQ(
         read_file(forum / "renamed-name.md"),
         "<!-- CHA session: renamed/name -->\n");
+}
+
+TEST(SessionMirror, ForumRefreshPreservesSurvivorsAndArchivedPaths) {
+    test::TestWorkspace fixture;
+    fixture.add_forum("forum_1", "First", "guide");
+    test::WebGraph graph(fixture.root());
+    const auto root = fixture.root() / "mirror";
+    SessionMirror mirror(root, *graph.sessions());
+    const FullSessionId reused{"forum_1", "chat"};
+    mirror.update(reused, "Old label", {});
+    const auto archive = root / "First" / "Old label.md";
+    ASSERT_EQ(read_file(archive), "<!-- CHA session: Old label -->\n");
+    std::filesystem::remove_all(fixture.root() / "forums" / "forum_1");
+    fixture.add_forum("lobby", "Renamed lobby", "guide");
+    mirror.reconcile_forums(Workspace::load(fixture.root()));
+    fixture.add_forum("forum_1", "Different name", "guide");
+    const auto existing = root / "Different name";
+    std::filesystem::create_directory(existing);
+    std::ofstream(existing / "New label.md") << "Archived transcript";
+    mirror.reconcile_forums(Workspace::load(fixture.root()));
+
+    mirror.update(reused, "New label", {});
+    mirror.update({"lobby", "survivor"}, "Still here", {});
+    EXPECT_EQ(read_file(archive), "<!-- CHA session: Old label -->\n");
+    EXPECT_EQ(read_file(existing / "New label.md"), "Archived transcript");
+    EXPECT_EQ(read_file(root / "Different name (1)" / "New label.md"), "<!-- CHA session: New label -->\n");
+    EXPECT_EQ(read_file(root / "The Lobby" / "Still here.md"), "<!-- CHA session: Still here -->\n");
 }
 
 } // namespace

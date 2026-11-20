@@ -704,13 +704,6 @@ nlohmann::json queue_rows_success(std::vector<D1Client::Row> rows) {
     return {{"success", true}, {"result", std::move(results)}};
 }
 
-nlohmann::json count_success(std::int64_t count) {
-    nlohmann::json rows = nlohmann::json::array({{{"count", count}}});
-    nlohmann::json results = nlohmann::json::array();
-    results.push_back({{"success", true}, {"results", std::move(rows)}});
-    return {{"success", true}, {"result", std::move(results)}};
-}
-
 nlohmann::json error_response(std::string message) {
     return {
         {"success", false},
@@ -740,7 +733,12 @@ D1SyncWorker::Config worker_config(
     config.database_password = {};
     config.vault = "Test";
     config.machine = std::string(sync_machine);
-    config.desktop_host = true;
+    {
+        Database database(path, Database::Mode::read_write);
+        storage::SqliteTransaction transaction(database);
+        ensure_sync_schema(database, true);
+        transaction.commit();
+    }
     config.transport = [scripted](
                            const std::string& url, const std::string& body,
                            const std::vector<std::string>& headers) {
@@ -829,7 +827,7 @@ struct SqliteD1 {
     D1SyncWorker::Config config(const std::filesystem::path& path, std::string machine = "mac") {
         return {
             .database_path = path, .vault = "Test", .machine = std::move(machine),
-            .desktop_host = true, .transport = transport(), .use_v2 = true,
+            .transport = transport(),
         };
     }
 
@@ -876,10 +874,12 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
         {200, queue_rows_success({{7, 1, 1,
             sync_make_record("note.create", {{"path", {"Incoming"}}, {"item", "folder"}})}}).dump()},
         {200, batch_success(1).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
+        {200, batch_success(1).dump()}, // Empty v2 inbox.
+        {200, table_list_success({"q2/Test/mac", "q2/Test/other"}).dump()},
         {200, batch_success(1).dump()},
         {200, batch_success(1).dump()},
         {200, queue_rows_success({}).dump()},
+        {200, batch_success(1).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
@@ -892,7 +892,7 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
         EXPECT_EQ(pending[1].record, second);
         EXPECT_TRUE(sync_note_find(database, {"Incoming"}));
     }
-    ASSERT_EQ(scripted->bodies.size(), 4u);
+    ASSERT_EQ(scripted->bodies.size(), 5u);
     EXPECT_NE(scripted->bodies[1].find("INSERT INTO"), std::string::npos);
     EXPECT_NE(scripted->bodies[2].find("SELECT rowid"), std::string::npos);
     const auto ack = nlohmann::json::parse(scripted->bodies[3])["batch"][0];
@@ -900,7 +900,6 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
     EXPECT_EQ(ack["params"], nlohmann::json::array({"7"}));
     for (const auto& body : scripted->bodies) {
         EXPECT_EQ(body.find("DROP TABLE"), std::string::npos);
-        EXPECT_EQ(body.find("q2/"), std::string::npos);
     }
 
     worker.run_once();
@@ -911,36 +910,30 @@ TEST(D1WorkerTest, DesktopCapacityFailureRetainsOutboxAndAcknowledgesIncoming) {
 }
 
 TEST(D1WorkerTest, NoRecipientsDeletesWithoutRequests) {
-    for (const bool v2 : {false, true}) {
-        SCOPED_TRACE(v2);
-        test::TestWorkspace workspace;
-        const auto path = workspace.root() / "w.sqlite3";
-        create_empty_workspace_session_database(path);
-        std::string id;
-        {
-            Database database(path, Database::Mode::read_write);
-            add_d1_key(database);
-            storage::SqliteTransaction transaction(database);
-            ensure_sync_schema(database, v2);
-            sync_queue_append(database, folder_record("Local"));
-            id = sync_queue_list(database).front().op_id;
-            transaction.commit();
-        }
-        SqliteD1 d1(workspace.root() / "d1.sqlite3");
-        D1Client client({"a", "d", "t"}, d1.transport());
-        ASSERT_FALSE(client.create_queue_table(sync_queue_table("Test", "mac", v2), v2));
-        auto config = d1.config(path);
-        config.use_v2 = v2;
-        D1SyncWorker worker(std::move(config));
-        worker.run_once();
-
-        Database database(path, Database::Mode::read_only);
-        EXPECT_FALSE(worker.stopped());
-        EXPECT_TRUE(sync_queue_list(database).empty());
-        EXPECT_TRUE(d1.inserts.empty());
-        if (v2) EXPECT_TRUE(sync_seen(database, id));
-        else EXPECT_FALSE(sync_has_receipt_schema(database));
+    test::TestWorkspace workspace;
+    const auto path = workspace.root() / "w.sqlite3";
+    create_empty_workspace_session_database(path);
+    std::string id;
+    {
+        Database database(path, Database::Mode::read_write);
+        add_d1_key(database);
+        storage::SqliteTransaction transaction(database);
+        ensure_sync_schema(database, true);
+        sync_queue_append(database, folder_record("Local"));
+        id = sync_queue_list(database).front().op_id;
+        transaction.commit();
     }
+    SqliteD1 d1(workspace.root() / "d1.sqlite3");
+    D1Client client({"a", "d", "t"}, d1.transport());
+    ASSERT_FALSE(client.create_queue_table(sync_queue_table("Test", "mac", true), true));
+    D1SyncWorker worker(d1.config(path));
+    worker.run_once();
+
+    Database database(path, Database::Mode::read_only);
+    EXPECT_FALSE(worker.stopped());
+    EXPECT_TRUE(sync_queue_list(database).empty());
+    EXPECT_TRUE(d1.inserts.empty());
+    EXPECT_TRUE(sync_seen(database, id));
 }
 
 TEST(D1WorkerTest, MissingOwnTableHaltsAndRetains) {
@@ -956,7 +949,7 @@ TEST(D1WorkerTest, MissingOwnTableHaltsAndRetains) {
     }
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
-        {200, table_list_success({"q/Test/other"}).dump()},
+        {200, table_list_success({"q2/Test/other"}).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
@@ -996,6 +989,7 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
             {54, 1, 2, first},
         }).dump()},
         {200, batch_success(1).dump()}, // Leave 54 for the next loop.
+        {200, batch_success(1).dump()}, // Empty v2 inbox.
         {200, queue_rows_success({
             {54, 1, 2, first}, {55, 2, 2, second},
         }).dump()},
@@ -1009,7 +1003,7 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
     config.on_notes_changed = [&] { ++notices; };
     D1SyncWorker worker(std::move(config));
     worker.run_once();
-    ASSERT_EQ(scripted->bodies.size(), 4u);
+    ASSERT_EQ(scripted->bodies.size(), 5u);
     EXPECT_EQ(params(1), nlohmann::json::array({"49"}));
     EXPECT_EQ(params(2), nlohmann::json::array({"50", "50"}));
     EXPECT_EQ(params(3), nlohmann::json::array({"53"}));
@@ -1020,9 +1014,9 @@ TEST(D1WorkerTest, SplitSetAssemblesAcrossPagesAndSkipsBroken) {
             EXPECT_TRUE(sync_note_find(database, {name})) << name;
     }
     worker.run_once();
-    ASSERT_EQ(scripted->bodies.size(), 6u);
-    EXPECT_EQ(params(4), nlohmann::json::array({"0", "50"}));
-    EXPECT_EQ(params(5), nlohmann::json::array({"55"}));
+    ASSERT_EQ(scripted->bodies.size(), 8u);
+    EXPECT_EQ(params(5), nlohmann::json::array({"0", "50"}));
+    EXPECT_EQ(params(6), nlohmann::json::array({"55"}));
     EXPECT_EQ(notices, 3);
 }
 
@@ -1037,12 +1031,13 @@ TEST(D1WorkerTest, MissingOwnTableDuringReadHalts) {
     auto scripted = std::make_shared<ScriptedTransport>();
     scripted->responses = {
         {200, error_response("no such table: q/Test/mac").dump()},
+        {200, error_response("no such table: q2/Test/mac").dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
     EXPECT_TRUE(worker.stopped());
     worker.run_once();
-    EXPECT_EQ(scripted->bodies.size(), 1u);
+    EXPECT_EQ(scripted->bodies.size(), 2u);
 }
 
 TEST(D1WorkerTest, OversizedResultHalvesLimitAndResets) {
@@ -1059,18 +1054,20 @@ TEST(D1WorkerTest, OversizedResultHalvesLimitAndResets) {
     scripted->responses = {
         {200, error_response("D1 query result exceeded the maximum response size limit of 50 MB").dump()},
         {200, queue_rows_success({}).dump()},
+        {200, batch_success(1).dump()}, // Empty v2 inbox.
         {200, queue_rows_success({}).dump()},
+        {200, batch_success(1).dump()},
     };
     D1SyncWorker worker(worker_config(path, scripted));
     worker.run_once();
     worker.run_once();
-    ASSERT_EQ(scripted->bodies.size(), 3u);
+    ASSERT_EQ(scripted->bodies.size(), 5u);
     const auto limit = [&](std::size_t i) {
         return nlohmann::json::parse(scripted->bodies.at(i))["batch"][0]["params"][1];
     };
     EXPECT_EQ(limit(0), "50");
     EXPECT_EQ(limit(1), "25");
-    EXPECT_EQ(limit(2), "50");
+    EXPECT_EQ(limit(3), "50");
 }
 
 TEST(D1WorkerTest, SplitSendRetriesFromFirstPiece) {
@@ -1137,7 +1134,8 @@ TEST(D1WorkerTest, ObsoleteFolderRecordsAreAcknowledgedWithoutAnEvent) {
     ASSERT_FALSE(client.create_queue_table(inbox, true));
     ASSERT_FALSE(client.create_queue_table(legacy));
     ASSERT_FALSE(client.insert_piece({inbox}, 1, 1, sync_make_record("chat.add_folder", fields), id));
-    ASSERT_FALSE(client.insert_piece({legacy}, 1, 1, sync_make_record("chat.detach_folder", fields)));
+    d1.queue.prepare("INSERT INTO " + sync_escape_identifier(legacy) + " (piece, pieces, record) VALUES (1, 1, ?1)",
+        sync_make_record("chat.detach_folder", fields)).run();
 
     auto config = d1.config(path);
     config.store = store.get();
@@ -1434,7 +1432,8 @@ TEST(D1WorkerTest, ProtectedUpgradePreservesOutboxAndProvisionsLegacyPeersOnlyOn
     EXPECT_TRUE(d1.ids("q2/Test/mac").empty());
 
     const std::string new_id(32, 'a');
-    ASSERT_FALSE(client.insert_piece({"q/Test/mac"}, 1, 1, folder_record("Legacy parent")));
+    d1.queue.prepare(R"(INSERT INTO "q/Test/mac" (piece, pieces, record) VALUES (1, 1, ?1))",
+        folder_record("Legacy parent")).run();
     ASSERT_FALSE(client.insert_piece({"q2/Test/mac"}, 1, 1, sync_make_record("note.create",
         {{"path", {"Legacy parent", "V2 child"}}, {"item", "folder"}}), new_id));
     D1SyncWorker reopened(config);
@@ -1473,54 +1472,6 @@ TEST(D1WorkerTest, ProtectedUpgradePreservesOutboxAndProvisionsLegacyPeersOnlyOn
     EXPECT_NE(std::ranges::find(tables, "q/Elsewhere/ignored"), tables.end());
     EXPECT_EQ(std::ranges::find(tables, "q2/Test/mac"), tables.end());
     EXPECT_EQ(std::ranges::find(tables, "q2/Elsewhere/ignored"), tables.end());
-}
-
-TEST(D1WorkerTest, EvictionDropsAtMostOneEligibleTable) {
-    test::TestWorkspace workspace;
-    const auto path = workspace.root() / "w.sqlite3";
-    create_empty_workspace_session_database(path);
-    {
-        Database database(path, Database::Mode::read_write);
-        database.prepare(
-            "INSERT INTO config (name, content) VALUES (?1, ?2)",
-            "system/keys/api_key_1/config.toml", d1_key_toml()).run();
-        sync_queue_append(database, sync_make_record("note.create", {{"path", {"A"}}}));
-    }
-    auto scripted = std::make_shared<ScriptedTransport>();
-    scripted->responses = {
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
-        {200, error_response("Exceeded maximum DB size.").dump()},
-        {200, table_list_success(
-            {"q/Test/mac", "q/Test/other", "q/Archive/other", "q/Archive/MAC", "config"}).dump()},
-        {200, nlohmann::json{
-            {"success", true},
-            {"result", {count_success(10)["result"][0], count_success(20)["result"][0]}}
-        }.dump()},
-        {200, batch_success(1).dump()},
-        {200, queue_rows_success({}).dump()},
-        {200, table_list_success({"q/Test/mac", "q/Test/other"}).dump()},
-        {200, batch_success(1).dump()},
-        {200, queue_rows_success({}).dump()},
-    };
-    auto config = worker_config(path, scripted);
-    config.desktop_host = false;
-    D1SyncWorker worker(std::move(config));
-    worker.run_once(); // Triggers eviction, retains work.
-    {
-        Database database(path, Database::Mode::read_only);
-        EXPECT_EQ(sync_queue_list(database).size(), 1u);
-    }
-    ASSERT_GE(scripted->bodies.size(), 5u);
-    const auto counts = nlohmann::json::parse(scripted->bodies[3])["batch"];
-    ASSERT_EQ(counts.size(), 2u);
-    EXPECT_NE(counts[0]["sql"].get<std::string>().find("q/Test/other"), std::string::npos);
-    EXPECT_NE(counts[1]["sql"].get<std::string>().find("q/Archive/other"), std::string::npos);
-    EXPECT_NE(scripted->bodies[4].find("q/Archive/other"), std::string::npos);
-    worker.run_once(); // Sends and deletes.
-    {
-        Database database(path, Database::Mode::read_only);
-        EXPECT_TRUE(sync_queue_list(database).empty());
-    }
 }
 
 } // namespace

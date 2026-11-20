@@ -355,11 +355,11 @@ TEST(D1Client, BuildsBatchesWithBoundParameters) {
             "Authorization: Bearer token-1")
         != requests[0].headers.end());
     requests.clear();
-    EXPECT_FALSE(client.insert_piece({"q/Vault/a", "q/Vault/b"}, 1, 2, "record"));
+    EXPECT_FALSE(client.insert_piece({"q2/Vault/a", "q2/Vault/b"}, 1, 2, "record", std::string(32, 'a')));
     const auto batch = nlohmann::json::parse(requests[0].body);
     ASSERT_EQ(batch["batch"].size(), 2u);
-    EXPECT_EQ(batch["batch"][0]["params"], nlohmann::json::array({"1", "2", "record"}));
-    EXPECT_TRUE(batch["batch"][1]["sql"].get<std::string>().find("\"q/Vault/b\"") != std::string::npos);
+    EXPECT_EQ(batch["batch"][0]["params"], nlohmann::json::array({std::string(32, 'a'), "1", "2", "record"}));
+    EXPECT_TRUE(batch["batch"][1]["sql"].get<std::string>().find("\"q2/Vault/b\"") != std::string::npos);
 }
 
 TEST(D1Client, QuotesSpecialCharacterNames) {
@@ -444,7 +444,7 @@ TEST(D1Client, RejectsUnconfirmedBatchesAndMalformedRows) {
     for (const auto& body : {std::string("{}"), d1_success("[]"),
             std::string(R"({"success":true,"result":[{"success":true},{}]})")}) {
         response = body;
-        const auto error = client.insert_piece({"q/V/a", "q/V/b"}, 1, 1, "record");
+        const auto error = client.insert_piece({"q2/V/a", "q2/V/b"}, 1, 1, "record", std::string(32, 'a'));
         ASSERT_TRUE(error);
         EXPECT_EQ(error->failure, D1Client::Failure::protocol);
     }
@@ -468,13 +468,11 @@ TEST(D1Client, RejectsUnconfirmedBatchesAndMalformedRows) {
     EXPECT_TRUE(client.read_queue("q/V/a", 50, 2).second);
 }
 
-TEST(D1Client, ReadsRowsAndCounts) {
+TEST(D1Client, ReadsAndAcknowledgesLegacyRows) {
     D1Client client(test_credentials(),
         [](const std::string&, const std::string& body, const std::vector<std::string>&) {
             const auto batch = nlohmann::json::parse(body);
             const std::string sql = batch["batch"][0]["sql"];
-            if (sql.find("COUNT(*)") != std::string::npos)
-                return std::pair{200L, d1_success(R"([{"count":7}])")};
             if (sql.find("sqlite_master") != std::string::npos)
                 return std::pair{200L, d1_success(R"([{"name":"q/V/a"}])")};
             return std::pair{
@@ -489,9 +487,6 @@ TEST(D1Client, ReadsRowsAndCounts) {
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_EQ(rows.front().rowid, 4294967299LL);
     EXPECT_EQ(rows.front().record, "r");
-    const auto [counts, count_error] = client.count_rows({"q/V/a"});
-    EXPECT_FALSE(count_error);
-    EXPECT_EQ(counts, std::vector<std::int64_t>{7});
     EXPECT_FALSE(client.delete_through("q/V/a", 3));
     EXPECT_FALSE(client.drop_table("q/V/a"));
 }

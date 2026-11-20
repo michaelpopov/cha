@@ -8,6 +8,7 @@
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <set>
 #include <stdexcept>
@@ -112,17 +113,9 @@ void SessionMirror::rebuild(
     const std::shared_ptr<const Workspace> workspace = repository.workspace();
     if (!workspace) throw std::runtime_error("Workspace is not loaded");
 
-    std::set<std::filesystem::path> used_forums;
     for (const WorkspaceForum& forum : workspace->forums()) {
         if (forum.id == entrance_id) continue;
-        const std::string base = mirror_path_name(forum.display_name);
-        std::filesystem::path path;
-        for (std::size_t suffix{};; ++suffix) {
-            path = *root / numbered_name(base, suffix);
-            if (used_forums.insert(path).second) break;
-        }
-        require_directory_or_create(path);
-        forums_.emplace(forum.id, std::move(path));
+        add_forum(*root, forum.id, forum.display_name, false);
     }
 
     for (const auto& [forum_id, directory] : forums_) {
@@ -140,6 +133,40 @@ void SessionMirror::rebuild(
         }
     }
     root_ = std::move(root);
+}
+
+void SessionMirror::reconcile_forums(const Workspace& workspace) {
+    try {
+        const std::lock_guard lock(mutex_);
+        if (!root_) return;
+        std::erase_if(forums_, [&](const auto& forum) {
+            return !workspace.find_forum(forum.first);
+        });
+        std::erase_if(sessions_, [&](const auto& session) {
+            return !forums_.contains(session.first.forum_id);
+        });
+        for (const auto& forum : workspace.forums()) {
+            if (forum.id != entrance_id && !forums_.contains(forum.id))
+                add_forum(*root_, forum.id, forum.display_name, true);
+        }
+    } catch (const std::exception& error) {
+        log_warn("Session mirror forum refresh failed: " + std::string(error.what()));
+    }
+}
+
+void SessionMirror::add_forum(const std::filesystem::path& root, std::string_view id,
+    std::string_view display_name, bool preserve_archives) {
+    const std::string base = mirror_path_name(display_name);
+    for (std::size_t suffix{};; ++suffix) {
+        auto path = root / numbered_name(base, suffix);
+        if (std::ranges::any_of(forums_, [&](const auto& forum) { return forum.second == path; }))
+            continue;
+        if (preserve_archives && std::filesystem::exists(std::filesystem::symlink_status(path)))
+            continue;
+        require_directory_or_create(path);
+        forums_.emplace(id, std::move(path));
+        return;
+    }
 }
 
 std::filesystem::path SessionMirror::allocate_session_path(

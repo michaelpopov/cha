@@ -8,6 +8,7 @@
 #include "support/mock_http_server.h"
 #include "support/test_workspace.h"
 #include "util/path_name.h"
+#include "util/logging.h"
 #include "workspace/prompt_catalog.h"
 
 #include <gtest/gtest.h>
@@ -96,7 +97,6 @@ struct MockD1 {
     std::vector<std::string> statements;
     std::vector<std::string> create_headers;
     nlohmann::json incoming = nlohmann::json::array();
-    nlohmann::json sent = nlohmann::json::array();
     nlohmann::json incoming_v2 = nlohmann::json::array();
     nlohmann::json sent_v2 = nlohmann::json::array();
     nlohmann::json acknowledged_v2 = nlohmann::json::array();
@@ -114,8 +114,7 @@ struct MockD1 {
                 const std::lock_guard lock(mutex);
                 statements.push_back(sql);
                 if (sql.starts_with("CREATE TABLE") && !fail_create) {
-                    if (sql.find("q2/") == std::string::npos) local_queue_exists = true;
-                    else if (sql.find(sync_escape_identifier(local_v2)) != std::string::npos)
+                    if (sql.find(sync_escape_identifier(local_v2)) != std::string::npos)
                         local_v2_exists = true;
                     create_headers = headers;
                 }
@@ -135,17 +134,8 @@ struct MockD1 {
                 }
                 if (sql.starts_with("INSERT") && !fail_insert) {
                     const auto& params = batch.at(0).at("params");
-                    if (sql.find("ON CONFLICT") != std::string::npos) {
-                        sent_v2.push_back({{"seq", sent_v2.size() + 1}, {"op_id", params.at(0)},
-                            {"pieces", std::stoi(params.at(2).get<std::string>())}, {"record", params.at(3)}});
-                    } else {
-                        sent.push_back({
-                            {"rowid", sent.size() + 1},
-                            {"piece", std::stoi(params.at(0).get<std::string>())},
-                            {"pieces", std::stoi(params.at(1).get<std::string>())},
-                            {"record", params.at(2)},
-                        });
-                    }
+                    sent_v2.push_back({{"seq", sent_v2.size() + 1}, {"op_id", params.at(0)},
+                        {"pieces", std::stoi(params.at(2).get<std::string>())}, {"record", params.at(3)}});
                 }
                 have_local = local_queue_exists;
                 have_v2 = local_v2_exists;
@@ -213,8 +203,8 @@ SaveR2StorageRequest r2_credentials(int port) {
     };
 }
 
-void seed_d1(const std::filesystem::path& path) {
-    Database db(path, Database::Mode::read_write);
+void seed_d1(const std::filesystem::path& path, std::string_view password = {}) {
+    Database db(path, Database::Mode::read_write, password);
     db.prepare(
         "INSERT INTO config (name, content) VALUES (?1, ?2)",
         "system/keys/api_key_1/config.toml",
@@ -508,26 +498,50 @@ TEST(D1CredentialsTest, FailedDisconnectRetainsCredentialsQueueAndFlags) {
     EXPECT_EQ(flags.integer(0), 1);
 }
 
-TEST(D1AppWiringTest, DaemonStartupRecreatesQueueAndRetriesPendingWork) {
-    test::TestWorkspace workspace;
-    const auto database = test::import_test_database(workspace.root());
-    auto command = make_d1_command(workspace, database);
-    command.chaweb_host = true;
-    seed_d1(database);
-    queue_work(database);
-    MockD1 mock;
-    mock.local_queue_exists = false;
-    auto application = Application::open(command, {}, {}, mock.transport());
-    EXPECT_EQ(application->state(), ApplicationState::running);
-    EXPECT_EQ(mock.count("CREATE TABLE"), 1u);
-    EXPECT_EQ(mock.count("INSERT"), 2u); // Existing note and startup prompt initialization.
-    const auto initialization = nlohmann::json::parse(mock.sent.back()["record"].get<std::string>());
-    EXPECT_EQ(initialization["kind"], "config.edit");
-    EXPECT_EQ(initialization["set"].size(), prompt_catalog.size());
-    Database db(database, Database::Mode::read_only);
-    EXPECT_FALSE(sync_has_pending(db));
-    application->request_shutdown();
-    EXPECT_TRUE(application->join_shutdown(5s));
+TEST(D1AppWiringTest, DaemonOpensAsDisconnectedAndPreservesPendingWork) {
+    for (const std::string machine : {"mac", ""}) {
+        SCOPED_TRACE(machine);
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        auto command = make_d1_command(workspace, database, machine);
+        command.chaweb_host = true;
+        seed_d1(database);
+        queue_work(database);
+        flag_note(database);
+        MockD1 mock;
+        initialize_diagnostic_logging(command.log_file, "warn");
+        auto application = Application::open(command, {}, {}, mock.transport());
+        EXPECT_EQ(application->state(), ApplicationState::running);
+        const auto epoch = application->context_epoch();
+        (void)application->create_session("lobby", "Daemon chat", epoch);
+        (void)application->create_forum({.display_name = "Daemon forum", .persona_id = "reader"}, epoch);
+        const auto note = application->create_note_item({}, NoteItemKind::note, "Daemon note", epoch);
+        application->save_note(note.id,
+            {{"type", "doc"}, {"content", nlohmann::json::array()}}, epoch);
+        (void)application->update_vault("Test", {.display_name = "Test"}, epoch);
+        application.reset();
+        application = Application::open(command, {}, {}, mock.transport());
+        application.reset();
+        shutdown_diagnostic_logging();
+
+        EXPECT_EQ(mock.count(""), 0u);
+        Database db(database, Database::Mode::read_only);
+        const auto pending = sync_queue_list(db);
+        ASSERT_EQ(pending.size(), 1u);
+        EXPECT_EQ(pending.front().record,
+            sync_make_record("note.create", {{"path", {"Pending"}}, {"item", "note"}}));
+        auto flags = db.prepare("SELECT name FROM note_items WHERE changed=1");
+        ASSERT_TRUE(flags.step());
+        EXPECT_EQ(flags.text(0), "Flagged");
+        EXPECT_FALSE(flags.step());
+        const auto log = file_bytes(command.log_file);
+        constexpr std::string_view warning = "D1 sync is disabled in cha-daemon";
+        const auto first = log.find(warning);
+        ASSERT_NE(first, std::string::npos);
+        const auto second = log.find(warning, first + warning.size());
+        ASSERT_NE(second, std::string::npos);
+        EXPECT_EQ(log.find(warning, second + warning.size()), std::string::npos);
+    }
 }
 
 TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
@@ -564,11 +578,16 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
         ready_row(5, chat_id, sync_make_record(
             "chat.rename", {{"chat", {"remote", "session-from-d1"}}, {"label", "Shared chat"}})),
     };
+    auto command = make_d1_command(workspace, database);
+    const auto mirror = workspace.root() / "mirror";
+    command.vault.mirror = mirror;
+    command.vaults.front() = command.vault;
     auto application = Application::open(
-        make_d1_command(workspace, database), {}, {}, mock.transport());
+        command, {}, {}, mock.transport());
     const auto chats = application->list_sessions("remote", application->context_epoch());
     ASSERT_EQ(chats.size(), 1u);
     EXPECT_EQ(chats.front().id, "session-from-d1");
+    EXPECT_EQ(file_bytes(mirror / "Remote" / "Shared chat.md"), "<!-- CHA session: Shared chat -->\n");
     EXPECT_EQ(mock.count("DELETE FROM"), 1u);
     EXPECT_TRUE(mock.incoming_v2.empty());
     EXPECT_EQ(mock.acknowledged_v2,
@@ -1114,6 +1133,77 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
         }
         app->request_shutdown();
         ASSERT_TRUE(app->join_shutdown(5s));
+    }
+}
+
+TEST(D1AppWiringTest, FirstReceiveAfterSwitchUsesOnlyTheDestinationMirror) {
+    for (const std::string password : {"", "second-password"}) {
+        SCOPED_TRACE(password.empty() ? "unprotected" : "protected");
+        test::TestWorkspace workspace;
+        const auto database = test::import_test_database(workspace.root());
+        auto command = make_d1_command(workspace, database);
+        command.mirror_base = workspace.root() / "mirrors";
+        const auto old_mirror = *command.mirror_base / "Test";
+        command.vault.mirror = old_mirror;
+        command.vaults.front() = command.vault;
+        MockD1 mock;
+        mock.local_table = "q/Second/mac";
+        mock.local_v2_exists = true;
+        auto application = Application::open(command, {}, {}, mock.transport());
+        const auto epoch = application->context_epoch();
+        (void)application->create_session("lobby", "Old chat", epoch);
+        const auto old_file = old_mirror / "The Lobby" / "Old chat.md";
+        ASSERT_TRUE(std::filesystem::is_regular_file(old_file));
+        const auto old_contents = file_bytes(old_file);
+        const auto second = application->create_vault(
+            {.display_name = "Second", .password = password}, epoch);
+        seed_d1(second.data, password);
+
+        test::TestWorkspace peer;
+        peer.add_forum("remote", "Remote", "guide");
+        const auto peer_database = test::import_test_database(peer.root());
+        Database peer_db(peer_database, Database::Mode::read_only);
+        nlohmann::json rows = nlohmann::json::array();
+        for (const auto& row : read_workspace_config_files(peer_db)) {
+            if (row.name.starts_with("forums/remote/"))
+                rows.push_back({{"name", row.name}, {"content", row.content}});
+        }
+        mock.incoming_v2 = {
+            ready_row(1, std::string(32, 'a'), sync_make_record(
+                "config.edit", {{"set", rows}, {"delete", nlohmann::json::array()}})),
+            ready_row(2, std::string(32, 'b'), sync_make_record(
+                "chat.entries", {{"chat", {"lobby", "incoming"}}, {"label", "Incoming chat"},
+                    {"state", 1}, {"entries", {
+                        {{"kind", 0}, {"participant_id", "reader"}, {"display_name", "Reader"},
+                            {"addressed_to", "guide"}, {"addressed_to_name", "Guide"},
+                            {"text", "Destination vault question"}, {"status", 0}},
+                        {{"kind", 1}, {"participant_id", "guide"}, {"display_name", "Guide"},
+                            {"text", "Destination vault answer"}, {"status", 0}},
+                    }}})),
+            ready_row(3, std::string(32, 'c'), sync_make_record(
+                "chat.rename", {{"chat", {"remote", "remote-chat"}}, {"label", "Remote chat"}})),
+        };
+        const auto switched = application->switch_vault("Second", password, epoch);
+        ASSERT_EQ(switched.state, ApplicationState::running);
+        ASSERT_EQ(application->list_sessions("lobby", switched.context_epoch).size(), 1u);
+        ASSERT_EQ(application->list_sessions("remote", switched.context_epoch).size(), 1u);
+        std::vector<std::filesystem::path> old_files;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(old_mirror)) {
+            if (entry.is_regular_file()) old_files.push_back(entry.path());
+        }
+        EXPECT_EQ(old_files, std::vector{old_file});
+        EXPECT_EQ(file_bytes(old_file), old_contents);
+        ASSERT_TRUE(second.mirror);
+        if (password.empty()) {
+            const auto transcript = file_bytes(*second.mirror / "The Lobby" / "Incoming chat.md");
+            EXPECT_TRUE(transcript.starts_with("<!-- CHA session: Incoming chat -->\n"));
+            EXPECT_NE(transcript.find("Destination vault question"), std::string::npos);
+            EXPECT_NE(transcript.find("Destination vault answer"), std::string::npos);
+            EXPECT_EQ(file_bytes(*second.mirror / "Remote" / "Remote chat.md"),
+                "<!-- CHA session: Remote chat -->\n");
+        } else {
+            EXPECT_FALSE(std::filesystem::exists(*second.mirror));
+        }
     }
 }
 

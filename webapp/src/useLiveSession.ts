@@ -293,6 +293,7 @@ export function useLiveSession(
     generation: number,
     reconnecting: boolean,
     onSettled?: (connected: boolean) => void,
+    refreshWelcomeOnFirst = reconnecting,
   ) => {
     if (liveGeneration.current !== generation) {
       onSettled?.(false);
@@ -300,7 +301,7 @@ export function useLiveSession(
     }
     const key = `${forumId}/${sessionId}`;
     let events: SessionEventConnection | null = null;
-    let refreshOnFirst = reconnecting;
+    let refreshOnFirst = refreshWelcomeOnFirst;
     const failed = () => {
       if (onSettled) onSettled(false);
       else recoveryStarter.current(forumId, sessionId, generation);
@@ -361,6 +362,7 @@ export function useLiveSession(
     forumId: string,
     sessionId: string,
     generation: number,
+    refreshWelcomeOnFirst: boolean,
   ) => new Promise<boolean>((resolve) => {
     let settled = false;
     connectStream(forumId, sessionId, generation, true, (connected) => {
@@ -370,7 +372,7 @@ export function useLiveSession(
       } else if (!connected) {
         recoveryStarter.current(forumId, sessionId, generation);
       }
-    });
+    }, refreshWelcomeOnFirst);
   }), [connectStream]);
 
   const beginRecovery = useCallback((
@@ -393,18 +395,25 @@ export function useLiveSession(
     });
 
     void (async () => {
-      for (let attempt = 0; !cancelled(); attempt += 1) {
-        try {
-          if (reopen) await client.openSession(forumId, sessionId);
+      if (reopen) {
+        let opened = false;
+        for (let attempt = 0; !cancelled(); attempt += 1) {
+          try {
+            await client.openSession(forumId, sessionId);
+            opened = true;
+            break;
+          } catch (failure: unknown) {
+            if (!isRetryableSessionOpen(failure) || attempt >= retryDelays.length) break;
+          }
           if (cancelled()) return false;
-          return await attachStream(forumId, sessionId, generation);
-        } catch (failure: unknown) {
-          if (!isRetryableSessionOpen(failure)) return false;
+          if (!await waitForRetry(retryDelays[attempt], generation)) return false;
         }
-        if (cancelled() || attempt >= retryDelays.length) return false;
-        if (!await waitForRetry(retryDelays[attempt], generation)) return false;
+        if (cancelled()) return false;
+        if (isWelcome(forumId, sessionId) && welcomeRefresh.current) welcomeRefresh.current();
+        else void refreshBootstrap();
+        if (!opened) return false;
       }
-      return false;
+      return await attachStream(forumId, sessionId, generation, !reopen);
     })().then((connected) => {
       if (cancelled()) return;
       recovery.current = null;
@@ -416,7 +425,7 @@ export function useLiveSession(
         });
       }
     });
-  }, [attachStream, cancelRetryTimer, client, dispatch, retryDelays, waitForRetry]);
+  }, [attachStream, cancelRetryTimer, client, dispatch, isWelcome, refreshBootstrap, retryDelays, waitForRetry]);
 
   // Publish the starter before stream callbacks can run, keeping render free
   // of writes to refs.

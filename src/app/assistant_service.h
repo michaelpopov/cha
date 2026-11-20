@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace cha {
 
@@ -40,6 +41,9 @@ public:
         // Called with lifecycle held; reads existing operation status only.
         std::function<nlohmann::json()> pending_notes;
         std::function<nlohmann::json()> application;
+        // Called with lifecycle held.
+        std::function<std::string_view()> vault_password;
+        std::function<std::vector<std::filesystem::path>()> external_paths;
     };
 
     explicit AssistantService(Links links);

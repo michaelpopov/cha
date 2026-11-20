@@ -3668,6 +3668,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, NotesAudioPairRules) {
     const auto protected_pair = WorkspaceConfigApplyError::credential_destination_protected;
     const auto committed = WorkspaceConfigApplyError::none;
     set("audio_url", "https://audio.example/", committed);
+    set("audio_url", "https://audio.example", committed);
     set("audio_url", "http://audio.example", protected_pair);
     set("audio_url", "https://audio.example:8443", protected_pair);
     set("audio_api_key", "api_key_99", protected_pair);
@@ -3680,8 +3681,31 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, NotesAudioPairRules) {
     EXPECT_EQ(store->snapshot()->notes().audio_api_key_id, "api_key_1");
     store->apply_jev_update(WorkspaceJev{.url = "https://shared.example/decisions",
         .api_key_id = "api_key_1"});
+    const auto other_audio = stored_config(database(), "system/notes/config.toml");
+    set("audio_url", "https://shared.example/", committed);
+    store->apply_notes_update({.compression_provider_id = "test",
+        .audio_url = "https://audio.example", .audio_api_key_id = "api_key_1"});
+    EXPECT_EQ(stored_config(database(), "system/notes/config.toml"), other_audio);
     set("audio_url", "https://shared.example", committed);
     EXPECT_EQ(store->snapshot()->notes().audio_url, "https://shared.example");
+    set("audio_url", "https://different.example", protected_pair);
+
+    store->apply_voice_input_update({.url = "https://shared.example/voice",
+        .model = "transcribe", .api_key_id = "api_key_1"});
+    const auto set_endpoint = [&](std::string path, std::string url, WorkspaceConfigApplyError expected) {
+        const auto result = store->apply_config(store->config_revision(),
+            std::vector<WorkspaceConfigChange>{{.path = std::move(path),
+                .operation = WorkspaceConfigOperation::set, .key = "url", .value = std::move(url)}});
+        EXPECT_EQ(result.error, expected) << result.error_message;
+        EXPECT_EQ(result.committed, expected == committed);
+    };
+    const std::string jev = "system/jev/config.toml";
+    const std::string voice = "system/voice-input/config.toml";
+    set_endpoint(jev, "https://shared.example/", protected_pair);
+    set_endpoint(jev, "https://shared.example/decisions/", protected_pair);
+    set_endpoint(voice, "https://shared.example/elsewhere", protected_pair);
+    set_endpoint(voice, "https://shared.example/voice/", protected_pair);
+    set_endpoint(voice, "https://SHARED.EXAMPLE:443/decisions", committed);
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyAllowsSharedSettingsAndSeparateProvider) {

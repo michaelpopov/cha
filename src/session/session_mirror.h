@@ -15,6 +15,7 @@
 namespace cha {
 
 class SessionRepository;
+class Workspace;
 
 // A best-effort runtime projection of persistent sessions into Markdown files.
 // Construction performs the initial synchronization and therefore fails when
@@ -38,6 +39,7 @@ public:
     void rebuild(
         std::optional<std::filesystem::path> root,
         const SessionRepository& sessions);
+    void reconcile_forums(const Workspace& workspace);
 
 private:
     struct MirroredSession {
@@ -48,6 +50,8 @@ private:
     [[nodiscard]] std::filesystem::path allocate_session_path(
         const FullSessionId& identity,
         std::string_view label) const;
+    void add_forum(const std::filesystem::path& root, std::string_view id,
+        std::string_view display_name, bool preserve_archives);
     void update_locked(
         const FullSessionId& identity,
         std::string_view label,

@@ -62,6 +62,8 @@ TEST(AnthropicApi, ConfigurationAndCustomEndpointsIgnoreUnusedValues) {
     EXPECT_EQ(provider_endpoint(config), "http://[::1]:8080/proxy/v1/messages");
     config.temperature = std::numeric_limits<double>::quiet_NaN();
     config.reasoning_effort = "obsolete";
+    EXPECT_TRUE(provider_config_error(config));
+    config.reasoning_effort = "high";
     config.openrouter_targets = {"bad target", "bad target"};
     config.web_search = WebSearchMode::automatic;
     EXPECT_FALSE(provider_config_error(config));

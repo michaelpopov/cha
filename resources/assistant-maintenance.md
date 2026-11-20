@@ -72,7 +72,7 @@ stable ID. A display name is a label, not an ID or a reference target.
 | Dictation, hands-free sending, or transcription fails | `system/voice-input/config.toml`: provider, URL scheme, model, key reference, delay, prompt, and send phrase. Omitted provider means OpenAI; xAI uses WebSocket URLs and does not send delay or prompt. Also consider browser microphone access and secure-context requirements. |
 | An unaddressed message reaches the wrong character or becomes a Self-note | `system/jev/config.toml`, forum membership/defaults, and recipient-detection logs. Jev classifies the intended recipient. An explicit `@Assistant` bypasses Jev in Welcome. |
 | "Save this conversation" does not save a summary | `system/notes/config.toml`. CHA does not detect a typed save request. Outside Welcome, the user saves a session summary to Notes with Save summary in the session's sidebar menu. It uses the notes compression provider. |
-| Search or page reading is unavailable | `system/web-search/config.toml`, character `web_search_tool`, and provider/character `web_search`. Page reading first uses `web_reader` when `web_reader_enabled` is true and `web_reader_url` is set. It uses Firecrawl when `read_provider = "firecrawl"`, also after a `web_reader` failure. `web_reader_api_key` is not used. Check search and Firecrawl key metadata independently. Welcome and web page import into Notes use the same page-reading settings. |
+| Search or page reading is unavailable | `system/web-search/config.toml`, character `web_search_tool`, and provider/character `web_search`. Page reading first uses `web_reader` when `web_reader_enabled` is true and `web_reader_url` is set. It uses Firecrawl when `read_provider = "firecrawl"`, also after a `web_reader` failure. Check search and Firecrawl key metadata independently. Welcome and web page import into Notes use the same page-reading settings. |
 | Note compression or summarization, web page or YouTube import, Save summary, or note audio fails | `system/notes/config.toml`: `compression_provider`, `compression_reasoning_effort`, `audio_url`, and `audio_api_key`. Import formatting and session summaries use the compression provider; they fail when it is omitted or unavailable. Summarize in desktop Notes makes the Compressed, L1, L2 and L3 outputs with the provider and effort that the user selects in its dialog; the saved provider and effort only supply the dialog's initial values. Effort defaults to `high`. Note audio needs a saved key and an `audio_url` that is a service origin with no path, and runs only on desktop. Use `assistant_events` for job outcomes. |
 | Session naming fails or uses the wrong provider/effort | `system/session/config.toml`: `naming_provider` and `naming_reasoning_effort`. Omitted or unavailable naming provider falls back to Assistant's provider; effort defaults to `low`. Read naming logs and the selected provider. |
 | Your own configuration or credentials are suspect | Read `system/assistant/character.toml`, its selected provider, and relevant `system/keys/` metadata. These are protected from your writes. Your prompt is an application resource, not a writable vault prompt file. |
@@ -122,16 +122,13 @@ For the direct Gemini API, a provider uses `api = "google"`, `https = true`,
 host `generativelanguage.googleapis.com`, port `443`, `base_path = "/v1beta"`,
 a Gemini model ID with an optional `models/` prefix, and a saved key. OpenAI
 OAuth is not available for `google` or `anthropic`. These two APIs ignore
-provider `reasoning_effort`, `reasoning_format`, `cache_retention`,
+provider `reasoning_format`, `cache_retention`,
 `openrouter_targets`, and provider-hosted `web_search`, with warnings;
-Anthropic also ignores `temperature`. Character, chat-toolbar, session-naming,
-and notes effort have no effect with them, so do not change effort as a repair
-for these providers.
-
-When explaining why Anthropic effort has no effect, say that CHA uses
-model-default thinking and ignores both effort and temperature. A provider's
-saved effort is not overriding the character's effort; neither controls this
-integration's thinking behavior.
+Anthropic also ignores `temperature`. Supported models honor reasoning effort.
+Characters inherit the provider's effort unless their settings override it.
+The chat toolbar can override effort for a session. Session naming and Notes
+use their own effort settings. For `none` or a model without a CHA thinking
+mapping, CHA omits thinking settings and the model uses its default.
 
 Provider `mode` defaults to `test`, `https` to `false`, `api` to `responses`,
 `timeout_s` to `600`, and `idle_timeout_s` to `60`. Inspect the actual values
@@ -224,8 +221,7 @@ Library retrieval and Automatic web search can be used together; web settings
 do not disable Library access. Welcome maintenance and auxiliary requests do not
 receive Library tools. A Forum default provider replaces the model for all
 characters and must be a connection that can use the Library natively; leave it
-unset to use different character providers. Attached folders do not give search
-access.
+unset to use different character providers.
 
 ## Writing prompt content
 
@@ -740,9 +736,12 @@ references intact; creation makes undo unavailable.
 Credentials require manual action. Do not request, read, write, or copy secret
 values, passwords, or OAuth files. Native code also rejects any new pair of
 credential destination and key reference, including an unresolved reference.
-Model provider destinations are scheme/host/port; Jev, voice input, and note
-audio use their URL's scheme/host/port; voice output uses its fixed service name. Search
-provider/key and Firecrawl/key pairs are separate. A provider copy or key-reference
+Model provider destinations include the scheme, host, port, and base path.
+Jev and voice input match the scheme, host, effective port, and endpoint path,
+including a trailing slash on a non-root path. Note audio uses a service origin
+and can reuse a saved Jev key at the same origin. The bare audio origin and
+its trailing slash are equivalent. Voice output uses its fixed service name.
+Search provider/key and Firecrawl/key pairs are separate. A provider copy or key-reference
 change is allowed only when every resulting pair already existed. A new
 destination/key pair, including one introduced by a host, scheme, port, or
 service change, needs manual settings and can return

@@ -421,7 +421,7 @@ ProviderUpdate parse_provider_update(
     const bool unused_options = result.config.api == ProviderApi::google || anthropic;
     if (anthropic) {
         for (const auto& [field, default_value] : {
-                 std::pair{"reasoning_effort", "none"}, {"reasoning_format", "auto"},
+                 std::pair{"reasoning_format", "auto"},
                  {"cache_retention", "short"}, {"web_search", "off"}}) {
             if (json.at(field) != default_value) log_warn("Ignoring " + std::string(field) + " for Anthropic provider");
         }
@@ -444,8 +444,7 @@ ProviderUpdate parse_provider_update(
     result.config.idle_timeout_s = required_field<int>(json, "idle_timeout_s");
     result.config.api_key_id =
         settings_nullable_string(json, "api_key").value_or("");
-    result.config.reasoning_effort = unused_options ? std::string(default_reasoning_effort)
-        : required_field<std::string>(json, "reasoning_effort");
+    result.config.reasoning_effort = required_field<std::string>(json, "reasoning_effort");
     result.config.reasoning_format = unused_options ? ReasoningFormat::automatic : settings_choice(
         required_field<std::string>(json, "reasoning_format"),
         parse_reasoning_format);

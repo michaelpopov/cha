@@ -5,6 +5,7 @@
 #include "providers/api_key_store.h"
 #include "providers/maintenance.h"
 #include "providers/openai_oauth.h"
+#include "storage/folder_store_storage.h"
 #include "support/test_workspace.h"
 #include "util/logging.h"
 #include "workspace/builtins.h"
@@ -122,6 +123,8 @@ public:
     std::atomic_bool& cancelled() { return cancelled_; }
     MaintenanceContext& context() { return context_; }
     Json pending_notes = Json::array();
+    std::string vault_password;
+    std::vector<std::filesystem::path> external_paths;
     const std::filesystem::path& config_directory() { return log_directory_; }
 
     // Admission runs first after the lifecycle lock, then again after the read.
@@ -173,6 +176,8 @@ private:
             .application = [] {
                 return Json{{"version", "synthetic"}, {"active_vault", "Test"}};
             },
+            .vault_password = [this]() -> std::string_view { return vault_password; },
+            .external_paths = [this] { return external_paths; },
         });
     }
 
@@ -1124,8 +1129,12 @@ TEST(AssistantService, EventsRedactSecretsAndPathsAndBoundTheResult) {
         .id = "api_key_2", .display_name = "D1", .account_id = "account",
         .database_id = "database", .api_token = "event-d1-token-value"});
     const auto path = harness.store().workspace_path().string();
+    const auto external = (std::filesystem::temp_directory_path() / "external-cha-mirror").string();
+    harness.external_paths = {external};
+    harness.vault_password = "event-vault-password";
     harness.store().append_event(EventSeverity::warning,
-        "Failure event-secret-key-value event-d1-token-value at " + path);
+        "Failure event-secret-key-value event-d1-token-value event-vault-password at "
+        + path + " and " + external);
     harness.pending_notes = Json::array({{
         {"note_id", 1}, {"name", "event-secret-key-value " + path},
         {"audio", {{"pending", true}, {"attempt_id", 9}}},
@@ -1135,6 +1144,8 @@ TEST(AssistantService, EventsRedactSecretsAndPathsAndBoundTheResult) {
     EXPECT_EQ(redacted.dump().find("event-secret-key-value"), std::string::npos);
     EXPECT_EQ(redacted.dump().find("event-d1-token-value"), std::string::npos);
     EXPECT_EQ(redacted.dump().find(path), std::string::npos);
+    EXPECT_EQ(redacted.dump().find(external), std::string::npos);
+    EXPECT_EQ(redacted.dump().find(harness.vault_password), std::string::npos);
     EXPECT_NE(redacted.dump().find("[REDACTED]"), std::string::npos);
     EXPECT_NE(redacted.dump().find("[path]"), std::string::npos);
     for (int i = 0; i < event_history_limit + 5; ++i)
@@ -1395,6 +1406,30 @@ TEST(AssistantInspect, StoresTopicIsGoneAndNoteContentIsExcluded) {
     const auto notes = harness.run("assistant_inspect", inspect_arguments("notes")).dump();
     EXPECT_EQ(notes.find("DOCUMENT_SENTINEL"), std::string::npos);
     EXPECT_EQ(notes.find("COMPRESSED_SENTINEL"), std::string::npos);
+}
+
+TEST(AssistantInspect, NotesAndAnnotationsHaveReferencesButFoldersDoNot) {
+    ServiceHarness harness;
+    auto& store = harness.store();
+    const auto folder = store.create_note_item({}, NoteItemKind::folder, "Folder");
+    const auto note = store.create_note_item(folder.id, NoteItemKind::note, "Note");
+    std::ifstream input(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "tests/fixtures/notes/annotations.json");
+    store.save_note(note.id, Json::parse(input).at("document"));
+    const auto items = harness.run("assistant_inspect", inspect_arguments("notes")).at("items");
+    const auto recorded_folder = std::ranges::find_if(items, [&](const Json& item) {
+        return item["id"] == folder.id;
+    });
+    ASSERT_NE(recorded_folder, items.end());
+    EXPECT_FALSE(recorded_folder->contains("ref_id"));
+    for (const auto kind : {"note", "annotation"}) {
+        const auto found = std::ranges::find_if(items, [&](const Json& item) {
+            return item["parent_id"] == folder.id && item["kind"] == kind;
+        });
+        ASSERT_NE(found, items.end());
+        const auto id = found->at("id").get<std::int64_t>();
+        EXPECT_EQ(found->at("ref_id"), note_item_ref_id(id));
+        EXPECT_FALSE(store.get_note_text(id).text.empty());
+    }
 }
 
 TEST(AssistantInspect, SecretsAreExcludedAndPendingAudioUsesSavedAttempt) {

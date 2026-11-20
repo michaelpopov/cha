@@ -234,7 +234,8 @@ Application::Impl::Impl(
       settings(std::move(selected_settings)),
       current_vault_(selected_command.vault),
       store(WorkspaceConfigStore::open(
-          command.vault.data, active_password, command.machine, !command.chaweb_host)),
+          command.vault.data, active_password, command.chaweb_host ? "" : command.machine,
+          !command.chaweb_host)),
       api_keys(std::make_unique<ApiKeyStore>(
           *store,
           command.config_directory / "api-keys.json")),
@@ -300,6 +301,21 @@ Application::Impl::Impl(
                   {"log_file", utf8_path(diagnostic_log_file())},
               };
           },
+          .vault_password = [this]() -> std::string_view { return active_password; },
+          .external_paths = [this] {
+              std::vector<std::filesystem::path> paths;
+              const auto add = [&](const VaultDefinition& vault) {
+                  paths.push_back(vault.data.parent_path());
+                  if (vault.mirror) paths.push_back(*vault.mirror);
+                  if (vault.modify) paths.push_back(*vault.modify);
+              };
+              for (const auto& vault : command.vaults) add(vault);
+              add(current_vault_.get());
+              if (command.mirror_base) paths.push_back(*command.mirror_base);
+              if (command.modify_base) paths.push_back(*command.modify_base);
+              paths.push_back(command.log_file.parent_path());
+              return paths;
+          },
       })),
       providers(shared_openai_provider_factory(
           openai_auth.get(), api_keys.get()), {},
@@ -350,8 +366,11 @@ Application::Impl::Impl(
         store->welcome_path(),
         seed,
         active_password);
-    sessions->set_sync_machine(command.machine);
+    if (!command.chaweb_host) sessions->set_sync_machine(command.machine);
     mirror = std::make_shared<SessionMirror>();
+    store->on_forums_changed([mirror = mirror](const Workspace& workspace) {
+        mirror->reconcile_forums(workspace);
+    });
     if (const auto root = session_mirror_root(command.vault)) {
         try {
             mirror->rebuild(root, *sessions);
@@ -401,14 +420,20 @@ Application::Impl::Impl(
     notified_epoch = live_sessions->context_epoch();
     published_epoch.store(notified_epoch);
     notes->preload_cloud_stores_locked();
-    start_sync_worker(command.chaweb_host ? SyncStart::recover : SyncStart::open);
+    start_sync_worker(SyncStart::open);
     publish_capabilities_locked();
 }
 
 void Application::Impl::start_sync_worker(SyncStart mode) {
     if (mode == SyncStart::resume && sync_worker && sync_worker->stopped()) return;
     sync_worker.reset();
-    if (command.machine.empty() || stopping_flag) return;
+    if (stopping_flag) return;
+    if (command.chaweb_host) {
+        if ((mode == SyncStart::open || mode == SyncStart::recover) && api_keys->d1())
+            log_warn("D1 sync is disabled in cha-daemon for vault '" + current_vault_.get().name + "'.");
+        return;
+    }
+    if (command.machine.empty()) return;
     const auto saved = api_keys->d1();
     if (!saved || !saved->usable()) return;
     try {
@@ -417,9 +442,7 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
         config.database_password = active_password;
         config.vault = current_vault_.get().name;
         config.machine = command.machine;
-        config.desktop_host = !command.chaweb_host;
         config.transport = d1_test_transport;
-        config.use_v2 = !command.chaweb_host;
         config.store = store.get();
         config.live_sessions = live_sessions.get();
         config.application_stopping = [this] { return stopping_flag.load(); };
@@ -480,7 +503,7 @@ ApplicationCapabilities Application::Impl::capabilities() const noexcept {
 
 bool Application::Impl::shutdown_requested() const noexcept {
     return stopping_flag.load()
-        || (command.host_stop_requested && command.host_stop_requested->load());
+        || (command.host_stop_requested && command.host_stop_requested());
 }
 
 std::optional<ErrorCode> Application::Impl::admit_locked(std::uint64_t epoch) const {
@@ -1330,25 +1353,30 @@ std::shared_ptr<OperationReply> Application::test_provider(
     nlohmann::json body,
     std::uint64_t epoch) {
     auto reply = std::make_shared<OperationReply>();
-    OpenAiOAuth* oauth = nullptr;
-    ApiKeyStore* keys = nullptr;
-    std::shared_ptr<const Workspace> workspace;
-    std::string id(provider_id);
+    std::function<void(const std::atomic_bool&)> test;
     {
         const std::lock_guard lifecycle(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        workspace = impl_->store->snapshot();
-        (void)settings::get_provider(*workspace, id, *impl_->api_keys);
-        oauth = impl_->openai_auth.get();
-        keys = impl_->api_keys.get();
+        const auto workspace = impl_->store->snapshot();
+        (void)settings::get_provider(*workspace, provider_id, *impl_->api_keys);
+        try {
+            test = settings::prepare_provider_test(
+                *workspace, provider_id, body, *impl_->openai_auth, *impl_->api_keys);
+        } catch (const ApplicationError& error) {
+            reply->fail(error.code, error.what());
+            return reply;
+        } catch (const std::exception& error) {
+            reply->fail(ErrorCode::invalid_argument, "Provider test failed: " + std::string(error.what()));
+            return reply;
+        } catch (...) {
+            reply->fail(ErrorCode::internal_error, {});
+            return reply;
+        }
     }
     if (!impl_->background_jobs.launch(
-            [reply, id = std::move(id), body = std::move(body), oauth, keys,
-             workspace = std::move(workspace)](
-                std::atomic_bool& cancel) {
+            [reply, test = std::move(test)](std::atomic_bool& cancel) {
                 try {
-                    settings::test_provider(
-                        *workspace, id, body, *oauth, *keys, cancel);
+                    test(cancel);
                     if (cancel.load()) {
                         reply->fail(
                             ErrorCode::operation_cancelled,
@@ -1644,6 +1672,9 @@ D1StorageDetail Application::save_d1_storage(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
+    if (impl_->command.chaweb_host) {
+        throw ApplicationError(ErrorCode::invalid_argument, "D1 sync is disabled in cha-daemon.");
+    }
     const auto& machine = impl_->command.machine;
     if (machine.empty()) {
         throw ApplicationError(
@@ -1664,9 +1695,8 @@ D1StorageDetail Application::save_d1_storage(
         D1Client client(
             {request.account_id, request.database_id, *request.api_token},
             impl_->d1_test_transport);
-        const bool v2 = !impl_->command.chaweb_host;
-        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine, v2);
-        if (const auto error = client.create_queue_table(table, v2)) {
+        const std::string table = sync_queue_table(impl_->current_vault_.get().name, machine, true);
+        if (const auto error = client.create_queue_table(table, true)) {
             log_warn("D1 table creation failed: " + error->message);
             throw ApplicationError(
                 ErrorCode::invalid_argument,
@@ -1711,22 +1741,21 @@ void Application::disconnect_d1_storage(std::uint64_t epoch) {
     impl_->sync_worker.reset();
 
     const auto& machine = impl_->command.machine;
-    if (machine.empty() || !old->usable()) return;
-    const bool v2 = !impl_->command.chaweb_host;
+    if (impl_->command.chaweb_host || machine.empty() || !old->usable()) return;
     const auto drop_queue = [&](bool v2_table) {
         try {
             D1Client client({old->account_id, old->database_id, old->api_token},
                 impl_->d1_test_transport);
             const auto table = sync_queue_table(impl_->current_vault_.get().name, machine, v2_table);
             if (const auto error = client.drop_table(table);
-                error && (!v2 || error->failure != D1Client::Failure::missing_table)) {
+                error && error->failure != D1Client::Failure::missing_table) {
                 log_warn("D1 disconnect remote drop failed: " + error->message);
             }
         } catch (const std::exception& error) {
             log_warn(std::string("D1 disconnect remote drop failed: ") + error.what());
         }
     };
-    if (v2) drop_queue(true);
+    drop_queue(true);
     drop_queue(false);
 }
 

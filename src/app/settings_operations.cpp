@@ -434,13 +434,12 @@ void delete_provider(WorkspaceConfigStore& store, LiveSessionManager& live_sessi
     });
 }
 
-void test_provider(
+std::function<void(const std::atomic_bool&)> prepare_provider_test(
     const Workspace& workspace,
     std::string_view id,
     const nlohmann::json& body,
     OpenAiOAuth& openai_auth,
-    ApiKeyStore& api_keys,
-    const std::atomic_bool& cancellation) {
+    ApiKeyStore& api_keys) {
     const WorkspaceProvider& provider = require_provider(workspace, id, false);
     ProviderUpdate candidate;
     try {
@@ -473,10 +472,10 @@ void test_provider(
             .prompt_text = "Reply with OK.",
         },
     };
-    try {
-        ProviderClient client(definition, &openai_auth, &api_keys);
-        const GenerationResult result = client.perform(
-            client.prepare(request),
+    auto client = std::make_shared<ProviderClient>(definition, &openai_auth, &api_keys);
+    return [client, request](const std::atomic_bool& cancellation) {
+        const GenerationResult result = client->perform(
+            client->prepare(request),
             [](GenerationDelta) {},
             cancellation);
         if (cancellation.load()) {
@@ -489,13 +488,7 @@ void test_provider(
                 ErrorCode::invalid_argument,
                 "Provider test failed: " + reason);
         }
-    } catch (const ApplicationError&) {
-        throw;
-    } catch (const std::exception& error) {
-        fail(
-            ErrorCode::invalid_argument,
-            "Provider test failed: " + std::string(error.what()));
-    }
+    };
 }
 
 std::vector<PromptSummary> list_prompts(const Workspace& workspace) {

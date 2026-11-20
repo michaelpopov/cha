@@ -1301,7 +1301,8 @@ std::string provider_credential_destination(const ModelBackendConfig& config) {
         + std::to_string(config.port) + config.base_path;
 }
 
-std::string url_credential_destination(std::string_view url) {
+std::string url_credential_destination(std::string_view url, bool include_path) {
+    if (url.empty()) return {};
     std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(
         curl_url(), curl_url_cleanup);
     const std::string owned(url);
@@ -1319,10 +1320,16 @@ std::string url_credential_destination(std::string_view url) {
     std::unique_ptr<char, decltype(&curl_free)> owned_host(host, curl_free);
     std::unique_ptr<char, decltype(&curl_free)> owned_port(port, curl_free);
     if (!scheme || !host) return owned;
-    std::string destination = std::string(scheme) + "://" + host;
+    std::string destination = fold_ascii(scheme) + "://" + fold_ascii(host);
     if (port) {
         destination += ':';
         destination += port;
+    }
+    if (include_path) {
+        char* path = nullptr;
+        curl_url_get(parsed.get(), CURLUPART_PATH, &path, 0);
+        const std::unique_ptr<char, decltype(&curl_free)> owned_path(path, curl_free);
+        destination += path && *path ? path : "/";
     }
     return destination;
 }
@@ -1350,7 +1357,8 @@ bool is_provider_config(std::string_view name) {
 // A file that does not parse adds no pair.
 std::set<CredentialPair> credential_destination_pairs(
     const Workspace& workspace,
-    const std::vector<ConfigFile>& rows) {
+    const std::vector<ConfigFile>& rows,
+    bool allow_jev_key_for_audio = false) {
     std::set<CredentialPair> pairs;
     const auto text = [](const toml::table& table, std::string_view field) {
         return table[field].value_or(std::string{});
@@ -1397,11 +1405,17 @@ std::set<CredentialPair> credential_destination_pairs(
                 pairs, "firecrawl",
                 resolve_key_reference(workspace, text(table, "firecrawl_api_key"), {}));
         } else if (row.name == "system/notes/config.toml") {
-            add_credential_pair(
-                pairs, url_credential_destination(text(table, "audio_url")),
-                resolve_key_reference(workspace, text(table, "audio_api_key"), {}));
+            const auto origin = url_credential_destination(text(table, "audio_url"), false);
+            if (!origin.empty())
+                add_credential_pair(pairs, "audio:" + origin,
+                    resolve_key_reference(workspace, text(table, "audio_api_key"), {}));
         } else {
-            add_credential_pair(pairs, url_credential_destination(text(table, "url")), key(table));
+            const auto url = text(table, "url");
+            if (url.empty()) continue;
+            add_credential_pair(pairs, "endpoint:" + url_credential_destination(url, true), key(table));
+            if (allow_jev_key_for_audio && row.name == "system/jev/config.toml") {
+                add_credential_pair(pairs, "audio:" + url_credential_destination(url, false), key(table));
+            }
         }
     }
     return pairs;
@@ -1488,6 +1502,7 @@ struct WorkspaceConfigStore::Impl {
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
+    std::function<void(const Workspace&)> forums_changed;
     WorkspaceConfigRevision revision{};
     struct UndoRecord {
         WorkspaceConfigRevision resulting_revision{};
@@ -1649,6 +1664,7 @@ struct WorkspaceConfigStore::Impl {
             transaction.commit();
         }
         published_workspace.swap(candidate);
+        if (notes_changed && forums_changed) forums_changed(*published_workspace);
         if (config_changed) {
             ++revision;
             if (undo_update == UndoUpdate::clear) undo.reset();
@@ -2075,7 +2091,7 @@ struct WorkspaceConfigStore::Impl {
                 WorkspaceConfigApplyError::invalid_argument,
                 "Configuration changes cannot remove existing entities or memberships");
         }
-        const auto base_pairs = credential_destination_pairs(*published, committed_rows);
+        const auto base_pairs = credential_destination_pairs(*published, committed_rows, true);
         const auto next_pairs =
             credential_destination_pairs(*candidate.workspace, candidate.rows);
         for (const auto& pair : next_pairs) {
@@ -2239,6 +2255,11 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
 
 std::shared_ptr<const Workspace> WorkspaceConfigStore::snapshot() const {
     return impl_->snapshot();
+}
+
+void WorkspaceConfigStore::on_forums_changed(std::function<void(const Workspace&)> callback) {
+    const std::lock_guard lock(impl_->mutex);
+    impl_->forums_changed = std::move(callback);
 }
 
 const std::filesystem::path& WorkspaceConfigStore::private_root()

@@ -292,14 +292,9 @@ std::optional<D1Client::Error> D1Client::insert_piece(
     nlohmann::json batch = nlohmann::json::array();
     for (const auto& table : recipients) {
         const std::string insert = "INSERT INTO " + sync_escape_identifier(table);
-        if (op_id.empty()) {
-            batch.push_back(statement(insert + " (piece, pieces, record) VALUES (?1, ?2, ?3)",
-                {std::to_string(piece), std::to_string(pieces), record_text}));
-        } else {
-            batch.push_back(statement(insert + " (op_id, piece, pieces, record) VALUES (?1, ?2, ?3, ?4)"
-                " ON CONFLICT (op_id, piece) DO NOTHING",
-                {op_id, std::to_string(piece), std::to_string(pieces), record_text}));
-        }
+        batch.push_back(statement(insert + " (op_id, piece, pieces, record) VALUES (?1, ?2, ?3, ?4)"
+            " ON CONFLICT (op_id, piece) DO NOTHING",
+            {op_id, std::to_string(piece), std::to_string(pieces), record_text}));
     }
     BatchResult result = run_batch(query_url(), transport_, credentials_, batch);
     return result.error;
@@ -375,33 +370,6 @@ std::optional<D1Client::Error> D1Client::delete_through(
     BatchResult result = run_batch(query_url(), transport_, credentials_,
         nlohmann::json::array({statement(sql, {std::to_string(last_rowid)})}));
     return result.error;
-}
-
-std::optional<D1Client::Error> D1Client::clear_queue(std::string_view table) {
-    const std::string sql = "DELETE FROM " + sync_escape_identifier(table);
-    return run_batch(query_url(), transport_, credentials_,
-        nlohmann::json::array({statement(sql, nlohmann::json::array())})).error;
-}
-
-std::pair<std::vector<std::int64_t>, std::optional<D1Client::Error>> D1Client::count_rows(
-    const std::vector<std::string>& tables) {
-    if (tables.empty()) return {};
-    Json batch = Json::array();
-    for (const auto& table : tables) {
-        const std::string sql =
-            "SELECT COUNT(*) AS count FROM " + sync_escape_identifier(table);
-        batch.push_back(statement(sql, Json::array()));
-    }
-    BatchResult result = run_batch(query_url(), transport_, credentials_, batch);
-    if (result.error) return {{}, std::move(result.error)};
-    std::vector<std::int64_t> counts;
-    try {
-        for (const auto& entry : result.results)
-            counts.push_back(integer_field(entry.at("results").at(0), "count").value());
-    } catch (const std::exception&) {
-        return {{}, Error{Failure::protocol, "Invalid D1 row count."}};
-    }
-    return {std::move(counts), std::nullopt};
 }
 
 std::optional<D1Client::Error> D1Client::drop_table(std::string_view table) {

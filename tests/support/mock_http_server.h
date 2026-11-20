@@ -132,28 +132,45 @@ public:
 
     void start() {
         thread_ = std::thread([this] {
+            std::exception_ptr pending_error;
+            const auto send_response = [this](Socket client, const std::string& response) {
+                send_all(client, response);
+                if (hold_response_open_.count() > 0)
+                    std::this_thread::sleep_for(hold_response_open_);
+                if (wait_for_client_close_) wait_for_client_close(client);
+                ::shutdown(client, shutdown_both);
+                close_socket(client);
+            };
+            std::jthread pending;
             try {
                 for (const std::string& response : responses_) {
                     const Socket client = accept_connection();
+                    std::size_t number;
                     {
                         std::unique_lock lock(requests_mutex_);
                         requests_.push_back(read_request(client));
+                        number = requests_.size();
                         requests_changed_.notify_all();
-                        if (!requests_changed_.wait_for(lock, std::chrono::seconds(5),
-                                [this] { return paused_response_ != requests_.size(); })) {
-                            throw std::runtime_error("Timed out waiting to resume mock response");
+                        if (allow_later_responses_ && paused_response_ == number) {
+                            pending = std::jthread([&, client, number, response] {
+                                try {
+                                    {
+                                        std::unique_lock response_lock(requests_mutex_);
+                                        wait_for_response(response_lock, number);
+                                    }
+                                    send_response(client, response);
+                                } catch (...) {
+                                    pending_error = std::current_exception();
+                                }
+                            });
+                            continue;
                         }
+                        wait_for_response(lock, number);
                     }
-                    send_all(client, response);
-                    if (hold_response_open_.count() > 0) {
-                        std::this_thread::sleep_for(hold_response_open_);
-                    }
-                    if (wait_for_client_close_) {
-                        wait_for_client_close(client);
-                    }
-                    ::shutdown(client, shutdown_both);
-                    close_socket(client);
+                    send_response(client, response);
                 }
+                if (pending.joinable()) pending.join();
+                if (pending_error) std::rethrow_exception(pending_error);
             } catch (...) {
                 error_ = std::current_exception();
             }
@@ -171,9 +188,10 @@ public:
 
     // One-based response number. Configure before start(), then resume after
     // wait_for_requests() to inspect the application while HTTP is pending.
-    void pause_before_response(std::size_t number) {
+    void pause_before_response(std::size_t number, bool allow_later_responses = false) {
         std::lock_guard lock(requests_mutex_);
         paused_response_ = number;
+        allow_later_responses_ = allow_later_responses;
     }
 
     void resume_responses() {
@@ -199,6 +217,12 @@ public:
     }
 
 private:
+    void wait_for_response(std::unique_lock<std::mutex>& lock, std::size_t number) {
+        if (!requests_changed_.wait_for(lock, std::chrono::seconds(5),
+                [this, number] { return paused_response_ != number; }))
+            throw std::runtime_error("Timed out waiting to resume mock response");
+    }
+
     static void close_socket(Socket socket) {
 #ifdef _WIN32
         ::closesocket(socket);
@@ -329,6 +353,7 @@ private:
     std::mutex requests_mutex_;
     std::condition_variable requests_changed_;
     std::optional<std::size_t> paused_response_;
+    bool allow_later_responses_{};
     std::vector<std::string> requests_;
     std::exception_ptr error_;
     std::thread thread_;

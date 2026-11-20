@@ -302,7 +302,7 @@ export function ProviderScreen({
       api_key: usesOpenAiOAuth ? null : draft.api_key,
       auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
       web_search: 'off',
-      reasoning_effort: (draft.api === 'google' || draft.api === 'anthropic') ? 'none' : draft.reasoning_effort,
+      reasoning_effort: draft.reasoning_effort,
       temperature: usesOpenAiOAuth || draft.api === 'anthropic' ? null : draft.temperature,
       reasoning_format: draft.api === 'anthropic' ? 'auto' : draft.reasoning_format,
       max_tokens: usesOpenAiOAuth ? null : draft.max_tokens,
@@ -426,7 +426,7 @@ export function ProviderScreen({
         <form className="cha-settings-form" onSubmit={(event) => void save(event)}>
           <fieldset aria-label="Provider details" disabled={saving || testing || deleting || !detail.writable}>
             <label>Model<input className="cha-form-control" onChange={(event) => change('model', event.target.value)} value={draft.model} /></label>
-            {draft.api !== 'google' && draft.api !== 'anthropic' && <label>Reasoning effort
+            <label>Reasoning effort
               <select className="cha-form-control" onChange={(event) => change('reasoning_effort', event.target.value as ProviderUpdate['reasoning_effort'])} value={draft.reasoning_effort}>
                 <option value="none">None</option>
                 <option value="low">Low</option>
@@ -434,7 +434,7 @@ export function ProviderScreen({
                 <option value="high">High</option>
                 <option value="xhigh">Extra high</option>
               </select>
-            </label>}
+            </label>
             <label>Base URL<input className="cha-form-control" onChange={(event) => { setBaseUrl(event.target.value); setError(null); setTestSucceeded(false); }} placeholder="https://api.openai.com" type="url" value={baseUrl} /></label>
             <div className="cha-settings-form-grid">
               <label>API format<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option><option value="google">Google (Gemini)</option><option value="anthropic">Anthropic</option></select></label>

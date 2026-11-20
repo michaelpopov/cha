@@ -49,6 +49,8 @@ TEST(GoogleApi, NativeConfigurationAndEndpoints) {
     config.https = false;
     EXPECT_EQ(provider_endpoint(config), "http://[::1]:8080/v1beta/models/gemini-test:generateContent");
     config.reasoning_effort = "obsolete";
+    EXPECT_TRUE(provider_config_error(config));
+    config.reasoning_effort = "high";
     config.openrouter_targets = {"bad target", "bad target"};
     config.web_search = WebSearchMode::automatic;
     EXPECT_FALSE(provider_config_error(config));

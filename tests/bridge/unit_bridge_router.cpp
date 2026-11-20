@@ -3152,6 +3152,80 @@ TEST_F(BridgeRouterTest, NotePageProgressFromAReplacedVaultIsNotDelivered) {
     provider.join();
 }
 
+class PageFormattingCredentialTest : public BridgeRouterTest,
+    public ::testing::WithParamInterface<std::string_view> {};
+
+TEST_P(PageFormattingCredentialTest, BindsCredentialsToTheAdmittedVaultAndLegacyKey) {
+    const auto change = GetParam();
+    SCOPED_TRACE(change);
+    bootstrap_epoch();
+    const auto epoch = application_->context_epoch();
+    const nlohmann::json page{{"url", "https://youtu.be/video"}, {"title", "Video"}, {"markdown", "Transcript"}};
+    MockHttpServer reader({http_response("application/json", page.dump())});
+    MockHttpServer provider({compression_response("chat_completions", false, "Formatted content")});
+    reader.pause_before_response(1);
+    configure_compression(*application_, provider.port(), "chat_completions", false, epoch);
+    const auto key_name = "Formatting " + std::string(change);
+    const auto key = application_->create_api_key({.display_name = key_name, .value = "vault-a-credential"}, epoch);
+    auto config = application_->store().snapshot()->find_provider("test")->config;
+    config.api_key_id.clear();
+    config.api_key_env = key_name;
+    application_->store().apply_provider_update("test", "Test provider", config);
+    auto settings = call("webSearch.get")["result"];
+    settings["web_reader_enabled"] = true;
+    settings["web_reader_url"] = "http://127.0.0.1:" + std::to_string(reader.port());
+    ASSERT_TRUE(call("webSearch.save", settings)["ok"]);
+
+    std::optional<VaultDefinition> copied;
+    if (change != "replace legacy name") {
+        copied = application_->create_vault({
+            .display_name = "Copied", .copy_from = application_->current_vault().get().name}, epoch);
+        auto copy_store = WorkspaceConfigStore::open(copied->data);
+        copy_store->apply_api_key_update(key.id, key_name, "vault-b-credential", "none");
+    }
+    const auto switch_vault = [&] { (void)application_->switch_vault(copied->name, {}, epoch); };
+    reader.start();
+    provider.start();
+    const auto reply = application_->read_note_page(page["url"], epoch,
+        [app = application_.get(), change, copied, epoch](std::string_view) {
+            if (change == "switch during progress") (void)app->switch_vault(copied->name, {}, epoch);
+        });
+    ASSERT_TRUE(reader.wait_for_requests(1, 2s));
+    if (change == "switch during fetch") switch_vault();
+    if (change == "replace legacy name") {
+        application_->store().apply_api_key_delete(key.id);
+        const auto replacement = application_->create_api_key(
+            {.display_name = key_name, .value = "replacement-credential"}, epoch);
+        ASSERT_NE(replacement.id, key.id);
+    }
+    reader.resume_responses();
+    reader.join();
+    const auto deadline = std::chrono::steady_clock::now() + 3s;
+    auto result = reply->peek();
+    while (!result && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(5ms);
+        result = reply->peek();
+    }
+    ASSERT_TRUE(result);
+    if (change == "switch during progress") {
+        ASSERT_TRUE(std::holds_alternative<nlohmann::json>(*result));
+        provider.join();
+        ASSERT_EQ(provider.requests().size(), 1u);
+        EXPECT_NE(provider.requests().front().find("Authorization: Bearer vault-a-credential"),
+            std::string::npos);
+        EXPECT_EQ(provider.requests().front().find("vault-b-credential"), std::string::npos);
+    } else {
+        ASSERT_TRUE(std::holds_alternative<app::OperationReply::Failure>(*result));
+        EXPECT_EQ(std::get<app::OperationReply::Failure>(*result).code,
+            change == "switch during fetch" ? ErrorCode::vault_changed : ErrorCode::invalid_argument);
+        EXPECT_FALSE(provider.wait_for_requests(1, 20ms));
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(PageImport, PageFormattingCredentialTest, ::testing::Values(
+    std::string_view("switch during fetch"), std::string_view("switch during progress"),
+    std::string_view("replace legacy name")));
+
 TEST_F(BridgeRouterTest, YoutubeNoteImportsUseTranscriptPromptAndCompressionSettings) {
     bootstrap_epoch();
     std::ifstream prompt_file(std::filesystem::path(CHA_SOURCE_DIRECTORY) / "resources/youtube-transcript.md");

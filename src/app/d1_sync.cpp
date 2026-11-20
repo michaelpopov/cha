@@ -98,17 +98,8 @@ bool D1SyncWorker::interrupted(std::stop_token stop) const {
 
 void D1SyncWorker::halt_with_missing_table() {
     stopped_.store(true);
-    if (using_v2()) {
-        report_v2(EventSeverity::warning,
-            "D1 sync stopped. Download the vault from R2 or save the D1 credentials again.");
-        return;
-    }
-    log_error(
-        "D1 sync stopped: download the vault from R2, or save the D1 credentials again.");
-}
-
-bool D1SyncWorker::using_v2() const noexcept {
-    return config_.use_v2;
+    report_v2(EventSeverity::warning,
+        "D1 sync stopped. Download the vault from R2 or save the D1 credentials again.");
 }
 
 void D1SyncWorker::report_v2(EventSeverity severity, const std::string& message) {
@@ -142,7 +133,6 @@ void D1SyncWorker::resume_v2(bool sending) {
 }
 
 bool D1SyncWorker::prepare_v2(std::stop_token stop) {
-    if (!using_v2()) return true;
     try {
         std::optional<SyncD1Credentials> creds;
         {
@@ -220,23 +210,19 @@ void D1SyncWorker::ensure_local_queue() {
     if (!creds) return;
     D1Client client(
         {creds->account_id, creds->database_id, creds->api_token}, config_.transport);
-    const bool v2 = using_v2();
-    const auto [queues, discovery_error] = client.list_vault_queues(config_.vault, config_.machine, v2);
+    const auto [queues, discovery_error] = client.list_vault_queues(config_.vault, config_.machine, true);
     if (discovery_error) {
-        if (v2) pause_v2(true, "discovery", request_reason(*discovery_error));
-        else log_warn("D1 sync discovery failed: " + discovery_error->message);
+        pause_v2(true, "discovery", request_reason(*discovery_error));
     } else if (!queues.local) {
-        const auto table = sync_queue_table(config_.vault, config_.machine, v2);
-        if (const auto error = client.create_queue_table(table, v2)) {
-            if (v2) pause_v2(true, "provisioning", request_reason(*error));
-            else log_warn("D1 sync table creation failed: " + error->message);
+        const auto table = sync_queue_table(config_.vault, config_.machine, true);
+        if (const auto error = client.create_queue_table(table, true)) {
+            pause_v2(true, "provisioning", request_reason(*error));
         }
     }
 }
 
 bool D1SyncWorker::send_pass(std::stop_token stop) {
     if (stopped() || interrupted(stop)) return false;
-    const bool v2 = using_v2();
     const auto creds = read_credentials(config_.database_path, config_.database_password);
     if (!creds) return true; // Disconnected vaults never send.
     std::vector<QueuedRecord> local;
@@ -244,21 +230,19 @@ bool D1SyncWorker::send_pass(std::stop_token stop) {
         Database database(
             config_.database_path, Database::Mode::read_only, config_.database_password);
         local = sync_queue_list(database);
-    } catch (const std::exception& error) {
-        if (v2) pause_v2(true, "send", "local outbox could not be read");
-        else log_warn(std::string("D1 sync queue read failed: ") + error.what());
+    } catch (const std::exception&) {
+        pause_v2(true, "send", "local outbox could not be read");
         return true;
     }
     if (local.empty()) {
-        if (v2) resume_v2(true);
+        resume_v2(true);
         return true;
     }
     D1Client client(
         {creds->account_id, creds->database_id, creds->api_token}, config_.transport);
-    auto [queues, list_error] = client.list_vault_queues(config_.vault, config_.machine, v2);
+    auto [queues, list_error] = client.list_vault_queues(config_.vault, config_.machine, true);
     if (list_error) {
-        if (v2) pause_v2(true, "discovery", request_reason(*list_error));
-        else log_warn("D1 sync send discovery failed: " + list_error->message);
+        pause_v2(true, "discovery", request_reason(*list_error));
         return true;
     }
     if (!queues.local) {
@@ -272,75 +256,43 @@ bool D1SyncWorker::send_pass(std::stop_token stop) {
             storage::SqliteTransaction transaction(database);
             for (const auto& row : local) sync_queue_delete(database, row.rowid, row.op_id);
             transaction.commit();
-        } catch (const std::exception& error) {
-            if (v2) pause_v2(true, "send", "local outbox could not be updated");
-            else log_warn(std::string("D1 sync local cleanup failed: ") + error.what());
+        } catch (const std::exception&) {
+            pause_v2(true, "send", "local outbox could not be updated");
             return true;
         }
-        if (v2) resume_v2(true);
+        resume_v2(true);
         return true;
     }
     for (const auto& row : local) {
         if (interrupted(stop)) return false;
-        if (v2 && !valid_op_id(row.op_id)) {
+        if (!valid_op_id(row.op_id)) {
             pause_v2(true, "send", "local outbox has an invalid operation ID");
             return true;
         }
         const auto pieces = sync_split_record(row.record);
-        bool ok = true;
         for (std::size_t i = 0; i < pieces.size(); ++i) {
             const auto error = client.insert_piece(
                 queues.recipients, static_cast<std::int64_t>(i + 1),
                 static_cast<std::int64_t>(pieces.size()), pieces[i],
-                v2 ? std::string_view(row.op_id) : std::string_view{});
+                row.op_id);
             if (error) {
-                if (v2) pause_v2(true, "send", request_reason(*error), row.op_id);
-                else log_warn("D1 sync send failed: " + error->message);
-                if (!config_.desktop_host && error->failure == D1Client::Failure::full_database)
-                    handle_full_database(client);
-                ok = false;
-                break;
+                pause_v2(true, "send", request_reason(*error), row.op_id);
+                return true; // Stop sending this loop; retry next loop.
             }
         }
-        if (!ok) return true; // Stop sending this loop; retry next loop.
         try {
             Database database(
                 config_.database_path, Database::Mode::read_write, config_.database_password);
             storage::SqliteTransaction transaction(database);
             sync_queue_delete(database, row.rowid, row.op_id);
             transaction.commit();
-        } catch (const std::exception& error) {
-            if (v2) pause_v2(true, "send", "local outbox could not be updated", row.op_id);
-            else log_warn(std::string("D1 sync queue delete failed: ") + error.what());
+        } catch (const std::exception&) {
+            pause_v2(true, "send", "local outbox could not be updated", row.op_id);
             return true;
         }
     }
-    if (v2) resume_v2(true);
+    resume_v2(true);
     return true;
-}
-
-void D1SyncWorker::handle_full_database(D1Client& client) {
-    auto [tables, list_error] = client.list_tables();
-    if (list_error) {
-        log_warn("D1 sync eviction discovery failed: " + list_error->message);
-        return;
-    }
-    std::erase_if(tables, [this](const auto& table) {
-        const auto parsed = sync_parse_queue_table(table);
-        return !parsed || sync_same_machine(parsed->machine, config_.machine);
-    });
-    if (tables.empty()) return;
-    auto [counts, count_error] = client.count_rows(tables);
-    if (count_error) {
-        log_warn("D1 sync eviction count failed: " + count_error->message);
-        return;
-    }
-    const auto largest = std::distance(counts.begin(), std::ranges::max_element(counts));
-    if (const auto drop_error = client.drop_table(tables[static_cast<std::size_t>(largest)])) {
-        log_warn("D1 sync eviction drop failed: " + drop_error->message);
-        return;
-    }
-    log_warn("D1 sync dropped the largest queue table to free space.");
 }
 
 namespace {
@@ -439,7 +391,13 @@ ApplyResult apply_complete_record(
             }, op_id);
             if (outcome.retry) return {ApplyOutcome::retry, "configuration is busy"};
             if (!outcome.applied) return {ApplyOutcome::skipped, "configuration change rejected"};
-            if (outcome.notes_changed) notes_changed = true;
+            if (outcome.notes_changed) {
+                notes_changed = true;
+                const auto workspace = config.store->snapshot();
+                std::erase_if(chats_changed, [&](const auto& chat) {
+                    return !workspace->find_forum(chat.first.forum_id);
+                });
+            }
             return {ApplyOutcome::applied};
         }
         if (kind.rfind("chat.", 0) == 0) {
@@ -488,7 +446,7 @@ ApplyResult apply_complete_record(
 }
 
 void notify_changes(const D1SyncWorker::Config& config, bool notify_notes, bool notes_changed,
-    const ChangedChats& chats_changed, bool v2 = false) {
+    const ChangedChats& chats_changed) {
     if (notify_notes && notes_changed && config.on_notes_changed) {
         try {
             config.on_notes_changed();
@@ -500,9 +458,8 @@ void notify_changes(const D1SyncWorker::Config& config, bool notify_notes, bool 
         for (const auto& [identity, label] : chats_changed) {
             try {
                 config.on_chat_changed(identity, label);
-            } catch (const std::exception& error) {
-                if (v2) log_warn("Could not update the session mirror after D1 sync.");
-                else log_warn(std::string("Could not update the session mirror: ") + error.what());
+            } catch (const std::exception&) {
+                log_warn("Could not update the session mirror after D1 sync.");
             }
         }
     }
@@ -516,12 +473,11 @@ void D1SyncWorker::receive_pass(std::stop_token stop, bool notify_notes) {
     if (!creds) return;
     D1Client client(
         {creds->account_id, creds->database_id, creds->api_token}, config_.transport);
-    if (receive_legacy(client, stop, notify_notes) && using_v2())
+    if (receive_legacy(client, stop, notify_notes))
         receive_v2(client, stop, notify_notes);
 }
 
 bool D1SyncWorker::receive_legacy(D1Client& client, std::stop_token stop, bool notify_notes) {
-    const bool v2 = using_v2();
     // No table list here: a read of a missing table gives the missing-table error.
     const std::string local_table = sync_queue_table(config_.vault, config_.machine);
     int limit = initial_read_limit;
@@ -536,13 +492,8 @@ bool D1SyncWorker::receive_legacy(D1Client& client, std::stop_token stop, bool n
                 limit = std::max(1, limit / 2);
                 continue;
             }
-            if (read_error->failure == D1Client::Failure::missing_table) {
-                if (v2) return true;
-                halt_with_missing_table();
-            } else if (v2)
-                pause_v2(false, "receive", request_reason(*read_error));
-            else
-                log_warn("D1 sync receive failed: " + read_error->message);
+            if (read_error->failure == D1Client::Failure::missing_table) return true;
+            pause_v2(false, "receive", request_reason(*read_error));
             return false;
         }
         if (rows.empty()) return true;
@@ -586,19 +537,14 @@ bool D1SyncWorker::receive_legacy(D1Client& client, std::stop_token stop, bool n
         notify_changes(config_, notify_notes, notes_changed, chats_changed);
         if (handled > acknowledged) {
             if (const auto error = client.delete_through(local_table, handled)) {
-                if (error->failure == D1Client::Failure::missing_table) {
-                    if (v2) return true;
-                    halt_with_missing_table();
-                } else if (v2)
-                    pause_v2(false, "acknowledgement", request_reason(*error));
-                else
-                    log_warn("D1 sync acknowledgement failed: " + error->message);
+                if (error->failure == D1Client::Failure::missing_table) return true;
+                pause_v2(false, "acknowledgement", request_reason(*error));
                 return false;
             }
             acknowledged = handled;
         }
         if (!retry_reason.empty()) {
-            if (v2) pause_v2(false, "receive", retry_reason);
+            pause_v2(false, "receive", retry_reason);
             return false;
         }
         if (static_cast<int>(rows.size()) < limit) return true;
@@ -693,7 +639,7 @@ void D1SyncWorker::receive_v2(D1Client& client, std::stop_token stop, bool notif
             }
             handled.push_back(id);
         }
-        notify_changes(config_, notify_notes, notes_changed, chats_changed, true);
+        notify_changes(config_, notify_notes, notes_changed, chats_changed);
         if (!stopped()) {
             if (const auto error = client.delete_operations(table, handled)) {
                 request_failed(*error, "acknowledgement",

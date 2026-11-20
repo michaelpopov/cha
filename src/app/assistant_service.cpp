@@ -203,6 +203,14 @@ public:
         try {
             roots_.push_back(utf8_path(links.store->private_root()));
             roots_.push_back(utf8_path(links.store->workspace_path()));
+            roots_.push_back(utf8_path(diagnostic_log_file().parent_path()));
+            if (links.external_paths) {
+                for (const auto& path : links.external_paths()) roots_.push_back(utf8_path(path));
+            }
+            if (links.vault_password) {
+                const auto password = links.vault_password();
+                if (!password.empty()) secrets_.emplace_back(password);
+            }
         } catch (const std::exception&) {
         }
         std::erase_if(roots_, [](const std::string& root) { return root.size() < 2; });
@@ -609,15 +617,13 @@ Json inspect_notes(const WorkspaceConfigStore& store) {
     Json items = Json::array();
     for (const NoteItem& note : store.list_note_items()) {
         Json item = note;
-        item["ref_id"] = note_item_ref_id(note.id);
-        item["audio_attempt"] = nullptr;
-        item["l1_audio_attempt"] = nullptr;
+        if (note.kind != NoteItemKind::folder) item["ref_id"] = note_item_ref_id(note.id);
         if (note.kind == NoteItemKind::note) {
             item["audio_clips"] = store.get_note_audio_info(note.id);
             item["audio_attempt"] = saved_attempt(note.id);
             const auto l1 = note.has_l1 ? store.get_note_l1_document_id(note.id) : std::nullopt;
             item["l1_audio_clips"] = l1 ? store.get_note_audio_info(*l1) : Json{{"count", 0}};
-            if (l1) item["l1_audio_attempt"] = saved_attempt(*l1);
+            item["l1_audio_attempt"] = l1 ? saved_attempt(*l1) : Json(nullptr);
         }
         items.push_back(std::move(item));
     }

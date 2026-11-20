@@ -78,7 +78,7 @@ public:
         std::int64_t piece,
         std::int64_t pieces,
         std::string_view record_text,
-        std::string_view op_id = {});
+        std::string_view op_id);
     // Reads the head in final-piece sequence order. Multipart headers omit record.
     [[nodiscard]] std::pair<std::vector<ReadyOperation>, std::optional<Error>> read_ready(
         std::string_view table, int limit);
@@ -90,9 +90,6 @@ public:
     // Deletes the handled prefix of one queue.
     [[nodiscard]] std::optional<Error> delete_through(
         std::string_view table, std::int64_t last_rowid);
-    [[nodiscard]] std::optional<Error> clear_queue(std::string_view table);
-    [[nodiscard]] std::pair<std::vector<std::int64_t>, std::optional<Error>> count_rows(
-        const std::vector<std::string>& tables);
     [[nodiscard]] std::optional<Error> drop_table(std::string_view table);
     [[nodiscard]] std::string query_url() const;
 

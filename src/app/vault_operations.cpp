@@ -333,22 +333,6 @@ R2StorageKey Application::Impl::VaultMaintenance::require_r2_key() const {
     return *key;
 }
 
-void Application::Impl::VaultMaintenance::clear_downloaded_inbox(
-    const std::filesystem::path& database, std::string_view name) {
-    if (app.command.machine.empty()) return;
-    const auto credentials = [&] {
-        storage::SqliteDatabase snapshot(database, storage::SqliteDatabase::Mode::read_only);
-        return sync_read_d1(snapshot);
-    }();
-    if (!credentials) return;
-    D1Client client({credentials->account_id, credentials->database_id, credentials->api_token},
-        app.d1_test_transport);
-    const auto error = client.clear_queue(sync_queue_table(name, app.command.machine));
-    if (error && error->failure != D1Client::Failure::missing_table) {
-        throw std::runtime_error("Could not clear the D1 inbox. " + error->message);
-    }
-}
-
 void Application::Impl::VaultMaintenance::publish_vault_names() {
     std::vector<std::string> names;
     names.reserve(app.command.vaults.size());
@@ -569,8 +553,8 @@ auto Application::Impl::VaultMaintenance::maintain_database(
                 // A failed reopen needs a restart, also after a successful operation.
                 reopen_after_failure(database, repository);
             }
-            end_maintenance_locked(true, notice, error ? SyncStart::resume : sync_start);
             if (!error && after_reopen) after_reopen();
+            end_maintenance_locked(true, notice, error ? SyncStart::resume : sync_start);
         } catch (const WorkspaceRestartRequiredError&) {
             end_maintenance_locked(false, notice);
             throw;
@@ -707,6 +691,7 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
 VaultDefinition Application::Impl::VaultMaintenance::update_vault(
     std::string_view current_name, VaultUpdate update, std::uint64_t epoch) {
     bool active;
+    bool mirror_changed = false;
     {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
@@ -735,20 +720,18 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         if (!active) {
             target_use.emplace(SessionLease::acquire(previous.data, vault_in_use_message));
         }
-        if (!sync_same_vault(previous.name, candidate.name)) {
+        if (!active && !sync_same_vault(previous.name, candidate.name)) {
             // D1 queue tables carry the vault name; other machines keep the old name.
-            if (!active && previous.password_protected) {
+            if (previous.password_protected) {
                 throw std::invalid_argument("Open this protected vault before you rename it.");
             }
-            bool connected = active && app.api_keys->d1().has_value();
-            if (!active) {
-                try {
-                    storage::SqliteDatabase database(
-                        previous.data, storage::SqliteDatabase::Mode::read_only);
-                    connected = sync_read_d1(database).has_value();
-                } catch (const std::exception& error) {
-                    log_warn(std::string("D1 check before vault rename failed: ") + error.what());
-                }
+            bool connected = false;
+            try {
+                storage::SqliteDatabase database(
+                    previous.data, storage::SqliteDatabase::Mode::read_only);
+                connected = sync_read_d1(database).has_value();
+            } catch (const std::exception& error) {
+                log_warn(std::string("D1 check before vault rename failed: ") + error.what());
             }
             if (connected) {
                 throw std::invalid_argument("Disconnect this vault from D1 before you rename it.");
@@ -806,17 +789,26 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         });
         app.command.vaults = std::move(updated);
         if (active) {
+            mirror_changed = previous.mirror != candidate.mirror
+                || previous.password_protected != candidate.password_protected;
             app.command.vault = candidate;
             publish_vault(candidate);
         } else publish_vault_names();
         return candidate;
     };
     if (active) {
-        auto candidate = maintain_database(epoch, [&](auto& database, auto& repository) {
+        return maintain_database(epoch, [&](auto& database, auto& repository) {
             return update_target(&database, &repository);
+        }, true, SyncStart::resume,
+        [&] {
+            if (!sync_same_vault(app.current_vault_.get().name, update.display_name)
+                && app.api_keys->d1().has_value()) {
+                throw std::invalid_argument("Disconnect this vault from D1 before you rename it.");
+            }
+        },
+        [&] {
+            if (mirror_changed) rebuild_mirror(session_mirror_root(app.current_vault_.get()));
         });
-        rebuild_mirror(session_mirror_root(candidate));
-        return candidate;
     }
     const std::lock_guard lifecycle(app.lifecycle_mutex);
     app.require_admitted(epoch);
@@ -928,9 +920,8 @@ VaultDefinition Application::Impl::VaultMaintenance::save_r2_vault_locked(
     if (from_welcome) {
         vault::require_available_database_path(destination.source);
         post_welcome_notice("Downloading vault '" + std::string(name) + "' from R2.");
-        before_install = [&](const std::filesystem::path& temporary, VaultDefinition downloaded) {
+        before_install = [&](const std::filesystem::path&, VaultDefinition downloaded) {
             register_candidate(std::move(downloaded));
-            clear_downloaded_inbox(temporary, candidate.name);
         };
     }
 
@@ -1030,8 +1021,8 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
                 "Legacy API-key migration failed after switching vault: "
                 + std::string(error.what()));
         }
-        end_maintenance_locked(true, notice,
-            app.command.chaweb_host ? SyncStart::recover : SyncStart::open);
+        rebuild_mirror(session_mirror_root(selected));
+        end_maintenance_locked(true, notice, SyncStart::open);
     } catch (...) {
         if (app.unusable) {
             end_maintenance_locked(false, notice);
@@ -1045,7 +1036,6 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
         }
         throw;
     }
-    rebuild_mirror(session_mirror_root(selected));
     try {
         vault::write_vault_selection(
             app.command.config_directory, selected.name);
@@ -1247,6 +1237,10 @@ Application::Impl::VaultMaintenance::check_database_upload(
     {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
+        if (app.vault_upload_running) {
+            throw ApplicationError(ErrorCode::invalid_argument,
+                "A vault upload is running. Try again when it finishes.");
+        }
         const std::optional<R2StorageKey> configured = app.api_keys->r2();
         if (!configured) {
             throw ApplicationError(
@@ -1299,11 +1293,10 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
             BeforeR2Install before_install;
             CheckR2Candidate check_candidate;
             if (from_welcome) {
-                before_install = [&](const std::filesystem::path& temporary, VaultDefinition definition) {
+                before_install = [](const std::filesystem::path&, VaultDefinition definition) {
                     if (definition.password_protected) {
                         throw VaultPasswordError("Welcome cannot download a protected vault.");
                     }
-                    clear_downloaded_inbox(temporary, definition.name);
                 };
             } else if (!app.command.chaweb_host) {
                 require_no_pending_sync(active.data, app.active_password);
@@ -1365,8 +1358,9 @@ WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuratio
             vault.data,
             WorkspaceConfigLease::already_held,
             app.active_password,
-            app.command.machine);
-    });
+            app.command.chaweb_host ? "" : app.command.machine);
+    }, true, SyncStart::resume, {},
+    [&] { app.mirror->reconcile_forums(*app.store->snapshot()); });
 }
 
 WorkspaceConfigTransfer Application::Impl::VaultMaintenance::export_configuration(

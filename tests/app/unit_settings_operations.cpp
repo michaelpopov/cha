@@ -357,7 +357,7 @@ TEST(ApplicationSettings, TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSetti
     body["base_path"] = "/v1beta";
     body["https"] = false;
     body["mode"] = "net";
-    body["model"] = "gemini-test";
+    body["model"] = "gemini-2.5-flash";
     body["api"] = "google";
     body["reasoning_effort"] = "high";
     body["reasoning_format"] = "reasoning_content";
@@ -368,10 +368,19 @@ TEST(ApplicationSettings, TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSetti
     body["web_search"] = "obsolete";
     const auto parsed = parse_provider_update(body, {});
     EXPECT_EQ(parsed.config.api, ProviderApi::google);
-    EXPECT_EQ(parsed.config.reasoning_effort, "none");
+    EXPECT_EQ(parsed.config.reasoning_effort, "high");
     EXPECT_TRUE(parsed.config.openrouter_targets.empty());
     const auto saved = application->update_provider("test", body, epoch);
     EXPECT_EQ(saved.api, "google");
+    EXPECT_EQ(saved.reasoning_effort, "high");
+    for (const auto& effort : {nlohmann::json("obsolete"), nlohmann::json(42)}) {
+        auto invalid = body;
+        invalid["reasoning_effort"] = effort;
+        EXPECT_THROW((void)application->update_provider("test", invalid, epoch), ApplicationError);
+        const auto rejected = application->test_provider("test", invalid, epoch)->peek();
+        ASSERT_TRUE(rejected && std::holds_alternative<OperationReply::Failure>(*rejected));
+        EXPECT_EQ(std::get<OperationReply::Failure>(*rejected).code, ErrorCode::invalid_argument);
+    }
     auto reply = application->test_provider("test", body, epoch);
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     std::optional<OperationReply::Result> result;
@@ -384,14 +393,15 @@ TEST(ApplicationSettings, TestsAndSavesNativeGoogleIgnoringUnusedOpenRouterSetti
     ASSERT_TRUE(std::holds_alternative<nlohmann::json>(*result));
     server.join();
     ASSERT_EQ(server.requests().size(), 1u);
-    EXPECT_TRUE(server.requests()[0].starts_with("POST /v1beta/models/gemini-test:streamGenerateContent?alt=sse HTTP/1.1"));
+    EXPECT_TRUE(server.requests()[0].starts_with("POST /v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse HTTP/1.1"));
     const auto request_body = nlohmann::json::parse(server.requests()[0].substr(server.requests()[0].find("\r\n\r\n") + 4));
     EXPECT_TRUE(request_body.contains("contents"));
+    EXPECT_EQ(request_body["generationConfig"]["thinkingConfig"]["thinkingBudget"], 8192);
     EXPECT_FALSE(request_body.contains("messages"));
     EXPECT_FALSE(request_body.contains("reasoning_effort"));
     application.reset();
     application = Application::open(make_command(workspace, database));
-    EXPECT_EQ(application->get_provider("test", application->context_epoch()).api, "google");
+    EXPECT_EQ(application->get_provider("test", application->context_epoch()).reasoning_effort, "high");
 }
 
 TEST(ApplicationSettings, TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSettings) {
@@ -412,20 +422,29 @@ TEST(ApplicationSettings, TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSe
     body["base_path"] = "/proxy";
     body["https"] = false;
     body["mode"] = "net";
-    body["model"] = "claude-test";
+    body["model"] = "claude-sonnet-4-6";
     body["api"] = "anthropic";
     body["temperature"] = "obsolete";
-    body["reasoning_effort"] = nlohmann::json::array({42});
+    body["reasoning_effort"] = "high";
     body["openrouter_targets"] = false;
     body["reasoning_format"] = 123;
     body["cache_retention"] = nlohmann::json::object();
     body["web_search"] = false;
     const auto parsed = parse_provider_update(body, {});
     EXPECT_EQ(parsed.config.api, ProviderApi::anthropic);
-    EXPECT_EQ(parsed.config.reasoning_effort, "none");
+    EXPECT_EQ(parsed.config.reasoning_effort, "high");
     EXPECT_TRUE(parsed.config.openrouter_targets.empty());
     const auto saved = application->update_provider("test", body, epoch);
     EXPECT_EQ(saved.api, "anthropic");
+    EXPECT_EQ(saved.reasoning_effort, "high");
+    for (const auto& effort : {nlohmann::json("obsolete"), nlohmann::json(42)}) {
+        auto invalid = body;
+        invalid["reasoning_effort"] = effort;
+        EXPECT_THROW((void)application->update_provider("test", invalid, epoch), ApplicationError);
+        const auto rejected = application->test_provider("test", invalid, epoch)->peek();
+        ASSERT_TRUE(rejected && std::holds_alternative<OperationReply::Failure>(*rejected));
+        EXPECT_EQ(std::get<OperationReply::Failure>(*rejected).code, ErrorCode::invalid_argument);
+    }
     auto reply = application->test_provider("test", body, epoch);
     const auto deadline = std::chrono::steady_clock::now() + 5s;
     std::optional<OperationReply::Result> result;
@@ -442,11 +461,27 @@ TEST(ApplicationSettings, TestsAndSavesNativeAnthropicIgnoringUnusedOpenRouterSe
     const auto request_body = nlohmann::json::parse(server.requests()[0].substr(server.requests()[0].find("\r\n\r\n") + 4));
     EXPECT_TRUE(request_body.contains("messages"));
     EXPECT_EQ(request_body["max_tokens"], 64000);
+    EXPECT_EQ(request_body["output_config"]["effort"], "high");
     EXPECT_FALSE(request_body.contains("temperature"));
     EXPECT_FALSE(request_body.contains("reasoning_effort"));
     application.reset();
     application = Application::open(make_command(workspace, database));
-    EXPECT_EQ(application->get_provider("test", application->context_epoch()).api, "anthropic");
+    EXPECT_EQ(application->get_provider("test", application->context_epoch()).reasoning_effort, "high");
+}
+
+TEST(ApplicationSettings, FlexClientConstructionFailureIsDeliveredThroughTheReply) {
+    test::TestWorkspace workspace;
+    workspace.write_provider("flex", "api = 'google'\nmode = 'net'\n"
+        "host = 'generativelanguage.googleapis.com'\nport = 443\nhttps = true\n"
+        "base_path = '/v1beta'\nmodel = 'gemini-2.5-flash'\napi_key = 'api_key_99'\n");
+    const auto database = test::import_test_database(workspace.root());
+    const auto app = Application::open(make_command(workspace, database));
+    const auto reply = app->test_notes_flex("flex", app->context_epoch())->peek();
+    ASSERT_TRUE(reply && std::holds_alternative<OperationReply::Failure>(*reply));
+    const auto& error = std::get<OperationReply::Failure>(*reply);
+    EXPECT_EQ(error.code, ErrorCode::invalid_argument);
+    EXPECT_TRUE(error.message.starts_with("Flex test failed:"));
+    EXPECT_NE(error.message.find("api_key_99"), std::string::npos);
 }
 
 TEST(ApplicationSettings, ShutdownDeadlineBoundsUncooperativeReplyCallback) {
