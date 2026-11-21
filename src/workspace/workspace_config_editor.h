@@ -74,10 +74,6 @@ public:
     void delete_d1_storage();
     void write_next_api_key_id(std::uint64_t next_id);
 
-    void write_character_picture(
-        std::string_view character_id,
-        std::string_view filename,
-        std::string_view content_base64, std::string_view previous_filename = {});
     void write_character_settings(
         std::string_view character_id,
         std::string_view provider_id,

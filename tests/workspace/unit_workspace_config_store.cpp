@@ -4,8 +4,6 @@
 #include "storage/workspace_session_database.h"
 #include "support/test_workspace.h"
 #include "util/logging.h"
-#include "util/base64.h"
-#include "util/picture.h"
 #include "util/path_name.h"
 #include "util/private_filesystem.h"
 #include "workspace/prompt_catalog.h"
@@ -170,63 +168,6 @@ protected:
     test::TestWorkspace workspace_;
     std::filesystem::path export_;
 };
-
-TEST_F(WorkspaceConfigStoreTest, PictureLookupUsesNestedDefinitionsAndCommittedRows) {
-    const auto group = source() / "characters" / "philosophers";
-    std::filesystem::create_directories(group);
-    std::filesystem::rename(source() / "characters/guide", group / "guide");
-    write_bytes(group / "guide/PICTURE.webp", std::string("\0\xff", 2));
-    write_bytes(group / "guide/PICTURE.png", "not an image");
-    write_bytes(group / "guide/PICTURE.gif", decode_base64(
-        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"));
-    write_bytes(source() / "system/assistant/PICTURE.gif", "");
-    import_from_source();
-    {
-        Database handle(database(), Database::Mode::read_write);
-        handle.execute("UPDATE config SET content = 'bad base64!' "
-            "WHERE name = 'characters/philosophers/guide/PICTURE.png'");
-    }
-    auto store = WorkspaceConfigStore::open(database());
-    std::filesystem::remove_all(source() / "characters");
-    std::filesystem::remove_all(source() / "system");
-    const auto picture = store->get_character_picture("guide");
-    ASSERT_TRUE(picture);
-    EXPECT_EQ(picture->filename, "PICTURE.png");
-    EXPECT_EQ(picture->mime_type, "image/png");
-    EXPECT_EQ(picture->content_base64, "bad base64!");
-    const auto assistant = store->get_character_picture(workspace_assistant_id);
-    ASSERT_TRUE(assistant);
-    EXPECT_EQ(assistant->filename, "PICTURE.gif");
-    EXPECT_EQ(assistant->mime_type, "image/gif");
-    EXPECT_TRUE(assistant->content_base64.empty());
-    EXPECT_THROW((void)store->get_character_picture("missing"), std::out_of_range);
-}
-
-TEST_F(WorkspaceConfigStoreTest, PictureLookupSelectsEveryFormatInPriorityOrder) {
-    const std::array names{"portrait.PNG", "happy.webp", "Seneca.JPG", "travel.jpeg", "animation.GIF"};
-    for (std::size_t first = 0; first < picture_formats.size(); ++first) {
-        SCOPED_TRACE(first);
-        for (std::size_t index = 0; index < picture_formats.size(); ++index) {
-            const auto path = source() / "characters/guide" / names[index];
-            if (index < first) std::filesystem::remove(path);
-            else write_bytes(path, std::string("\0\xff", 2));
-        }
-        import_from_source();
-        auto store = WorkspaceConfigStore::open(database());
-        const auto picture = store->get_character_picture("guide");
-        ASSERT_TRUE(picture);
-        EXPECT_EQ(picture->filename, names[first]);
-        EXPECT_EQ(picture->mime_type, picture_formats[first].mime_type);
-        EXPECT_EQ(picture->content_base64, encode_base64(std::string("\0\xff", 2)));
-    }
-}
-
-TEST_F(WorkspaceConfigStoreTest, KnownCharactersWithoutPicturesReturnNoPicture) {
-    import_from_source();
-    auto store = WorkspaceConfigStore::open(database());
-    EXPECT_FALSE(store->get_character_picture("guide"));
-    EXPECT_FALSE(store->get_character_picture(workspace_assistant_id));
-}
 
 TEST_F(WorkspaceConfigStoreTest, ImportsThenReplacesConfigurationWithoutLosingSessions) {
     const std::size_t count = import_from_source();
@@ -1460,21 +1401,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, CharacterFileEditsPersistOnlyTheSelected
     store->apply_character_file("guide", "NOTES.md", std::nullopt);
     EXPECT_EQ(config_contents(database()), before);
     EXPECT_FALSE(store->snapshot()->find_character("guide")->markdown_files.contains("NOTES.md"));
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, DeletingOnePicturePreservesOtherFilesAndDoesNotRestartForums) {
-    write_bytes(source() / "characters/guide/PICTURE.png", "png");
-    write_bytes(source() / "characters/guide/PICTURE.jpg", "jpg");
-    (void)import_workspace_configuration(source(), database());
-    const auto store = open_store();
-    const auto before = config_contents(database());
-    const auto deleted = store->apply_character_file("guide", "PICTURE.jpg", std::nullopt);
-    EXPECT_TRUE(deleted.affected_forum_ids.empty());
-    EXPECT_EQ(changed_config_names(before, config_contents(database())),
-        (std::set<std::string>{"characters/guide/PICTURE.jpg"}));
-    EXPECT_FALSE(store->get_character_picture("guide", "PICTURE.jpg"));
-    ASSERT_TRUE(store->get_character_picture("guide", "PICTURE.png"));
-    EXPECT_EQ(store->get_character_picture("guide", "PICTURE.png")->content_base64, "cG5n");
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFilesPersistExpandAndRollBackInvalidChanges) {
@@ -2954,7 +2880,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ListAndReadPreserveExactSourceAndLimits)
     EXPECT_FALSE(listed_assistant.entries.front().protection_reason.empty());
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, ListsPicturesAndReadsLargeRowsWithoutAllowingLargeWrites) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, ReadsLargeRowsWithoutAllowingLargeWrites) {
     const std::string path = "characters/guide/CHARACTER.md";
     const std::string content(100 * 1024, 'a');
     {
@@ -2962,12 +2888,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ListsPicturesAndReadsLargeRowsWithoutAll
         handle.execute("UPDATE config SET content = '" + content + "' WHERE name = '" + path + "'");
     }
     auto store = open_store();
-    store->apply_character_picture("guide", "portrait.png", "cGljdHVyZQ==");
-    const auto listed = store->list_config("characters/guide/portrait.png");
-    ASSERT_EQ(listed.entries.size(), 1U);
-    EXPECT_FALSE(listed.entries[0].readable);
-    EXPECT_FALSE(listed.entries[0].writable);
-    EXPECT_FALSE(listed.entries[0].protection_reason.empty());
     const auto read = store->read_config(std::vector<std::string>{path});
     ASSERT_EQ(read.files.size(), 1U);
     EXPECT_EQ(read.files[0].status, WorkspaceConfigReadStatus::ok);
@@ -4126,79 +4046,10 @@ TEST_F(WorkspaceConfigStoreTest, ImportPreservesBuiltinAssistantMembershipAndOnl
     EXPECT_EQ(only->members[0].character_id, workspace_assistant_id);
 }
 
-TEST_F(WorkspaceConfigStoreTest, PicturesRoundTripAllBytesInNestedDefinitionsAndAssistant) {
-    std::filesystem::create_directories(source() / "characters/nested");
-    std::filesystem::rename(source() / "characters/guide", source() / "characters/nested/guide");
-    std::vector<std::string> bytes{
-        std::string("\0\1\xff", 3), std::string("\x80\0", 2), std::string("\xff", 1),
-        "not an image", ""};
-    for (unsigned value = 0; value < 256; ++value) bytes[0] += static_cast<char>(value);
-    const std::vector<std::string> names{"PICTURE.png", "PICTURE.webp", "PICTURE.jpg", "PICTURE.jpeg", "PICTURE.gif"};
-    for (const auto directory : {"characters/nested/guide", "system/assistant"}) {
-        for (std::size_t i = 0; i < names.size(); ++i) {
-            write_bytes(source() / directory / names[i], bytes[i]);
-        }
-    }
-    import_from_source();
-    {
-        const auto store = WorkspaceConfigStore::open(database());
-        EXPECT_NE(store->snapshot()->find_character("guide"), nullptr);
-    }
-    const auto before = config_contents(database());
-    export_workspace_configuration(database(), export_);
-    for (const auto directory : {"characters/nested/guide", "system/assistant"}) {
-        for (std::size_t i = 0; i < names.size(); ++i) {
-            EXPECT_EQ(file_bytes(export_ / directory / names[i]), bytes[i]);
-        }
-    }
-    EXPECT_EQ(config_contents(database()), before);
-    import_workspace_configuration(export_, database());
-    EXPECT_EQ(config_contents(database()), before);
-    write_bytes(export_ / "characters/nested/guide/CHARACTER.md", "$$(PICTURE.png)");
-    EXPECT_THROW(import_workspace_configuration(export_, database()), std::runtime_error);
-    EXPECT_EQ(config_contents(database()), before);
-}
-
-TEST_F(WorkspaceConfigStoreTest, PictureUploadsPreserveOtherFormatsAndExportOriginalBytes) {
-    std::filesystem::create_directories(source() / "characters/nested");
-    std::filesystem::rename(source() / "characters/guide", source() / "characters/nested/guide");
-    for (const auto& format : picture_formats) {
-        write_bytes(source() / "characters/nested/guide" / ("PICTURE" + std::string(format.extension)), "old picture");
-    }
-    import_from_source();
-    const auto before = config_contents(database());
-    std::string bytes;
-    for (unsigned value = 0; value < 256; ++value) bytes += static_cast<char>(value);
-    {
-        auto store = WorkspaceConfigStore::open(database());
-        store->apply_character_picture("guide", "PICTURE.jpg", encode_base64(bytes));
-        const auto picture = store->get_character_picture("guide", "PICTURE.jpg");
-        ASSERT_TRUE(picture);
-        EXPECT_EQ(picture->filename, "PICTURE.jpg");
-        EXPECT_EQ(picture->content_base64, encode_base64(bytes));
-        store->apply_character_picture(workspace_assistant_id, "PICTURE.png", encode_base64(bytes));
-        EXPECT_EQ(store->get_character_picture(workspace_assistant_id)->filename, "PICTURE.png");
-    }
-    const auto after = config_contents(database());
-    for (const auto& [name, content] : before) {
-        if (!picture_format(name)) EXPECT_EQ(after.at(name), content) << name;
-    }
-    for (const auto& format : picture_formats) {
-        const auto name = "characters/nested/guide/PICTURE" + std::string(format.extension);
-        EXPECT_EQ(after.at(name), format.extension == ".jpg" ? encode_base64(bytes) : before.at(name));
-    }
-    export_workspace_configuration(database(), export_);
-    EXPECT_EQ(file_bytes(export_ / "characters/nested/guide/PICTURE.jpg"), bytes);
-    EXPECT_EQ(file_bytes(export_ / "system/assistant/PICTURE.png"), bytes);
-    import_workspace_configuration(export_, database());
-    EXPECT_EQ(config_contents(database()), after);
-}
-
 TEST_F(WorkspaceConfigStoreTest, CharacterFileRenamePreservesBytesAndPromptIncludes) {
     write_bytes(source() / "characters/guide/CHARACTER.md", "$$(NOTES.md) $$( ./NOTES.md )");
     write_bytes(source() / "characters/guide/NOTES.md", "Original notes\r\n");
     write_bytes(source() / "characters/guide/EXAMPLE.md", "$$$(NOTES.md) $$(NOTES.md)");
-    write_bytes(source() / "characters/guide/portrait.PNG", std::string("\0\xff\x80", 3));
     import_from_source();
     auto store = WorkspaceConfigStore::open(database());
     const auto before = config_contents(database());
@@ -4210,23 +4061,14 @@ TEST_F(WorkspaceConfigStoreTest, CharacterFileRenamePreservesBytesAndPromptInclu
     EXPECT_EQ(after.at("characters/guide/CHARACTER.md"), "$$(MEMORIES.txt) $$(./MEMORIES.txt)");
     EXPECT_EQ(after.at("characters/guide/EXAMPLE.md"), "$$$(NOTES.md) $$(MEMORIES.txt)");
     EXPECT_EQ(store->snapshot()->find_character("guide")->markdown, prompt);
-    store->rename_character_file("guide", "portrait.PNG", "seneca.png");
-    const auto picture = store->get_character_picture("guide", "seneca.png");
-    ASSERT_TRUE(picture);
-    EXPECT_EQ(picture->content_base64, before.at("characters/guide/portrait.PNG"));
-    EXPECT_FALSE(store->get_character_picture("guide", "portrait.PNG"));
-    store->rename_character_file("guide", "seneca.png", "Seneca.png");
-    EXPECT_TRUE(store->get_character_picture("guide", "Seneca.png"));
     store.reset();
     export_workspace_configuration(database(), export_);
-    EXPECT_EQ(file_bytes(export_ / "characters/guide/Seneca.png"), std::string("\0\xff\x80", 3));
     EXPECT_EQ(file_bytes(export_ / "characters/guide/MEMORIES.txt"), "Original notes\r\n");
 }
 
 TEST_F(WorkspaceConfigStoreTest, RejectedCharacterFileRenamesLeaveRowsAndRevisionUnchanged) {
     write_bytes(source() / "characters/guide/NOTES.md", "notes");
     write_bytes(source() / "characters/guide/OTHER.md", "other");
-    write_bytes(source() / "characters/guide/portrait.png", "picture bytes");
     import_from_source();
     const auto store = WorkspaceConfigStore::open(database());
     const auto before = config_contents(database());
@@ -4242,147 +4084,51 @@ TEST_F(WorkspaceConfigStoreTest, RejectedCharacterFileRenamesLeaveRowsAndRevisio
     EXPECT_EQ(store->config_revision(), revision);
 }
 
-TEST_F(WorkspaceConfigStoreTest, NamedPicturesSurviveImportUploadReplacementExportAndDeletion) {
-    const std::string bytes("\0\xff\x80\x01", 4);
-    write_bytes(source() / "characters/guide/Seneca.JPG", bytes);
+TEST_F(WorkspaceConfigStoreTest, OpensOlderVaultsWithUnsupportedConfigurationRows) {
     import_from_source();
-    auto store = WorkspaceConfigStore::open(database());
-    auto picture = store->get_character_picture("guide", "Seneca.JPG");
-    ASSERT_TRUE(picture);
-    EXPECT_EQ(picture->filename, "Seneca.JPG");
-    EXPECT_EQ(picture->mime_type, "image/jpeg");
-    EXPECT_EQ(picture->content_base64, encode_base64(bytes));
-    ASSERT_TRUE(store->get_character_picture("guide"));
-    EXPECT_EQ(store->get_character_picture("guide")->filename, "Seneca.JPG");
-    store->apply_character_picture("guide", "my-portrait.png", encode_base64(bytes));
-    ASSERT_TRUE(store->get_character_picture("guide", "my-portrait.png"));
-    ASSERT_TRUE(store->get_character_picture("guide"));
-    EXPECT_EQ(store->get_character_picture("guide")->filename, "my-portrait.png");
-    store->apply_character_picture("guide", "my-portrait.webp", encode_base64(bytes), "my-portrait.png");
-    EXPECT_FALSE(store->get_character_picture("guide", "my-portrait.png"));
-    EXPECT_EQ(store->get_character_picture("guide", "my-portrait.webp")->mime_type, "image/webp");
-    store.reset();
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute("INSERT INTO config (name, content) VALUES "
+            "('characters/guide/PICTURE.png', 'old bytes'), "
+            "('system/assistant/PORTRAIT.JPG', 'AP8=')");
+    }
+    {
+        auto store = WorkspaceConfigStore::open(database());
+        EXPECT_TRUE(store->snapshot()->find_character("guide"));
+        EXPECT_FALSE(store->snapshot()->source_files().contains("characters/guide/PICTURE.png"));
+        EXPECT_TRUE(store->list_config("characters/guide/PICTURE.png").entries.empty());
+        store->apply_character_file("guide", "NOTES.txt", "A note", true);
+        EXPECT_EQ(stored_config(database(), "characters/guide/NOTES.txt"), "A note");
+    }
+    import_from_source();
     export_workspace_configuration(database(), export_);
-    EXPECT_EQ(file_bytes(export_ / "characters/guide/Seneca.JPG"), bytes);
-    EXPECT_EQ(file_bytes(export_ / "characters/guide/my-portrait.webp"), bytes);
-    import_workspace_configuration(export_, database());
-    store = WorkspaceConfigStore::open(database());
-    EXPECT_EQ(store->get_character_picture("guide", "my-portrait.webp")->content_base64, encode_base64(bytes));
-    store->apply_character_file("guide", "my-portrait.webp", std::nullopt);
-    EXPECT_FALSE(store->get_character_picture("guide", "my-portrait.webp"));
-    EXPECT_TRUE(store->get_character_picture("guide", "Seneca.JPG"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "characters/guide/PICTURE.png"));
+    EXPECT_FALSE(std::filesystem::exists(export_ / "system/assistant/PORTRAIT.JPG"));
+    EXPECT_EQ(stored_config(database(), "characters/guide/PICTURE.png"), "old bytes");
+    EXPECT_EQ(stored_config(database(), "system/assistant/PORTRAIT.JPG"), "AP8=");
 }
 
-TEST_F(WorkspaceConfigStoreTest, PictureReplacementChangesOnlyTheSelectedFileAndRollsBackNameConflicts) {
-    write_bytes(source() / "characters/guide/PICTURE.png", "png");
-    write_bytes(source() / "characters/guide/PICTURE.jpg", "jpg");
-    import_from_source();
-    const auto store = WorkspaceConfigStore::open(database());
-    const auto before = config_contents(database());
-    EXPECT_THROW(store->apply_character_picture("guide", "PICTURE.png", "bmV3", "PICTURE.jpg"), std::invalid_argument);
-    EXPECT_EQ(config_contents(database()), before);
-    store->apply_character_picture("guide", "PICTURE.webp", "bmV3", "PICTURE.jpg");
-    EXPECT_EQ(changed_config_names(before, config_contents(database())),
-        (std::set<std::string>{"characters/guide/PICTURE.jpg", "characters/guide/PICTURE.webp"}));
-    EXPECT_EQ(store->get_character_picture("guide", "PICTURE.png")->content_base64, "cG5n");
-    EXPECT_EQ(store->get_character_picture("guide", "PICTURE.webp")->content_base64, "bmV3");
-    EXPECT_FALSE(store->get_character_picture("guide", "PICTURE.jpg"));
-}
-
-TEST_F(WorkspaceConfigStoreTest, InvalidPictureUploadsKeepTheExistingPictureAndRevision) {
-    write_bytes(source() / "characters/guide/PICTURE.png", "original");
-    import_from_source();
-    auto store = WorkspaceConfigStore::open(database());
-    const auto before = config_contents(database());
-    const auto revision = store->config_revision();
-    EXPECT_THROW(store->apply_character_picture("missing", "PICTURE.jpg", "AP8="), std::out_of_range);
-    for (const auto filename : {"PICTURE.svg", "", "../PICTURE.jpg", "folder/portrait.png", "folder\\portrait.png", "CON.png"}) {
-        EXPECT_THROW(store->apply_character_picture("guide", filename, "AP8="), std::invalid_argument);
+TEST_F(RuntimeWorkspaceConfigStoreTest, MergeIgnoresUnsupportedConfigurationRows) {
+    {
+        Database handle(database(), Database::Mode::read_write);
+        handle.execute("INSERT INTO config VALUES ('characters/writer/obsolete.dat', 'AP8=')");
     }
-    EXPECT_THROW(store->apply_character_picture("guide", "PICTURE.jpg", "bad base64!"), std::invalid_argument);
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->config_revision(), revision);
-}
-
-TEST_F(WorkspaceConfigStoreTest, WarnsForEachIgnoredImageNameOrLocation) {
-    const std::vector<std::string> ignored{
-        "characters/no-definition/PICTURE.webp",
-        "forums/lobby/members/guide/PICTURE.gif", "system/PICTURE.jpeg"};
-    for (const auto& name : ignored) write_bytes(source() / name, "bytes");
-    shutdown_diagnostic_logging();
-    initialize_diagnostic_logging(source() / "pictures.log", "warn");
-    import_from_source();
-    shutdown_diagnostic_logging();
-    const auto log = file_bytes(source() / "pictures.log");
-    const auto rows = config_contents(database());
-    for (const auto& name : ignored) {
-        EXPECT_NE(log.find(name), std::string::npos) << name;
-        EXPECT_FALSE(rows.contains(name));
-    }
-}
-
-TEST_F(WorkspaceConfigStoreTest, PictureSymlinkFailsImportOnlyInDefinitionFolder) {
-    import_from_source();
-    const auto before = config_contents(database());
-    write_bytes(source() / "original.png", "bytes");
-    if (!try_create_symlink(source() / "original.png", source() / "system/PICTURE.png", false)) {
-        GTEST_SKIP() << "Symbolic links are unavailable";
-    }
-    import_from_source();
-    EXPECT_EQ(config_contents(database()), before);
-    ASSERT_TRUE(try_create_symlink(
-        source() / "original.png", source() / "characters/guide/PICTURE.png", false));
-    EXPECT_THROW(import_from_source(), std::runtime_error);
-    EXPECT_EQ(config_contents(database()), before);
-}
-
-TEST_F(WorkspaceConfigStoreTest, MalformedPictureBase64FailsExportWithoutChangingRows) {
-    import_from_source();
-    { const auto store = WorkspaceConfigStore::open(database()); }
-    for (const auto encoded : {"bad", "!!!!", "AA=A", "AA==AAAA", "AB==", "AAB="}) {
-        {
-            Database handle(database(), Database::Mode::read_write);
-            auto statement = handle.prepare(
-                "INSERT OR REPLACE INTO config VALUES ('characters/guide/PICTURE.png', ?1)",
-                std::string_view(encoded));
-            statement.run();
-        }
-        const auto before = config_contents(database());
-        try {
-            export_workspace_configuration(database(), export_);
-            ADD_FAILURE() << "export accepted " << encoded;
-        } catch (const std::runtime_error& error) {
-            EXPECT_NE(std::string_view(error.what()).find("characters/guide/PICTURE.png"),
-                std::string_view::npos) << error.what();
-        }
-        EXPECT_EQ(config_contents(database()), before);
-        std::filesystem::remove_all(export_);
-    }
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, SettingsMergeAndDeletionPreservePictureRows) {
-    write_bytes(source() / "characters/writer/PICTURE.png", std::string("\0\xff", 2));
-    import_workspace_configuration(source(), database());
     const auto store = open_store();
-    std::filesystem::remove_all(source());
-    const auto original = stored_config(database(), "characters/writer/PICTURE.png");
-    EXPECT_EQ(original, "AP8=");
-    store->apply_character_settings("writer", "second", std::string_view{"mono"});
-    EXPECT_EQ(stored_config(database(), "characters/writer/PICTURE.png"), original);
     test::TestWorkspace other;
     other.add_character("writer", "Writer");
-    write_bytes(other.root() / "characters/writer/PICTURE.webp", "new bytes");
     const auto other_database = import_source_database(other);
+    {
+        Database handle(other_database, Database::Mode::read_write);
+        handle.execute("INSERT INTO config VALUES ('characters/writer/obsolete.dat', 'new bytes'), "
+            "('characters/writer/cache.dat', 'new cache')");
+    }
     merge_from(*store, other_database);
-    EXPECT_EQ(stored_config(database(), "characters/writer/PICTURE.png"), original);
-    EXPECT_EQ(stored_config(database(), "characters/writer/PICTURE.webp"), "bmV3IGJ5dGVz");
+    EXPECT_EQ(stored_config(database(), "characters/writer/obsolete.dat"), "AP8=");
+    EXPECT_FALSE(config_contents(database()).contains("characters/writer/cache.dat"));
     store->apply_forum_members_and_persona("lobby", std::vector<std::string>{"guide"}, "reader");
     store->apply_character_delete("writer");
-    const auto rows = config_contents(database());
-    EXPECT_FALSE(rows.contains("characters/writer/PICTURE.png"));
-    EXPECT_FALSE(rows.contains("characters/writer/PICTURE.webp"));
+    EXPECT_EQ(stored_config(database(), "characters/writer/obsolete.dat"), "AP8=");
 }
-
 
 TEST(WorkspaceConfigStore, AddsSessionCharacterSettingsToAnExistingSchemaTwoVault) {
     test::TestWorkspace fixture;

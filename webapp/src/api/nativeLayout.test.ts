@@ -5,13 +5,13 @@ import { appReducer, createInitialAppState, initialAppState } from '../state/vie
 
 afterEach(() => { delete window.__CHA_NATIVE_INITIAL_VIEW_STATE__; });
 
-it('reads only valid View preferences and preserves false values', () => {
+it('ignores obsolete View preferences and preserves false values', () => {
   window.__CHA_NATIVE_INITIAL_VIEW_STATE__ = {
     split: true, sidebar: false, pictures: true, toolbar: false,
     chat_toolbar: false, notes_prompt: false, russian: true, notes_font_size: 18, extra: true,
   };
   const prefs = readInitialNativeViewState();
-  expect(prefs).toEqual({ layoutMode: 'split', sidebarOpen: false, pictureOpen: true,
+  expect(prefs).toEqual({ layoutMode: 'split', sidebarOpen: false,
     notesToolbarVisible: false, chatToolbarVisible: false, notesPromptVisible: false, russianVisible: true,
     notesFontSize: 18 });
   expect(createInitialAppState(prefs)).toMatchObject(prefs);
@@ -38,7 +38,7 @@ it.each([undefined, true, '18', 9, 31, 18.5])('uses the default for an invalid o
 });
 
 it('preserves all saved View preferences through bootstrap and vault transitions', () => {
-  const prefs = { layoutMode: 'split' as const, sidebarOpen: false, pictureOpen: true,
+  const prefs = { layoutMode: 'split' as const, sidebarOpen: false,
     notesToolbarVisible: false, chatToolbarVisible: false, notesPromptVisible: false, russianVisible: true,
     notesFontSize: 18 };
   let state = createInitialAppState(prefs);

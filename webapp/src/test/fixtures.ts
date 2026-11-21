@@ -192,8 +192,6 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
   };
   const client: ChaClient & NotesClient = {
     getBootstrap: async () => bootstrapFixture,
-    getCharacterPicture: async () => null,
-    updateCharacterPicture: async () => {},
     getCharacter: async () => characterDetailFixture,
     createCharacter: async ({ display_name, description }) => ({
       ...characterDetailFixture,

@@ -71,7 +71,7 @@ Json inspect_arguments(std::string_view topic, Json after = nullptr) {
 // One imported vault, its store, and the process log file for one test.
 class ServiceHarness {
 public:
-    explicit ServiceHarness(bool pictures = false) {
+    ServiceHarness() {
         shutdown_diagnostic_logging();
         log_directory_ = std::filesystem::temp_directory_path()
             / ("cha_assistant_service_"
@@ -83,13 +83,6 @@ public:
         std::ofstream(log_directory_ / "test.toml")
             << "vault_name = \"Test\"\ndata = \"test.sqlite3\"\n";
         initialize_diagnostic_logging(log_directory_ / "cha.log", "info");
-        if (pictures) {
-            for (const auto directory : {"characters/guide", "system/assistant"}) {
-                std::filesystem::create_directories(workspace_.root() / directory);
-                std::ofstream(workspace_.root() / directory / "PICTURE.png", std::ios::binary)
-                    << "picture bytes";
-            }
-        }
         database_ = test::import_test_database(workspace_.root());
         store_ = WorkspaceConfigStore::open(database_);
         oauth_path_ = log_directory_ / "openai-auth.json";
@@ -415,42 +408,6 @@ TEST(AssistantService, NotesSettingsApplyAndUndo) {
         EXPECT_EQ(after.files[i].path, before.files[i].path);
         EXPECT_EQ(after.files[i].status, before.files[i].status);
         EXPECT_EQ(after.files[i].content, before.files[i].content);
-    }
-}
-
-TEST(AssistantService, PicturesAreListedButCannotBeReadOrWritten) {
-    ServiceHarness harness(true);
-    for (const auto directory : {"characters/guide", "system/assistant"}) {
-        const std::string path = std::string(directory) + "/PICTURE.png";
-        const auto listed = harness.run("vault_config_list", {{"prefix", directory}});
-        const auto entry = std::ranges::find_if(listed["entries"], [&](const Json& item) {
-            return item["path"] == path;
-        });
-        ASSERT_NE(entry, listed["entries"].end()) << listed;
-        EXPECT_EQ((*entry)["readable"], false);
-        EXPECT_EQ((*entry)["writable"], false);
-        EXPECT_TRUE(entry->contains("protection_reason"));
-        const auto read = harness.run("vault_config_read", read_arguments(path));
-        EXPECT_EQ(read["files"][0]["status"], "missing");
-        EXPECT_FALSE(read["files"][0].contains("content"));
-        for (const auto operation : {"create", "replace", "set"}) {
-            const bool set = std::string_view(operation) == "set";
-            const Json change{
-                {"path", path}, {"operation", operation},
-                {"content", set ? Json(nullptr) : Json("text")},
-                {"key", set ? Json("value") : Json(nullptr)},
-                {"value", set ? Json("text") : Json(nullptr)}};
-            const auto result = harness.run("vault_config_apply", {
-                {"action", "apply"}, {"version", "1"}, {"changes", Json::array({change})}});
-            EXPECT_EQ(result["committed"], false) << result;
-            EXPECT_EQ(result["error"], "protected_path") << result;
-        }
-        const auto absent = harness.run("vault_config_apply", {
-            {"action", "apply"}, {"version", "1"}, {"changes", Json::array({Json{
-                {"path", std::string(directory) + "/PICTURE.gif"}, {"operation", "create"},
-                {"content", "text"}, {"key", nullptr}, {"value", nullptr}}})}});
-        EXPECT_EQ(absent["committed"], false);
-        EXPECT_EQ(absent["error"], "protected_path");
     }
 }
 

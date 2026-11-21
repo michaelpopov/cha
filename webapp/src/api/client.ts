@@ -11,7 +11,6 @@ export type AudioDownloadStatus = components['schemas']['AudioDownloadStatus'];
 export type Bootstrap = components['schemas']['Bootstrap'] & {
   capabilities?: { can_modify: boolean; can_transfer_r2: boolean };
 };
-export type CharacterPicture = components['schemas']['CharacterPicture'];
 export type CharacterDetail = components['schemas']['CharacterDetail'];
 export type MarkdownFile = components['schemas']['MarkdownFile'];
 export type CreateCharacterRequest = components['schemas']['CreateCharacterRequest'];
@@ -225,8 +224,6 @@ export interface ChaClient {
   contextEpoch(): number;
   noteAudio?: NoteAudioClient;
   getBootstrap(): Promise<Bootstrap>;
-  getCharacterPicture(characterId: string, filename?: string): Promise<CharacterPicture | null>;
-  updateCharacterPicture(characterId: string, file: File, previousFilename?: string): Promise<void>;
   getCharacter(characterId: string): Promise<CharacterDetail>;
   createCharacter(request: CreateCharacterRequest): Promise<CharacterDetail>;
   updateCharacter(characterId: string, settings: UpdateCharacterRequest): Promise<CharacterDetail>;
@@ -455,20 +452,6 @@ function isRosterSummary(value: unknown): boolean {
 export function isMarkdownFile(value: unknown): value is MarkdownFile {
   return isRecord(value) && typeof value.filename === 'string'
     && typeof value.content === 'string' && typeof value.writable === 'boolean';
-}
-
-export function isCharacterPicture(value: unknown): value is CharacterPicture {
-  if (!isRecord(value) || typeof value.content_base64 !== 'string'
-    || Object.keys(value).length !== 3 || typeof value.filename !== 'string'
-    || /[/\\\0]/.test(value.filename)) return false;
-  switch (value.filename.slice(value.filename.lastIndexOf('.')).toLowerCase()) {
-    case '.png': return value.mime_type === 'image/png';
-    case '.webp': return value.mime_type === 'image/webp';
-    case '.jpg':
-    case '.jpeg': return value.mime_type === 'image/jpeg';
-    case '.gif': return value.mime_type === 'image/gif';
-    default: return false;
-  }
 }
 
 export function isCharacterDetail(value: unknown): value is CharacterDetail {

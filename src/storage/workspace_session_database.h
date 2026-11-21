@@ -50,12 +50,11 @@ void ensure_session_lifecycle_columns(storage::SqliteDatabase& database);
     const std::filesystem::path& path,
     std::string_view password = {});
 
+[[nodiscard]] bool is_workspace_config_name(std::string_view name) noexcept;
 void validate_stored_config_name(std::string_view name);
+// Reads supported configuration without modifying any other rows in the database.
 [[nodiscard]] std::vector<ConfigFile> read_workspace_config_files(
-    storage::SqliteDatabase& database);
-[[nodiscard]] std::optional<std::string> read_workspace_config_file(
-    storage::SqliteDatabase& database,
-    std::string_view name);
+    storage::SqliteDatabase& database, bool warn_on_unsupported = false);
 void replace_workspace_config_files(
     storage::SqliteDatabase& database,
     const std::vector<ConfigFile>& rows);

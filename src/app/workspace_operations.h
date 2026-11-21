@@ -53,14 +53,6 @@ void refresh_affected_sessions(
     LiveSessionManager& live_sessions,
     std::span<const std::string> forum_ids);
 
-[[nodiscard]] std::optional<CharacterPicture> get_character_picture(
-    const WorkspaceConfigStore& store,
-    std::string_view id, std::string_view filename = {});
-void update_character_picture(
-    WorkspaceConfigStore& store,
-    std::string_view id,
-    std::string_view filename,
-    std::string_view content_base64, std::string_view previous_filename = {});
 [[nodiscard]] CharacterDetail get_character(
     const Workspace& workspace,
     std::string_view id);

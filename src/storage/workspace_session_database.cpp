@@ -2,8 +2,8 @@
 
 #include "storage/note_storage.h"
 #include "storage/sync_storage.h"
+#include "util/logging.h"
 #include "util/path_name.h"
-#include "util/picture.h"
 #include "util/private_filesystem.h"
 
 #include <algorithm>
@@ -605,7 +605,15 @@ WorkspaceDatabaseState inspect_workspace_session_database(
     }
 }
 
-void validate_stored_config_name(std::string_view name) {
+bool is_workspace_config_name(std::string_view name) noexcept {
+    return name != "app.toml" && name != "workspace.toml"
+        && (name.ends_with(".toml") || name.ends_with(".md")
+            || (name.starts_with("characters/") && name.ends_with(".txt")));
+}
+
+namespace {
+
+void validate_config_path(std::string_view name) {
     if (name.empty()) {
         throw std::runtime_error("Configuration name is empty");
     }
@@ -646,36 +654,37 @@ void validate_stored_config_name(std::string_view name) {
                 + "' contains an invalid path component");
         }
     }
+}
 
-    if (!name.ends_with(".toml")
-        && !name.ends_with(".md")
-        && !(name.starts_with("characters/") && name.ends_with(".txt"))
-        && !picture_format(name)) {
+} // namespace
+
+void validate_stored_config_name(std::string_view name) {
+    validate_config_path(name);
+    if (!is_workspace_config_name(name)) {
         throw std::runtime_error(
             "Configuration name '" + std::string(name)
             + "' is not a stored configuration file");
     }
 }
 
-std::vector<ConfigFile> read_workspace_config_files(Database& database) {
+std::vector<ConfigFile> read_workspace_config_files(Database& database, bool warn_on_unsupported) {
     Statement statement = database.prepare(
         "SELECT name, content FROM config ORDER BY name");
     std::vector<ConfigFile> rows;
+    bool ignored = false;
     while (statement.step()) {
-        ConfigFile row{statement.text(0), statement.text(1)};
-        validate_stored_config_name(row.name);
-        rows.push_back(std::move(row));
+        auto name = statement.text(0);
+        validate_config_path(name);
+        if (!is_workspace_config_name(name)) {
+            ignored = true;
+            continue;
+        }
+        rows.push_back({std::move(name), statement.text(1)});
+    }
+    if (ignored && warn_on_unsupported) {
+        log_warn("Ignoring unsupported rows in vault configuration.");
     }
     return rows;
-}
-
-std::optional<std::string> read_workspace_config_file(
-    Database& database,
-    std::string_view name) {
-    Statement statement = database.prepare(
-        "SELECT content FROM config WHERE name = ?1", name);
-    if (!statement.step()) return std::nullopt;
-    return statement.text(0);
 }
 
 void replace_workspace_config_files(

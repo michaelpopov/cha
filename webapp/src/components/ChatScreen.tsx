@@ -30,7 +30,6 @@ import {
 import { useAudioDownloads } from '../audioDownloads';
 import { readTextFile } from '../textFile';
 import type { VoiceInputRecording } from '../voiceInputUsage';
-import { ChatPictureLayout } from './ChatPicture';
 import type { AppState, DataAction, NavigationAction } from '../state/view';
 import {
   TextToSpeechError,
@@ -630,9 +629,6 @@ export function ChatScreen({
     void session.play().then(() => {
       if (textToSpeechSession.current === session) {
         setSpokenEntry({ id: entry.id, state: 'playing' });
-        if (entry.kind === 'character') {
-          dispatch({ type: 'select-picture-character', characterId: entry.participant_id });
-        }
       }
     }).catch((failure: unknown) => {
       if (textToSpeechSession.current !== session) return;
@@ -835,8 +831,7 @@ export function ChatScreen({
       && snapshot?.shutdown_reason !== 'reloading');
 
   return (
-    <ChatPictureLayout client={client} dispatch={dispatch} state={state}>
-    <section className="cha-chat-column" aria-label="Chat area">
+    <section className="cha-screen cha-chat cha-chat-column" aria-label="Chat area">
       {state.chatToolbarVisible && snapshot && (
         <ChatToolbar snapshot={snapshot} disabled={!connected || generationActive || actionPending}
           playbackSpeed={playbackSpeed} onPlaybackSpeedChange={changePlaybackSpeed}
@@ -1040,7 +1035,6 @@ export function ChatScreen({
         />
       )}
     </section>
-    </ChatPictureLayout>
   );
 }
 

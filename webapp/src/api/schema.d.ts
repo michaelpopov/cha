@@ -499,12 +499,6 @@ export interface components {
             id: components["schemas"]["Identifier"];
             label: string;
         };
-        CharacterPicture: {
-            filename: string;
-            /** @enum {string} */
-            mime_type: "image/png" | "image/webp" | "image/jpeg" | "image/gif";
-            content_base64: string;
-        };
         CharacterDetail: {
             id: components["schemas"]["Identifier"];
             display_name: string;

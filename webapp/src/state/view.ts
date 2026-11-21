@@ -112,14 +112,11 @@ export interface SessionActivity {
 export interface AppState {
   sessionActivity: readonly SessionActivity[];
   sidebarOpen: boolean;
-  pictureOpen: boolean;
   notesToolbarVisible: boolean;
   notesFontSize: number;
   chatToolbarVisible: boolean;
   notesPromptVisible: boolean;
   russianVisible: boolean;
-  pictureWidth: number;
-  pictureCharacterId: string | null;
   mainView: MainView;
   layoutMode: LayoutMode;
   sidebarTab: 'chat' | 'notes';
@@ -164,19 +161,16 @@ export interface AppState {
   streamMessage: string | null;
 }
 
-export type ViewPreferences = Pick<AppState, 'layoutMode' | 'sidebarOpen' | 'pictureOpen' | 'notesToolbarVisible' | 'notesFontSize' | 'chatToolbarVisible' | 'notesPromptVisible' | 'russianVisible'>;
+export type ViewPreferences = Pick<AppState, 'layoutMode' | 'sidebarOpen' | 'notesToolbarVisible' | 'notesFontSize' | 'chatToolbarVisible' | 'notesPromptVisible' | 'russianVisible'>;
 
 export const initialAppState: AppState = {
   sessionActivity: [],
   sidebarOpen: true,
-  pictureOpen: false,
   notesToolbarVisible: true,
   notesFontSize: 14,
   chatToolbarVisible: true,
   notesPromptVisible: true,
   russianVisible: false,
-  pictureWidth: 280,
-  pictureCharacterId: null,
   mainView: 'chat',
   layoutMode: 'single',
   sidebarTab: 'chat',
@@ -215,7 +209,6 @@ export function createInitialAppState(prefs: Partial<ViewPreferences> = {}): App
   return { ...initialAppState,
     layoutMode: prefs.layoutMode ?? initialAppState.layoutMode,
     sidebarOpen: prefs.sidebarOpen ?? initialAppState.sidebarOpen,
-    pictureOpen: prefs.pictureOpen ?? initialAppState.pictureOpen,
     notesToolbarVisible: prefs.notesToolbarVisible ?? initialAppState.notesToolbarVisible,
     notesFontSize: prefs.notesFontSize ?? initialAppState.notesFontSize,
     chatToolbarVisible: prefs.chatToolbarVisible ?? initialAppState.chatToolbarVisible,
@@ -239,14 +232,11 @@ export type AppAction =
   | { type: 'set-note-text-mode'; mode: NoteTextMode }
   | { type: 'reload-note' }
   | { type: 'close-note'; noteId?: number }
-  | { type: 'toggle-picture' }
   | { type: 'toggle-notes-toolbar' }
   | { type: 'set-notes-font-size'; size: number }
   | { type: 'toggle-chat-toolbar' }
   | { type: 'toggle-notes-prompt' }
   | { type: 'toggle-russian' }
-  | { type: 'resize-picture'; width: number }
-  | { type: 'select-picture-character'; characterId: string }
   | { type: 'show-personas' }
   | { type: 'show-new-persona' }
   | { type: 'inspect-persona'; personaId: string }
@@ -442,7 +432,6 @@ function showInitialConversation(state: AppState, bootstrap: Bootstrap): AppStat
     activeConversationLabel: initialRecent?.session_label ?? null,
     currentDefaultCharacterId: initialForum?.default_character_id ?? null,
     sessionSnapshot: null,
-    pictureCharacterId: null,
     streamStatus: 'idle',
     streamMessage: null,
     ...idleSessionOperation(),
@@ -462,32 +451,6 @@ function appendSessionEvent(
     text: transcript[entryIndex].text + event.text,
   };
   return { ...snapshot, transcript };
-}
-
-// Recover only newly observed turns: edits and unchanged history must not undo
-// a later recipient choice. The existing snapshot is the sole history store.
-function selectPictureCharacter(state: AppState, snapshot: SessionSnapshot, opened: boolean) {
-  let selected = opened ? null : state.pictureCharacterId;
-  if (opened) {
-    if (snapshot.default_character_id === '*') {
-      selected = [...snapshot.transcript].reverse().find((entry) => entry.kind === 'character')?.participant_id ?? null;
-    } else {
-      selected = snapshot.default_character_id;
-    }
-  } else {
-    const previousIds = new Set(state.sessionSnapshot?.transcript.map(({ id }) => id));
-    for (const entry of snapshot.transcript) {
-      if (previousIds.has(entry.id) || entry.request_id === undefined) continue;
-      if (entry.kind === 'character' || entry.kind === 'error') selected = entry.participant_id;
-      else if (entry.kind === 'human') selected = entry.addressed_to;
-    }
-    if (snapshot.default_character_id !== state.currentDefaultCharacterId
-        && snapshot.default_character_id !== '*') selected = snapshot.default_character_id;
-  }
-  if (snapshot.generation.active && snapshot.generation.character_id) {
-    selected = snapshot.generation.character_id;
-  }
-  return snapshot.characters.some(({ id }) => id === selected) ? selected : null;
 }
 
 function releaseClosedNote(state: AppState): AppState {
@@ -533,7 +496,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         currentForumId: null,
         currentDefaultCharacterId: null,
         sessionSnapshot: null,
-        pictureCharacterId: null,
         streamStatus: 'idle',
         streamMessage: null,
         activeNoteId: null, noteDestination: undefined, noteImportSource: undefined,
@@ -553,8 +515,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
           ? action.bootstrap.vault_name : state.inspectedVaultName,
       };
     }
-    case 'toggle-picture':
-      return { ...state, pictureOpen: !state.pictureOpen };
     case 'toggle-chat-toolbar':
       return { ...state, chatToolbarVisible: !state.chatToolbarVisible };
     case 'toggle-notes-toolbar':
@@ -565,14 +525,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, russianVisible: !state.russianVisible };
     case 'toggle-notes-prompt':
       return { ...state, notesPromptVisible: !state.notesPromptVisible };
-    case 'resize-picture':
-      return { ...state, pictureWidth: action.width };
-    case 'select-picture-character':
-      return {
-        ...state,
-        pictureCharacterId: state.sessionSnapshot?.characters.some(({ id }) => id === action.characterId)
-          ? action.characterId : null,
-      };
     case 'toggle-sidebar':
       return { ...state, sidebarOpen: !state.sidebarOpen };
     case 'show-chat-tab':
@@ -711,7 +663,7 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         }
         : state;
     case 'show-new-character-file':
-      return state.inspectedCharacter.id && state.inspectedCharacter.settingsWritable
+      return state.inspectedCharacter.id && state.inspectedCharacter.writable
         ? { ...state, mainView: 'new-character-file', ...idleSessionOperation() }
         : state;
     case 'character-detail-loaded':
@@ -859,7 +811,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
           activeConversationLabel: null,
           currentDefaultCharacterId: null,
           sessionSnapshot: null,
-          pictureCharacterId: null,
           streamStatus: 'idle' as const,
           streamMessage: null,
         } : {}),
@@ -1131,7 +1082,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         activeConversation: null,
         activeConversationLabel: null,
         sessionSnapshot: null,
-        pictureCharacterId: null,
         ...idleSessionOperation(),
       };
     }
@@ -1148,7 +1098,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
         sessionSnapshot: action.snapshot,
-        pictureCharacterId: selectPictureCharacter(state, action.snapshot, true),
         streamStatus: 'connecting',
         streamMessage: 'Connecting live updates…',
         ...idleSessionOperation(),
@@ -1178,7 +1127,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
         activeConversationLabel: action.snapshot.session_label,
         currentDefaultCharacterId: action.snapshot.default_character_id,
         sessionSnapshot: action.snapshot,
-        pictureCharacterId: selectPictureCharacter(state, action.snapshot, false),
       };
     case 'session-audio-cache':
       if (!state.sessionSnapshot

@@ -1,7 +1,7 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { chromium } from '@playwright/test';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -217,7 +217,8 @@ $dialog = [CHAWindow]::Find(${child.pid}, '#32770')
 $view = @{}
 ${action === 'view' ? `
 $menu = [CHAWindow]::GetSubMenu([CHAWindow]::GetMenu($main), 1)
-$commands = @{ split=1003; sidebar=1004; pictures=1005; toolbar=1006; notes_prompt=1007; chat_toolbar=1008; russian=1009 }
+if ([CHAWindow]::GetMenuState($menu, 1005, 0) -ne [uint32]::MaxValue) { throw 'Obsolete Pictures menu command is present' }
+$commands = @{ split=1003; sidebar=1004; toolbar=1006; notes_prompt=1007; chat_toolbar=1008; russian=1009 }
 foreach ($entry in $commands.GetEnumerator()) {
     $state = [CHAWindow]::GetMenuState($menu, [uint32]$entry.Value, 0)
     if ($state -eq [uint32]::MaxValue) { throw 'View menu command was not found' }
@@ -316,11 +317,11 @@ test.describe('WebView2 native host', () => {
   test('View preferences survive native quit, process restart and reload', async () => {
     test.setTimeout(120_000);
     const preferences = join(userData, 'config', 'view.json');
-    let expected = { split: false, sidebar: true, pictures: false, toolbar: true,
+    let expected = { split: false, sidebar: true, toolbar: true,
       chat_toolbar: true, notes_prompt: true, russian: false };
     expect(existsSync(preferences)).toBe(false);
     expect(nativeWindow(host!, 'view').view).toEqual(expected);
-    const commands = { split: 1003, sidebar: 1004, pictures: 1005, toolbar: 1006,
+    const commands = { split: 1003, sidebar: 1004, toolbar: 1006,
       chat_toolbar: 1008, notes_prompt: 1007, russian: 1009 };
     for (let round = 0; round < 2; round += 1) {
       for (const key of Object.keys(commands) as (keyof typeof commands)[]) {
@@ -341,6 +342,7 @@ test.describe('WebView2 native host', () => {
       await browser!.close().catch(() => undefined);
       expect(JSON.parse(readFileSync(preferences, 'utf8'))).toEqual({ ...expected, notes_font_size: 14 });
 
+      writeFileSync(preferences, JSON.stringify({ ...expected, notes_font_size: 14, pictures: true }));
       const launched = await launchHost(userData);
       host = launched.child;
       browser = launched.browser;

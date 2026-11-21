@@ -439,134 +439,39 @@ TEST_F(BridgeRouterTest, CharacterInstructionsUseFixedVaultPathAndHaveNoDeleteMe
     EXPECT_EQ(call("character.instructions.get")["result"]["content"], "Shared voice.");
 }
 
-TEST_F(BridgeRouterTest, CharacterPictureReadsNullAndStoredContentWithExactParams) {
-    router_->shutdown();
-    application_->request_shutdown();
-    ASSERT_TRUE(application_->join_shutdown(2s));
-    router_.reset();
-    application_.reset();
-    auto command = make_command(workspace_, database_);
-    const auto modify = workspace_.root() / "modify";
-    command.vault.modify = modify;
-    command.vaults.front().modify = modify;
-    application_ = app::Application::open(std::move(command));
-    router_ = std::make_unique<BridgeRouter>(*application_);
-    connection_ = router_->open_connection();
+TEST_F(BridgeRouterTest, CharacterPictureMethodsAreUnavailable) {
     bootstrap_epoch();
-    auto reply = call("character.picture.get", {{"character_id", "guide"}});
-    ASSERT_TRUE(reply["ok"]);
-    EXPECT_TRUE(reply["result"].is_null());
-    EXPECT_EQ(reply["context_epoch"], epoch_);
-    reply = call("character.picture.get", {{"character_id", "missing"}});
-    EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "not_found");
-    for (const auto& params : std::vector<nlohmann::json>{
-             {}, {{"character_id", ""}}, {{"character_id", 1}},
-             {{"character_id", "../guide"}},
-             {{"character_id", "guide"}, {"path", "PICTURE.png"}},
-             {{"character_id", "guide"}, {"filename", "OTHER.svg"}},
-             {{"character_id", "guide"}, {"filename", "../PICTURE.png"}}}) {
-        reply = call("character.picture.get", params);
-        EXPECT_FALSE(reply["ok"]) << params;
-        EXPECT_EQ(reply["error"]["code"], "invalid_argument") << params;
+    const nlohmann::json params{{"character_id", "guide"}, {"filename", "portrait.png"}};
+    for (const auto method : {"character.picture.get", "character.picture.update"}) {
+        const auto reply = call(method, params);
+        EXPECT_FALSE(reply["ok"]) << reply;
+        EXPECT_EQ(reply["error"]["message"], "That method is not available.") << reply;
     }
-    const auto old_epoch = epoch_;
-    reply = call("vault.export");
-    ASSERT_TRUE(reply["ok"]) << reply;
-    epoch_ = reply["result"]["context_epoch"].get<std::uint64_t>();
-    std::ofstream(modify / "characters/guide/PICTURE.png")
-        << "not an image";
-    reply = call("vault.import");
-    ASSERT_TRUE(reply["ok"]) << reply;
-    epoch_ = reply["result"]["context_epoch"].get<std::uint64_t>();
-    reply = call("character.picture.get", {{"character_id", "guide"}});
-    ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"], nlohmann::json({
-        {"filename", "PICTURE.png"}, {"mime_type", "image/png"},
-        {"content_base64", "bm90IGFuIGltYWdl"}}));
-    reply = call("character.picture.get", {{"character_id", "guide"}, {"filename", "PICTURE.png"}});
-    ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"]["content_base64"], "bm90IGFuIGltYWdl");
-    reply = call("character.file.delete", {{"character_id", "guide"}, {"filename", "PICTURE.png"}});
-    ASSERT_TRUE(reply["ok"]) << reply;
-    reply = call("character.picture.get", {{"character_id", "guide"}});
-    ASSERT_TRUE(reply["ok"]);
-    EXPECT_TRUE(reply["result"].is_null());
-    epoch_ = old_epoch;
-    reply = call("character.picture.get", {{"character_id", "guide"}});
-    EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "vault_changed");
 }
 
-TEST_F(BridgeRouterTest, CharacterFileRenameUpdatesListsAndPreservesTextAndPictureContent) {
+TEST_F(BridgeRouterTest, CharacterFileRenameUpdatesListsAndPreservesText) {
     bootstrap_epoch();
     ASSERT_TRUE(call("character.file.create", {{"character_id", "guide"}, {"filename", "NOTES.txt"}, {"content", "Original text"}})["ok"]);
     auto reply = call("character.file.rename", {{"character_id", "guide"}, {"filename", "NOTES.txt"}, {"new_filename", "RENAMED.txt"}});
     ASSERT_TRUE(reply["ok"]) << reply;
     EXPECT_EQ(call("character.file.get", {{"character_id", "guide"}, {"filename", "RENAMED.txt"}})["result"]["content"], "Original text");
     EXPECT_FALSE(call("character.file.get", {{"character_id", "guide"}, {"filename", "NOTES.txt"}})["ok"]);
-    ASSERT_TRUE(call("character.picture.update", {{"character_id", "guide"}, {"filename", "portrait.png"}, {"content_base64", "AP+A"}})["ok"]);
-    reply = call("character.file.rename", {{"character_id", "guide"}, {"filename", "portrait.png"}, {"new_filename", "Seneca.png"}});
-    ASSERT_TRUE(reply["ok"]) << reply;
-    EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}, {"filename", "Seneca.png"}})["result"]["content_base64"], "AP+A");
-    EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}})["result"]["filename"], "Seneca.png");
     const auto files = call("character.get", {{"character_id", "guide"}})["result"]["markdown_files"].get<std::vector<std::string>>();
-    EXPECT_NE(std::find(files.begin(), files.end(), "Seneca.png"), files.end());
-    EXPECT_EQ(std::find(files.begin(), files.end(), "portrait.png"), files.end());
+    EXPECT_NE(std::find(files.begin(), files.end(), "RENAMED.txt"), files.end());
+    EXPECT_EQ(std::find(files.begin(), files.end(), "NOTES.txt"), files.end());
     for (const auto& params : std::vector<nlohmann::json>{
-             {{"character_id", "guide"}, {"filename", "Seneca.png"}},
-             {{"character_id", "guide"}, {"filename", "Seneca.png"}, {"new_filename", "../elsewhere.png"}},
-             {{"character_id", "guide"}, {"filename", "Seneca.png"}, {"new_filename", "CHARACTER.md"}},
-             {{"character_id", "guide"}, {"filename", "Seneca.png"}, {"new_filename", "other.png"}, {"extra", true}}}) {
+             {{"character_id", "guide"}, {"filename", "RENAMED.txt"}},
+             {{"character_id", "guide"}, {"filename", "RENAMED.txt"}, {"new_filename", "../elsewhere.txt"}},
+             {{"character_id", "guide"}, {"filename", "RENAMED.txt"}, {"new_filename", "CHARACTER.md"}},
+             {{"character_id", "guide"}, {"filename", "RENAMED.txt"}, {"new_filename", "other.txt"}, {"extra", true}}}) {
         reply = call("character.file.rename", params);
         EXPECT_FALSE(reply["ok"]) << params;
         EXPECT_EQ(reply["error"]["code"], "invalid_argument") << reply;
     }
     ++epoch_;
-    reply = call("character.file.rename", {{"character_id", "guide"}, {"filename", "Seneca.png"}, {"new_filename", "other.png"}});
+    reply = call("character.file.rename", {{"character_id", "guide"}, {"filename", "RENAMED.txt"}, {"new_filename", "other.txt"}});
     EXPECT_FALSE(reply["ok"]);
     EXPECT_EQ(reply["error"]["code"], "vault_changed");
-}
-
-TEST_F(BridgeRouterTest, PictureUploadsAcceptLargeFilesAndValidateParamsAndContext) {
-    bootstrap_epoch();
-    const auto content = encode_base64(std::string(2 * 1024 * 1024, '\xff'));
-    const nlohmann::json params{
-        {"character_id", "guide"}, {"filename", "PICTURE.jpeg"}, {"content_base64", content}};
-    auto reply = call("character.picture.update", params);
-    ASSERT_TRUE(reply["ok"]) << reply;
-    EXPECT_EQ(reply["context_epoch"], epoch_);
-    reply = call("character.picture.get", {{"character_id", "guide"}});
-    ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"]["filename"], "PICTURE.jpeg");
-    EXPECT_EQ(reply["result"]["content_base64"], content);
-    for (const auto& invalid : std::vector<nlohmann::json>{
-             {}, {{"character_id", "guide"}, {"filename", "PICTURE.jpeg"}},
-             {{"character_id", "guide"}, {"filename", "PICTURE.png"}, {"content_base64", 42}},
-             {{"character_id", "guide"}, {"filename", "../PICTURE.png"}, {"content_base64", "AP8="}},
-             {{"character_id", "guide"}, {"filename", "PICTURE.svg"}, {"content_base64", "AP8="}},
-             {{"character_id", "guide"}, {"filename", "PICTURE.png"}, {"content_base64", "!"}},
-             {{"character_id", "guide"}, {"filename", "PICTURE.png"}, {"content_base64", "AP8="}, {"extra", true}}}) {
-        reply = call("character.picture.update", invalid);
-        EXPECT_FALSE(reply["ok"]) << invalid;
-        EXPECT_EQ(reply["error"]["code"], "invalid_argument") << invalid;
-    }
-    auto missing = params;
-    missing["character_id"] = "missing";
-    reply = call("character.picture.update", missing);
-    EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "not_found");
-    ++epoch_;
-    reply = call("character.picture.update", params);
-    EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "vault_changed");
-    --epoch_;
-    EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}})["result"]["content_base64"], content);
-    reply = call("character.picture.update", {{"character_id", "guide"},
-        {"filename", "portrait.png"}, {"content_base64", "bmV3"}, {"previous_filename", "PICTURE.jpeg"}});
-    ASSERT_TRUE(reply["ok"]) << reply;
-    EXPECT_EQ(call("character.picture.get", {{"character_id", "guide"}, {"filename", "portrait.png"}})["result"]["content_base64"], "bmV3");
-    EXPECT_TRUE(call("character.picture.get", {{"character_id", "guide"}, {"filename", "PICTURE.jpeg"}})["result"].is_null());
 }
 
 TEST_F(BridgeRouterTest, BackgroundAudioCommandsValidateAndStatusReadsTheDurableRow) {

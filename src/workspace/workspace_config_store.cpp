@@ -7,12 +7,11 @@
 #include "storage/sqlite_storage.h"
 #include "storage/sync_storage.h"
 #include "storage/workspace_session_database.h"
-#include "util/base64.h"
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/path_name.h"
-#include "util/picture.h"
 #include "util/private_filesystem.h"
+#include "util/text.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
 #include "workspace/workspace_config_editor.h"
@@ -164,12 +163,6 @@ std::filesystem::path require_existing_directory(
     return normalized;
 }
 
-bool is_accepted_stored_name(std::string_view name) {
-    return name != "app.toml" && name != "workspace.toml"
-        && (name.ends_with(".toml") || name.ends_with(".md") || picture_format(name)
-            || (name.starts_with("characters/") && name.ends_with(".txt")));
-}
-
 bool is_forum_member_directory(std::string_view name) {
     constexpr std::string_view forums_prefix = "forums/";
     constexpr std::string_view members_prefix = "members/";
@@ -188,17 +181,6 @@ std::string stored_name_from(
     const std::filesystem::path& source,
     const std::filesystem::path& file) {
     return generic_utf8_path(file.lexically_relative(source));
-}
-
-// Pictures belong only in character definition folders and the Assistant folder.
-bool is_picture_directory(
-    const std::filesystem::path& source,
-    const std::filesystem::path& directory) {
-    const std::string name = stored_name_from(source, directory);
-    return name == "system/assistant"
-        || (name.starts_with("characters/")
-            && std::filesystem::is_regular_file(
-                inspected_status(directory / "character.toml")));
 }
 
 std::filesystem::path join_stored_name(
@@ -294,27 +276,13 @@ std::vector<ConfigFile> collect_config_rows(const std::filesystem::path& source)
             }
             continue;
         }
-        const bool image_extension =
-            supported_picture_extension(utf8_path(file.extension()));
-        const bool picture = image_extension && is_picture_directory(source, file.parent_path());
-        if (image_extension && !picture) {
-            log_warn("Ignoring picture file '" + name + "': unsupported location");
-            continue;
-        }
+        if (!is_workspace_config_name(name)) continue;
         if (std::filesystem::is_symlink(status)) {
-            if (is_accepted_stored_name(name)) {
-                fail_path(
-                    "Configuration path '" + utf8_path(file)
-                    + "' is a symbolic link");
-            }
-            continue;
+            fail_path("Configuration path '" + utf8_path(file) + "' is a symbolic link");
         }
         if (!std::filesystem::is_regular_file(status)) continue;
-        if (!is_accepted_stored_name(name)) continue;
         validate_stored_config_name(name);
-        std::string content = read_file_bytes(file);
-        if (picture) content = encode_base64(content);
-        if (!files.emplace(name, std::move(content)).second) {
+        if (!files.emplace(name, read_file_bytes(file)).second) {
             fail_path("Configuration name '" + name + "' is duplicated");
         }
     }
@@ -444,15 +412,7 @@ void materialize_config_files(
         if (std::filesystem::exists(inspected_status(path))) {
             fail_path("Path '" + utf8_path(path) + "' already exists");
         }
-        std::string content = row.content;
-        if (picture_format(row.name)) {
-            try {
-                content = decode_base64(row.content);
-            } catch (const std::runtime_error&) {
-                fail_path("Picture '" + row.name + "' has malformed base64");
-            }
-        }
-        create_private_file(path, content);
+        create_private_file(path, row.content);
     }
 }
 
@@ -1049,7 +1009,7 @@ void commit_imported_rows(
         preserve_destination_d1(candidate, config_files(old_rows));
         const auto final_rows = config_rows(candidate);
         validate_configuration(final_rows);
-        replace_workspace_config_files(handle, final_rows);
+        apply_config_changes(handle, old_rows, final_rows);
         prune_orphan_sessions(handle, valid_forums);
         record_config_edit(handle, sync_machine, old_rows, final_rows);
         transaction.commit();
@@ -1240,9 +1200,6 @@ struct ConfigPathPolicy {
 
 ConfigPathPolicy config_path_policy(
     std::string_view path, std::string_view assistant_provider) {
-    if (picture_format(path)) {
-        return {false, false, true, "Pictures are not available to configuration tools"};
-    }
     if (path.starts_with("system/assistant/")) {
         return {true, false, true, "Assistant settings are read-only"};
     }
@@ -1550,7 +1507,7 @@ struct WorkspaceConfigStore::Impl {
 
     void load_committed_workspace() {
         storage::SqliteTransaction transaction(*database);
-        const auto rows = read_workspace_config_files(*database);
+        const auto rows = read_workspace_config_files(*database, true);
         validate_config_rows(rows);
         TextFiles files;
         for (const auto& row : rows) files.emplace(row.name, row.content);
@@ -1745,7 +1702,7 @@ struct WorkspaceConfigStore::Impl {
         for (const std::string& path : paths) {
             WorkspaceConfigReadItem item{.path = path};
             const auto found = files.find(path);
-            if (picture_format(path) || found == files.end()) {
+            if (found == files.end()) {
                 item.status = WorkspaceConfigReadStatus::missing;
                 result.files.push_back(std::move(item));
                 continue;
@@ -2306,16 +2263,6 @@ SyncConfigApplyOutcome WorkspaceConfigStore::apply_sync_config_edit(
     return impl_->apply_received_config_edit(set_rows, delete_names, begin_maintenance, op_id);
 }
 
-void WorkspaceConfigStore::apply_character_picture(
-    std::string_view character_id,
-    std::string_view filename,
-    std::string_view content_base64, std::string_view previous_filename) {
-    (void)impl_->edit([&](const Workspace&, WorkspaceConfigEditor& editor) {
-        editor.write_character_picture(character_id, filename, content_base64, previous_filename);
-        return std::vector<std::string>{};
-    });
-}
-
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_settings(
     std::string_view character_id,
     std::string_view provider_id,
@@ -2372,11 +2319,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_character_file(
     std::optional<std::string_view> content,
     bool create) {
     return impl_->edit([&](const Workspace& workspace, WorkspaceConfigEditor& editor) {
-        const bool picture_delete = !content && !create && picture_format(filename);
-        auto affected = picture_delete ? std::vector<std::string>{}
-                                       : forums_using_character(workspace, character_id);
         editor.write_character_file(character_id, filename, content, create);
-        return affected;
+        return forums_using_character(workspace, character_id);
     });
 }
 
@@ -3028,48 +2972,6 @@ FolderStoreCapture WorkspaceConfigStore::capture_folder_store(
     return capture;
 }
 
-std::optional<WorkspaceCharacterPicture> WorkspaceConfigStore::get_character_picture(
-    std::string_view character_id, std::string_view filename) const {
-    if (!filename.empty()) {
-        const auto* format = picture_format(filename);
-        if (!format) {
-            throw std::invalid_argument("Unsupported picture filename.");
-        }
-        try {
-            require_path_component(filename, {});
-        } catch (const std::runtime_error&) {
-            throw std::invalid_argument("Invalid picture filename.");
-        }
-    }
-    const std::lock_guard lock(impl_->mutex);
-    const auto workspace = impl_->snapshot();
-    const auto directory = workspace->character_directory(character_id);
-    if (!directory) throw std::out_of_range("That character was not found.");
-    const auto relative = directory->lexically_relative(workspace->root());
-    const auto read_picture = [&](std::string_view name, const PictureFormat& format)
-        -> std::optional<WorkspaceCharacterPicture> {
-        const auto& files = workspace->source_files();
-        auto content = files.find(generic_utf8_path(relative / name));
-        if (content != files.end()) {
-            return WorkspaceCharacterPicture{
-                .filename = std::string(name),
-                .mime_type = std::string(format.mime_type),
-                .content_base64 = content->second,
-            };
-        }
-        return std::nullopt;
-    };
-    if (!filename.empty()) return read_picture(filename, *picture_format(filename));
-    for (const auto& format : picture_formats) {
-        for (const auto& name : workspace->find_character(character_id)->filenames) {
-            if (picture_format(name) == &format) {
-                if (auto picture = read_picture(name, format)) return picture;
-            }
-        }
-    }
-    return std::nullopt;
-}
-
 WorkspaceConfigRevision WorkspaceConfigStore::config_revision() const {
     const std::lock_guard lock(impl_->mutex);
     return impl_->revision;
@@ -3172,7 +3074,7 @@ void WorkspaceConfigStore::merge(
             Database handle(source, Database::Mode::read_write, source_password);
             validate_workspace_session_database_identity(handle);
             validate_workspace_session_contents(handle);
-            source_rows = read_workspace_config_files(handle);
+            source_rows = read_workspace_config_files(handle, true);
             ignore_source_d1(source_rows);
             validate_config_rows(source_rows);
         }

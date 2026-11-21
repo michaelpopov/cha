@@ -51,7 +51,6 @@ constexpr int kApplicationIcon = 101;
 constexpr UINT kFileExit = 1001;
 constexpr UINT kLayoutSplit = 1003;
 constexpr UINT kViewSidebar = 1004;
-constexpr UINT kViewPictures = 1005;
 constexpr UINT kViewToolbar = 1006;
 constexpr UINT kViewNotesPrompt = 1007;
 constexpr UINT kViewChatToolbar = 1008;
@@ -334,7 +333,7 @@ std::wstring without_fragment(std::wstring_view uri) {
 }
 
 nlohmann::json default_view_state() {
-    return {{"split", false}, {"sidebar", true}, {"pictures", false}, {"toolbar", true},
+    return {{"split", false}, {"sidebar", true}, {"toolbar", true},
         {"chat_toolbar", true}, {"notes_prompt", true}, {"russian", false}, {"notes_font_size", 14}};
 }
 
@@ -682,7 +681,6 @@ private:
         ::AppendMenuW(main_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"&File");
         ::AppendMenuW(layout_menu, MF_STRING, kLayoutSplit, L"Split view");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewSidebar, L"Sidebar");
-        ::AppendMenuW(layout_menu, MF_STRING, kViewPictures, L"Pictures");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewToolbar, L"Toolbar");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewChatToolbar, L"Chat toolbar");
         ::AppendMenuW(layout_menu, MF_STRING | MF_CHECKED, kViewNotesPrompt, L"Notes prompt");
@@ -1345,7 +1343,7 @@ private:
     void update_view_menu(const nlohmann::json& state) {
         const auto menu = ::GetSubMenu(::GetMenu(window_), 1);
         const std::pair<const char*, UINT> entries[] = {{"split", kLayoutSplit}, {"sidebar", kViewSidebar},
-            {"pictures", kViewPictures}, {"toolbar", kViewToolbar}, {"chat_toolbar", kViewChatToolbar},
+            {"toolbar", kViewToolbar}, {"chat_toolbar", kViewChatToolbar},
             {"notes_prompt", kViewNotesPrompt}, {"russian", kViewRussian}};
         for (const auto& [key, id] : entries)
             ::CheckMenuItem(menu, id, MF_BYCOMMAND | (state[key].get<bool>() ? MF_CHECKED : MF_UNCHECKED));
@@ -1755,9 +1753,6 @@ private:
             break;
         case kViewSidebar:
             set_layout("toggle-sidebar");
-            break;
-        case kViewPictures:
-            set_layout("toggle-pictures");
             break;
         case kViewChatToolbar:
             set_layout("toggle-chat-toolbar");

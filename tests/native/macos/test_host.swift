@@ -102,7 +102,7 @@ private func isProbe(_ expectation: ProbeExpectation) -> Bool {
     }
 }
 
-// Picture layout checks select a narrow window with CHA_NATIVE_TEST_WIDTH.
+// UI checks can select a narrow window with CHA_NATIVE_TEST_WIDTH.
 private func testWidth(_ fallback: Double) -> Double {
     ProcessInfo.processInfo.environment["CHA_NATIVE_TEST_WIDTH"].flatMap { Double($0) } ?? fallback
 }

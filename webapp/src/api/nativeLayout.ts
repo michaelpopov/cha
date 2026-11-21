@@ -7,7 +7,6 @@ export function readInitialNativeViewState(): Partial<ViewPreferences> {
   const result: Partial<ViewPreferences> = {};
   if (typeof fields.split === 'boolean') result.layoutMode = fields.split ? 'split' : 'single';
   if (typeof fields.sidebar === 'boolean') result.sidebarOpen = fields.sidebar;
-  if (typeof fields.pictures === 'boolean') result.pictureOpen = fields.pictures;
   if (typeof fields.toolbar === 'boolean') result.notesToolbarVisible = fields.toolbar;
   const fontSize = fields.notes_font_size;
   if (typeof fontSize === 'number' && Number.isInteger(fontSize)
@@ -33,7 +32,7 @@ export function reportNativeLayout(view: ViewPreferences) {
   if (!connectionId) return;
   window.__CHA_NATIVE_POST__?.(JSON.stringify({
     native_action: 'view_state', connection_id: connectionId,
-    split: view.layoutMode === 'split', sidebar: view.sidebarOpen, pictures: view.pictureOpen,
+    split: view.layoutMode === 'split', sidebar: view.sidebarOpen,
     toolbar: view.notesToolbarVisible, notes_font_size: view.notesFontSize,
     notes_prompt: view.notesPromptVisible, chat_toolbar: view.chatToolbarVisible, russian: view.russianVisible,
   }));

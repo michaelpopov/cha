@@ -11,7 +11,7 @@ const until = async (label, predicate) => {
   }
   throw new Error('Timed out: ' + label);
 };
-const items = { split: 'Split view', sidebar: 'Sidebar', pictures: 'Pictures', toolbar: 'Toolbar',
+const items = { split: 'Split view', sidebar: 'Sidebar', toolbar: 'Toolbar',
   chat_toolbar: 'Chat toolbar', notes_prompt: 'Notes prompt', russian: 'Russian' };
 const sameMenu = (menu, value) => Object.keys(items).every(key => menu[key] === value[key]);
 const inverse = value => ({ ...value, ...Object.fromEntries(Object.keys(items).map(key => [key, !value[key]])) });
@@ -103,8 +103,8 @@ if (mode === 'hold') {
   if (mode === 'failure-reload') return 'reload';
   if (mode === 'recovery') {
     await native({ action: 'writable', value: true });
-    await toggle('pictures');
-    changed.pictures = !changed.pictures;
+    await toggle('toolbar');
+    changed.toolbar = !changed.toolbar;
     await until('full snapshot after recovery', async () => sameMenu((await snapshot()).menu, changed));
   }
 }

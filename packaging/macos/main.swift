@@ -46,7 +46,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
     private var nativeBridge: ChaNativeBridgeReceiver?
     private var splitViewMenuItem: NSMenuItem?
     private var sidebarMenuItem: NSMenuItem?
-    private var picturesMenuItem: NSMenuItem?
     private var toolbarMenuItem: NSMenuItem?
     private var chatToolbarMenuItem: NSMenuItem?
     private var notesPromptMenuItem: NSMenuItem?
@@ -185,10 +184,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         sidebar.target = self
         sidebar.state = .on
         sidebarMenuItem = sidebar
-        let pictures = layoutMenu.addItem(
-            withTitle: "Pictures", action: #selector(togglePictures(_:)), keyEquivalent: "")
-        pictures.target = self
-        picturesMenuItem = pictures
         let toolbar = layoutMenu.addItem(
             withTitle: "Toolbar", action: #selector(toggleToolbar(_:)), keyEquivalent: "")
         toolbar.target = self
@@ -210,7 +205,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
         russianMenuItem = russian
         splitView.state = viewState.split ? .on : .off
         sidebar.state = viewState.sidebar ? .on : .off
-        pictures.state = viewState.pictures ? .on : .off
         toolbar.state = viewState.toolbar ? .on : .off
         chatToolbar.state = viewState.chatToolbar ? .on : .off
         notesPrompt.state = viewState.notesPrompt ? .on : .off
@@ -241,10 +235,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
 
     @objc private func toggleSidebar(_ sender: Any?) {
         nativeBridge?.setLayout("toggle-sidebar")
-    }
-
-    @objc private func togglePictures(_ sender: Any?) {
-        nativeBridge?.setLayout("toggle-pictures")
     }
 
     @objc private func toggleChatToolbar(_ sender: Any?) {
@@ -434,7 +424,6 @@ private final class ApplicationDelegate: NSObject, NSApplicationDelegate,
                 self.viewState = next
                 self.splitViewMenuItem?.state = next.split ? .on : .off
                 self.sidebarMenuItem?.state = next.sidebar ? .on : .off
-                self.picturesMenuItem?.state = next.pictures ? .on : .off
                 self.toolbarMenuItem?.state = next.toolbar ? .on : .off
                 self.chatToolbarMenuItem?.state = next.chatToolbar ? .on : .off
                 self.notesPromptMenuItem?.state = next.notesPrompt ? .on : .off

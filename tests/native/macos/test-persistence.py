@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 REPOSITORY = Path(__file__).resolve().parents[3]
-DEFAULTS = dict(split=False, sidebar=True, pictures=False, toolbar=True,
+DEFAULTS = dict(split=False, sidebar=True, toolbar=True,
                 chat_toolbar=True, notes_prompt=True, russian=False, notes_font_size=14)
 
 
@@ -106,10 +106,11 @@ def main():
         assert preferences.read_bytes() == before
         print('PASS stale, incomplete, and nonboolean native reports are ignored', flush=True)
 
-        preferences.write_text(json.dumps(dict(russian=True, sidebar=0, obsolete=True, notes_font_size=18.5)))
+        preferences.write_text(json.dumps(dict(russian=True, sidebar=0, pictures=True, obsolete=True, notes_font_size=18.5)))
         stderr = observe(dict(DEFAULTS, russian=True))
         assert 'invalid View preference sidebar' in stderr and 'unknown View preference obsolete' in stderr
         assert 'invalid View preference notes_font_size' in stderr
+        assert 'unknown View preference pictures' in stderr
         for contents_text in ['not JSON', '[]', 'null']:
             preferences.write_text(contents_text)
             assert 'cannot read View preferences' in observe(DEFAULTS)
@@ -133,7 +134,7 @@ def main():
         stderr = launch('failure-reload', DEFAULTS, dict(DEFAULTS, sidebar=False))
         assert stderr.count('cannot write View preferences') == 1, 'An equal report retried a failed save'
         assert preferences.read_bytes() == before, 'Reload replaced the previous saved preferences'
-        recovered = dict(DEFAULTS, sidebar=False, pictures=True)
+        recovered = dict(DEFAULTS, sidebar=False, toolbar=False)
         stderr = launch('recovery', DEFAULTS, recovered)
         assert 'cannot write View preferences' in stderr
         assert json.loads(preferences.read_bytes()) == recovered

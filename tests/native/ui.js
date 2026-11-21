@@ -72,7 +72,10 @@ async function nativeParity() {
     ));
     // Layout checks cover the settled state, not animation timing.
     document.querySelector('main').style.transition = 'none';
-    check(!document.querySelector('.cha-picture'), 'picture starts closed');
+    check(!document.querySelector('.cha-picture'), 'Pictures panel is absent');
+    const chatArea = bounds(document.querySelector('[aria-label="Chat area"]'));
+    const main = bounds(document.querySelector('main'));
+    check(Math.abs(chatArea.width - main.width) < 1, 'Chat does not fill the available width');
     const chat = composerLayout();
     setValue(message, 'UI smoke draft\nSecond line');
     await until('Chat draft ready', () => button('Send message')?.disabled === false);

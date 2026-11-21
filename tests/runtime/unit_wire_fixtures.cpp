@@ -108,9 +108,6 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
             .writable = true,
         }),
         load_fixture("character-detail.json"));
-    EXPECT_EQ(
-        nlohmann::json(CharacterPicture{"PICTURE.png", "image/png", "bm90IGFuIGltYWdl"}),
-        load_fixture("character-picture.json"));
 
     EXPECT_EQ(
         nlohmann::json(ProviderDetail{

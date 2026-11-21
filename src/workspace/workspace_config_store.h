@@ -33,12 +33,6 @@ struct WorkspaceNotes;
 struct WorkspaceWebSearch;
 struct WorkspaceVoiceOutput;
 
-struct WorkspaceCharacterPicture {
-    std::string filename;
-    std::string mime_type;
-    std::string content_base64;
-};
-
 struct WorkspaceConfigTransfer {
     std::size_t file_count{};
 };
@@ -250,10 +244,6 @@ public:
         const std::vector<std::string>& delete_names,
         const std::function<bool()>& begin_maintenance = {},
         std::string_view op_id = {});
-    void apply_character_picture(
-        std::string_view character_id,
-        std::string_view filename,
-        std::string_view content_base64, std::string_view previous_filename = {});
     WorkspaceConfigEditResult apply_character_settings(
         std::string_view character_id,
         std::string_view provider_id,
@@ -429,8 +419,6 @@ public:
     bool retire_note_audio(std::int64_t attempt_id, EventSeverity severity, std::string_view message);
     void save_note_audio(std::int64_t id, const std::vector<std::filesystem::path>& clips);
 
-    [[nodiscard]] std::optional<WorkspaceCharacterPicture> get_character_picture(
-        std::string_view character_id, std::string_view filename = {}) const;
     [[nodiscard]] WorkspaceConfigRevision config_revision() const;
     [[nodiscard]] WorkspaceConfigListResult list_config(std::string_view prefix) const;
     [[nodiscard]] WorkspaceConfigReadResult read_config(

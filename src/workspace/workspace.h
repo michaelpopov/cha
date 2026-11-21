@@ -154,8 +154,6 @@ struct WorkspaceCharacter {
     std::string markdown;
     std::string editable_markdown;
     std::map<std::string, std::string, std::less<>> markdown_files;
-    // All direct files for the character file list, without binary content.
-    std::vector<std::string> filenames;
     // Alternative names from nicknames.txt for recipient detection and prompts.
     std::vector<std::string> nicknames;
 };

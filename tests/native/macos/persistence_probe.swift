@@ -26,7 +26,8 @@ final class NativePersistenceProbe: NSObject, WKScriptMessageHandlerWithReply {
 
     private var menu: NSMenu { NSApp.mainMenu!.items.compactMap(\.submenu).first { $0.title == "View" }! }
     private var checkmarks: [String: Bool] {
-        let keys = ["split", "sidebar", "pictures", "toolbar", "chat_toolbar", "notes_prompt", "russian"]
+        let keys = ["split", "sidebar", "toolbar", "chat_toolbar", "notes_prompt", "russian"]
+        precondition(menu.items.count == keys.count && menu.item(withTitle: "Pictures") == nil)
         return Dictionary(uniqueKeysWithValues: zip(keys, menu.items.map { $0.state == .on }))
     }
 

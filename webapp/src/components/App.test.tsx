@@ -627,7 +627,7 @@ function renderCharacterFile(client: ChaClient, filename: string | null, charact
   ) };
 }
 
-it('opens Files from character Settings and distinguishes Markdown, text, and picture entries', async () => {
+it('opens character Files from Settings and lists only Markdown and text', async () => {
   const user = userEvent.setup();
   const getCharacterFile = vi.fn(async (_id, filename) => ({
     filename, content: filename === 'NOTES.txt' ? '# Plain text\n<script>literal</script>' : '# Voice', writable: true,
@@ -644,7 +644,7 @@ it('opens Files from character Settings and distinguishes Markdown, text, and pi
   await user.click(await screen.findByRole('button', { name: 'Files' }));
   const files = await screen.findByLabelText('Character files navigation');
   expect(await within(files).findByRole('button', { name: 'VOICE.md' })).toBeInTheDocument();
-  expect(within(files).getByRole('button', { name: 'PICTURE.png' })).toBeInTheDocument();
+  expect(within(files).queryByRole('button', { name: 'PICTURE.png' })).not.toBeInTheDocument();
   for (const name of ['CHARACTER.md', 'character.toml', 'PROFILE.md']) {
     expect(within(files).queryByRole('button', { name })).not.toBeInTheDocument();
   }
@@ -661,13 +661,12 @@ it('opens Files from character Settings and distinguishes Markdown, text, and pi
   expect(await screen.findByLabelText('Provider')).toHaveValue('terra');
 });
 
-it.each(['NOTES.md', 'NOTES.txt', 'portrait.png'])('renames %s inline on its content screen', async filename => {
+it.each(['NOTES.md', 'NOTES.txt'])('renames %s inline on its content screen', async filename => {
   const user = userEvent.setup();
   const renameCharacterFile = vi.fn(async () => {});
   const { navigate } = renderCharacterFile(fixtureClient({
     renameCharacterFile,
     getCharacterFile: async () => ({ filename, content: 'Original content', writable: true }),
-    getCharacterPicture: async () => ({ filename, mime_type: 'image/png', content_base64: 'b3JpZ2luYWw=' }),
   }), filename);
   await user.click(await screen.findByRole('button', { name: `Rename ${filename}` }));
   const input = screen.getByRole('textbox', { name: 'Filename' });
@@ -688,72 +687,6 @@ it.each(['NOTES.md', 'NOTES.txt', 'portrait.png'])('renames %s inline on its con
   await user.keyboard('{Enter}');
   await waitFor(() => expect(renameCharacterFile).toHaveBeenCalledWith('guide', filename, renamed));
   expect(navigate).toHaveBeenCalledWith({ type: 'inspect-character-file', characterId: 'guide', filename: renamed });
-});
-
-it('keeps a picture visible and the filename editable after a failed rename', async () => {
-  const user = userEvent.setup();
-  const renameCharacterFile = vi.fn().mockRejectedValueOnce(new ChaError('invalid_argument', 'A file with this name already exists.')).mockResolvedValue(undefined);
-  const { navigate } = renderCharacterFile(fixtureClient({
-    renameCharacterFile,
-    getCharacterPicture: async () => ({ filename: 'portrait.png', mime_type: 'image/png', content_base64: 'b3JpZ2luYWw=' }),
-  }), 'portrait.png');
-  await user.click(await screen.findByRole('button', { name: 'Rename portrait.png' }));
-  await user.clear(screen.getByRole('textbox', { name: 'Filename' }));
-  await user.type(screen.getByRole('textbox', { name: 'Filename' }), 'other.png');
-  await user.click(screen.getByRole('button', { name: 'Save filename' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('A file with this name already exists.');
-  expect(screen.getByRole('img', { name: 'portrait.png' })).toHaveAttribute('src', 'data:image/png;base64,b3JpZ2luYWw=');
-  expect(navigate).not.toHaveBeenCalled();
-  expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue('other.png');
-  await user.click(screen.getByRole('button', { name: 'Save filename' }));
-  await waitFor(() => expect(navigate).toHaveBeenCalledWith({ type: 'inspect-character-file', characterId: 'guide', filename: 'other.png' }));
-});
-
-it('views, replaces, and deletes a selected picture without opening a text editor', async () => {
-  const user = userEvent.setup();
-  let content_base64 = 'b2xk';
-  const getCharacterPicture = vi.fn(async () => ({ filename: 'my-portrait.PNG' as const, mime_type: 'image/png' as const, content_base64 }));
-  const getCharacterFile = vi.fn();
-  const updateCharacterPicture = vi.fn(async () => { content_base64 = 'bmV3'; });
-  const deleteCharacterFile = vi.fn(async () => {});
-  const { navigate } = renderCharacterFile(fixtureClient({
-    getCharacterPicture, getCharacterFile, updateCharacterPicture, deleteCharacterFile,
-  }), 'my-portrait.PNG');
-  expect(await screen.findByRole('img', { name: 'my-portrait.PNG' })).toHaveAttribute('src', 'data:image/png;base64,b2xk');
-  expect(getCharacterPicture).toHaveBeenCalledWith('guide', 'my-portrait.PNG');
-  expect(getCharacterFile).not.toHaveBeenCalled();
-  expect(screen.queryByRole('button', { name: 'Edit character file' })).not.toBeInTheDocument();
-  const file = new File(['picture bytes'], 'portrait.png', { type: 'image/png' });
-  await user.upload(screen.getByLabelText('Replacement picture file'), file);
-  await waitFor(() => expect(updateCharacterPicture).toHaveBeenCalledWith('guide', expect.objectContaining({ name: 'my-portrait.PNG' }), 'my-portrait.PNG'));
-  await waitFor(() => expect(screen.getByRole('img', { name: 'my-portrait.PNG' })).toHaveAttribute('src', 'data:image/png;base64,bmV3'));
-  await user.click(screen.getByRole('button', { name: 'Delete my-portrait.PNG' }));
-  expect(deleteCharacterFile).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Cancel' }));
-  expect(deleteCharacterFile).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Delete my-portrait.PNG' }));
-  await user.click(screen.getByRole('button', { name: 'Delete file' }));
-  await waitFor(() => expect(deleteCharacterFile).toHaveBeenCalledWith('guide', 'my-portrait.PNG'));
-  expect(navigate).toHaveBeenCalledWith({ type: 'show-character-files' });
-});
-
-it('keeps the current picture when a replacement fails and can retry with a different format', async () => {
-  const user = userEvent.setup();
-  let replaced = false;
-  const getCharacterPicture = vi.fn(async () => replaced
-    ? { filename: 'PICTURE.jpg' as const, mime_type: 'image/jpeg' as const, content_base64: 'bmV3' }
-    : { filename: 'PICTURE.png' as const, mime_type: 'image/png' as const, content_base64: 'b2xk' });
-  const updateCharacterPicture = vi.fn()
-    .mockRejectedValueOnce(new ChaError('invalid_argument', 'The picture could not be saved.'))
-    .mockImplementation(async () => { replaced = true; });
-  const { navigate } = renderCharacterFile(fixtureClient({ getCharacterPicture, updateCharacterPicture }), 'PICTURE.png');
-  await screen.findByRole('img');
-  const file = new File(['picture'], 'portrait.jpg', { type: 'image/jpeg' });
-  await user.upload(screen.getByLabelText('Replacement picture file'), file);
-  expect(await screen.findByRole('alert')).toHaveTextContent('The picture could not be saved.');
-  expect(screen.getByRole('img')).toHaveAttribute('src', 'data:image/png;base64,b2xk');
-  await user.upload(screen.getByLabelText('Replacement picture file'), file);
-  await waitFor(() => expect(navigate).toHaveBeenCalledWith({ type: 'inspect-character-file', characterId: 'guide', filename: 'PICTURE.jpg' }));
 });
 
 it('uploads a text file with its .txt filename and leaves Files accessible on cancel', async () => {
@@ -827,6 +760,11 @@ it('shows the built-in Assistant guide as read-only Markdown without a PROFILE.m
   expect(within(navigation).queryByRole('button', { name: 'Edit character profile' })).not.toBeInTheDocument();
   expect(within(navigation).queryByRole('button', { name: 'Replace character description from file' })).not.toBeInTheDocument();
   expect(getCharacterFile).not.toHaveBeenCalled();
+  fireEvent.click(within(navigation).getByRole('button', { name: 'Character settings' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Files' }));
+  const files = await screen.findByLabelText('Character files navigation');
+  expect(await within(files).findByText('No files.')).toBeInTheDocument();
+  expect(within(files).queryByRole('button', { name: 'New file' })).not.toBeInTheDocument();
 });
 
 it('warns when PROFILE.md is missing without falling back to another file', async () => {
@@ -914,95 +852,6 @@ it('preserves the basename when adding content from a dotfile', async () => {
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue('.gitignore.md'));
   await user.click(screen.getByRole('button', { name: 'Add file' }));
   expect(createCharacterFile).toHaveBeenCalledWith('guide', '.gitignore.md', 'Notes');
-});
-
-it.each(['XXXX.jpg', 'XXXX.jpeg', 'XXXX.png'])('uploads %s as a picture without reading or displaying it as text', async (name) => {
-  const user = userEvent.setup();
-  const updateCharacterPicture = vi.fn(async () => {});
-  const createCharacterFile = vi.fn();
-  renderCharacterFile(fixtureClient({ updateCharacterPicture, createCharacterFile }), null);
-  expect(screen.getByRole('button', { name: 'Upload file' })).toHaveClass('cha-button-primary');
-  expect(screen.queryByRole('textbox', { name: 'Content' })).not.toBeInTheDocument();
-  const file = new File([new Uint8Array([0, 255, 128, 1])], name, { type: 'image/jpeg' });
-  const text = vi.fn();
-  Object.defineProperty(file, 'text', { value: text });
-  await user.upload(screen.getByLabelText('File to upload'), file);
-  expect(await screen.findByRole('img', { name: `Preview of ${name}` })).toHaveAttribute('src', 'data:image/jpeg;base64,AP+AAQ==');
-  expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue(name);
-  expect(screen.getByRole('textbox', { name: 'Filename' })).toBeRequired();
-  expect(screen.queryByRole('textbox', { name: 'Content' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Add file' }));
-  await waitFor(() => expect(updateCharacterPicture).toHaveBeenCalledWith('guide', file));
-  expect(screen.getByRole('status')).toHaveTextContent('Added as ' + name);
-  expect(createCharacterFile).not.toHaveBeenCalled();
-  expect(text).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Write text' }));
-  expect(screen.getByRole('textbox', { name: 'Content' })).toHaveValue('');
-  expect(screen.getByRole('textbox', { name: 'Filename' })).toHaveValue(name);
-});
-
-it('keeps a filename entered before a picture upload and saves under the editable name', async () => {
-  const user = userEvent.setup();
-  const updateCharacterPicture = vi.fn(async () => {});
-  renderCharacterFile(fixtureClient({ updateCharacterPicture }), null);
-  const filename = screen.getByRole('textbox', { name: 'Filename' });
-  const add = screen.getByRole('button', { name: 'Add file' });
-  expect(filename).toHaveValue('');
-  expect(add).toBeDisabled();
-  await user.type(filename, 'my-portrait.png');
-  expect(add).toBeDisabled();
-  await user.upload(screen.getByLabelText('File to upload'), new File(['bytes'], 'original.png', { type: 'image/png' }));
-  await screen.findByRole('img', { name: 'Preview of original.png' });
-  expect(filename).toHaveValue('my-portrait.png');
-  await user.clear(filename);
-  expect(add).toBeDisabled();
-  await user.type(filename, 'renamed.png');
-  await user.click(add);
-  await waitFor(() => expect(updateCharacterPicture).toHaveBeenCalledWith('guide', expect.objectContaining({ name: 'renamed.png', type: 'image/png', size: 5 })));
-  expect(await screen.findByRole('status')).toHaveTextContent('Added as renamed.png');
-});
-
-it('fills a blank picture filename from the upload without replacing it on another upload', async () => {
-  const user = userEvent.setup();
-  renderCharacterFile(fixtureClient(), null);
-  const filename = screen.getByRole('textbox', { name: 'Filename' });
-  await user.type(filename, '   ');
-  await user.upload(screen.getByLabelText('File to upload'), new File(['first'], 'first.png', { type: 'image/png' }));
-  await screen.findByRole('img', { name: 'Preview of first.png' });
-  expect(filename).toHaveValue('first.png');
-  await user.upload(screen.getByLabelText('File to upload'), new File(['second'], 'second.png', { type: 'image/png' }));
-  await screen.findByRole('img', { name: 'Preview of second.png' });
-  expect(filename).toHaveValue('first.png');
-});
-
-it('offers picture uploads for Assistant without offering text edits', async () => {
-  const user = userEvent.setup();
-  const updateCharacterPicture = vi.fn(async () => {});
-  renderCharacterFile(fixtureClient({
-    updateCharacterPicture,
-  }), null, 'assistant');
-  expect(screen.getByRole('button', { name: 'Upload file' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Write text' })).not.toBeInTheDocument();
-  const file = new File(['bytes'], 'portrait.png', { type: 'image/png' });
-  await user.upload(screen.getByLabelText('File to upload'), file);
-  await screen.findByRole('img', { name: 'Preview of portrait.png' });
-  await user.click(screen.getByRole('button', { name: 'Add file' }));
-  await waitFor(() => expect(updateCharacterPicture).toHaveBeenCalledWith('assistant', file));
-});
-
-it('keeps the selected picture for retry when saving fails', async () => {
-  const user = userEvent.setup();
-  const updateCharacterPicture = vi.fn()
-    .mockRejectedValueOnce(new ChaError('invalid_argument', 'Picture could not be saved.'))
-    .mockResolvedValue(undefined);
-  renderCharacterFile(fixtureClient({ updateCharacterPicture }), null);
-  await user.upload(screen.getByLabelText('File to upload'), new File(['bytes'], 'portrait.jpg', { type: 'image/jpeg' }));
-  await screen.findByRole('img', { name: 'Preview of portrait.jpg' });
-  await user.click(screen.getByRole('button', { name: 'Add file' }));
-  expect(await screen.findByRole('alert')).toHaveTextContent('Picture could not be saved.');
-  await user.click(screen.getByRole('button', { name: 'Add file' }));
-  expect(await screen.findByRole('status')).toHaveTextContent('Added as portrait.jpg');
-  expect(updateCharacterPicture).toHaveBeenCalledTimes(2);
 });
 
 it('rejects binary files in the text-only replacement control', async () => {
@@ -3209,81 +3058,36 @@ it('keeps form Save disabled until the newest Welcome refresh ends', async () =>
   await waitFor(() => expect(save).toBeEnabled());
 });
 
-describe('picture sizing', () => {
-  afterEach(() => vi.unstubAllGlobals());
-  function geometry(startWidth = 900) {
-    let width = startWidth;
-    const callbacks = new Set<ResizeObserverCallback>();
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(private callback: ResizeObserverCallback) { callbacks.add(callback); }
-      observe() { this.callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
-      disconnect() { callbacks.delete(this.callback); }
-    });
-    return (nextWidth: number) => act(() => {
-      width = nextWidth;
-      callbacks.forEach((callback) => callback([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver));
-    });
-  }
-
-  it.each(['keyboard', 'pointer', 'toggle', 'tabs'])('keeps an unused session and its picture when changing the panel with %s', async (control) => {
-    geometry();
-    vi.stubGlobal('PointerEvent', class extends MouseEvent {
-      pointerId: number;
-      constructor(type: string, init: PointerEventInit) { super(type, init); this.pointerId = init.pointerId ?? 0; }
-    });
-    const user = userEvent.setup();
-    const events = drivableSessionEvents();
-    const discardUnusedSession = vi.fn(async () => undefined);
-    const unused = { ...lobbySnapshot('unused', 'New session'), recent_pending: true, discardable: true };
-    render(<App client={fixtureClient({
-      createSession: async () => ({ id: 'unused', label: 'New session' }),
-      getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'welcome' ? snapshotFixture : unused,
-      getCharacter: async () => ({ ...characterDetailFixture, markdown_files: ['PICTURE.png'] }),
-      getCharacterPicture: async () => ({ filename: 'PICTURE.png', mime_type: 'image/png', content_base64: 'portrait' }),
-      discardUnusedSession,
-    })} connectSessionEvents={events.connect} />);
-    await user.click(await screen.findByRole('button', { name: 'Actions for forum The Lobby' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Create new session' }));
-    await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/unused/'));
-    const index = events.connections.findIndex(({ key }) => key === 'lobby/unused');
-    act(() => events.handlers[index].onSnapshot(unused));
-    await screen.findByRole('textbox', { name: 'Message' });
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
-    const input = screen.getByRole('textbox', { name: 'Message' });
-    await user.type(input, 'Unsent draft');
-    const divider = screen.getByRole('separator', { name: 'Resize picture' });
-    if (control === 'keyboard') {
-      fireEvent.keyDown(divider, { key: 'ArrowLeft' });
-      expect(divider).toHaveAttribute('aria-valuenow', '296');
-    } else if (control === 'pointer') {
-      divider.setPointerCapture = vi.fn();
-      divider.hasPointerCapture = vi.fn().mockReturnValue(true);
-      divider.releasePointerCapture = vi.fn();
-      fireEvent.pointerDown(divider, { pointerId: 1, button: 0, clientX: 500 });
-      fireEvent.pointerMove(divider, { pointerId: 1, clientX: 450 });
-      fireEvent.pointerUp(divider, { pointerId: 1 });
-      expect(divider).toHaveAttribute('aria-valuenow', '330');
-    } else if (control === 'toggle') {
-      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-      act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    } else {
-      await user.click(screen.getByRole('tab', { name: 'Notes' }));
-      expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
-      expect(input).not.toBeInTheDocument();
-      await user.click(screen.getByRole('tab', { name: 'Chat' }));
-    }
-    expect(await screen.findByRole('img', { name: 'Guide' })).toBeInTheDocument();
-    const currentInput = screen.getByRole('textbox', { name: 'Message' });
-    expect(currentInput).toHaveValue('Unsent draft');
-    expect(currentInput).toBeEnabled();
-    expect(window.location.hash).toBe('#/s/lobby/unused/');
-    expect(discardUnusedSession).not.toHaveBeenCalled();
-    expect(events.connections[index].close).not.toHaveBeenCalled();
-    act(() => events.handlers[index].onSnapshot({ ...unused, default_character_id: '-' }));
-    expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('-');
-  });
-
+it('keeps an unused session and its draft when switching between Chat and Notes', async () => {
+  const user = userEvent.setup();
+  const events = drivableSessionEvents();
+  const discardUnusedSession = vi.fn(async () => undefined);
+  const unused = { ...lobbySnapshot('unused', 'New session'), recent_pending: true, discardable: true };
+  render(<App client={fixtureClient({
+    createSession: async () => ({ id: 'unused', label: 'New session' }),
+    getSessionSnapshot: async (_forumId, sessionId) => sessionId === 'welcome' ? snapshotFixture : unused,
+    discardUnusedSession,
+  })} connectSessionEvents={events.connect} />);
+  await user.click(await screen.findByRole('button', { name: 'Actions for forum The Lobby' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Create new session' }));
+  await waitFor(() => expect(window.location.hash).toBe('#/s/lobby/unused/'));
+  const index = events.connections.findIndex(({ key }) => key === 'lobby/unused');
+  act(() => events.handlers[index].onSnapshot(unused));
+  await screen.findByRole('textbox', { name: 'Message' });
+  const input = screen.getByRole('textbox', { name: 'Message' });
+  await user.type(input, 'Unsent draft');
+  await user.click(screen.getByRole('tab', { name: 'Notes' }));
+  expect(screen.getByRole('main')).toHaveAttribute('data-view', 'notes');
+  expect(input).not.toBeInTheDocument();
+  await user.click(screen.getByRole('tab', { name: 'Chat' }));
+  const currentInput = screen.getByRole('textbox', { name: 'Message' });
+  expect(currentInput).toHaveValue('Unsent draft');
+  expect(currentInput).toBeEnabled();
+  expect(window.location.hash).toBe('#/s/lobby/unused/');
+  expect(discardUnusedSession).not.toHaveBeenCalled();
+  expect(events.connections[index].close).not.toHaveBeenCalled();
+  act(() => events.handlers[index].onSnapshot({ ...unused, default_character_id: '-' }));
+  expect(screen.getByRole('combobox', { name: 'Choose message target' })).toHaveValue('-');
 });
 
 it('reports restored View choices on its first commit in StrictMode', async () => {

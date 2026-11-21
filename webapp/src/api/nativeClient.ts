@@ -29,7 +29,6 @@ import {
   isCloudStoreDetail,
   isCloudStoreList,
   isCharacterDetail,
-  isCharacterPicture,
   isCommandResult,
   isForumDetail,
   isMarkdownFile,
@@ -68,7 +67,6 @@ import {
   type AudioDownloadBatchAcceptance,
   type ChaClient,
   type ForumSystemPrompt,
-  type CharacterPicture,
   type CoverRequest,
   type CreateApiKeyRequest,
   type CreateProviderRequest,
@@ -410,37 +408,6 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { forum_id: forumId, session_id: sessionId },
       isCommandResult,
     ),
-    getCharacterPicture: (characterId, filename) => call(
-      'character.picture.get',
-      { character_id: characterId, ...(filename === undefined ? {} : { filename }) },
-      (value): value is CharacterPicture | null => value === null || isCharacterPicture(value),
-    ),
-    updateCharacterPicture: async (characterId, file, previousFilename) => {
-      const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
-      if (!['.png', '.webp', '.jpg', '.jpeg', '.gif'].includes(extension)) {
-        throw new ChaError('invalid_argument', 'Use a .png, .jpg, .jpeg, .webp, or .gif filename.');
-      }
-      // Base64 and JSON must fit within the native bridge's 16 MiB request limit.
-      if (file.size > 8 * 1024 * 1024) {
-        throw new ChaError('body_too_large', 'Choose a picture no larger than 8 MB.');
-      }
-      const epoch = bridge.contextEpoch();
-      const data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new ChaError('invalid_argument', 'The picture file could not be read.'));
-        reader.readAsDataURL(file);
-      });
-      if (epoch !== bridge.contextEpoch()) {
-        throw new ChaError('vault_changed', 'The active vault changed. Choose the picture again.');
-      }
-      await call('character.picture.update', {
-        character_id: characterId,
-        filename: file.name,
-        content_base64: data.slice(data.indexOf(',') + 1),
-        ...(previousFilename === undefined ? {} : { previous_filename: previousFilename }),
-      }, isRecord);
-    },
     getCharacter: (characterId) => call(
       'character.get',
       { character_id: characterId },

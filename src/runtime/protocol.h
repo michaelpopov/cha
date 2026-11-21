@@ -300,12 +300,6 @@ struct CharacterDefinitionUpdate {
     std::optional<std::string> character_markdown;
 };
 
-struct CharacterPicture {
-    std::string filename;
-    std::string mime_type;
-    std::string content_base64;
-};
-
 struct CharacterDetail {
     CharacterSummary summary;
     std::string character_markdown;
@@ -646,7 +640,6 @@ void to_json(nlohmann::json& json, const Bootstrap& value);
 void to_json(nlohmann::json& json, const ProviderOption& value);
 void to_json(nlohmann::json& json, const StyleOption& value);
 void to_json(nlohmann::json& json, const VoiceOption& value);
-void to_json(nlohmann::json& json, const CharacterPicture& value);
 void to_json(nlohmann::json& json, const CharacterDetail& value);
 void to_json(nlohmann::json& json, const PersonaDetail& value);
 void to_json(nlohmann::json& json, const ForumLibrary& value);

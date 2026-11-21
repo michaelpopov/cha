@@ -181,7 +181,6 @@ void add_maintenance_tools(nlohmann::json& body, ProviderApi api) {
         {"name", "vault_config_list"},
         {"description", "List vault configuration files in lexical order. "
             "prefix is a literal directory-boundary prefix, or null for every file. "
-            "Pictures are listed as unreadable metadata. "
             "This call does not save configuration."},
         {"strict", true},
         {"parameters", function_parameters(

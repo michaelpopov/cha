@@ -9,7 +9,6 @@ import type { SessionEventHandlers } from '../api/events';
 import { initialAppState } from '../state/view';
 import {
   bootstrapFixture,
-  characterDetailFixture,
   fixtureClient,
   plainVoice,
   serifItalicVoice,
@@ -1623,32 +1622,6 @@ describe('submission ownership after navigation', () => {
   }
 });
 
-function pictureClient(overrides: Partial<ChaClient> = {}) {
-  return fixtureClient({
-    getCharacter: async () => ({ ...characterDetailFixture, markdown_files: ['CHARACTER.md', 'PICTURE.png'] }),
-    ...overrides,
-  });
-}
-
-describe('chat pictures', () => {
-  const portrait = { filename: 'PICTURE.png' as const, mime_type: 'image/png' as const, content_base64: 'original-bytes' };
-
-  it.each(['missing', 'request', 'decode'])('keeps chat usable for a %s picture', async (failure) => {
-    const events = drivableEvents();
-    const getCharacterPicture = vi.fn().mockImplementation(() => failure === 'request'
-      ? Promise.reject(new Error('read failed')) : Promise.resolve(failure === 'missing' ? null : portrait));
-    render(<App client={pictureClient({ getCharacterPicture })} connectSessionEvents={events.connect} />);
-    await attachInitial(events);
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
-    if (failure === 'decode') fireEvent.error(await screen.findByRole('img', { name: 'Assistant' }));
-    if (failure !== 'missing') expect(await screen.findByText('Picture unavailable')).toBeInTheDocument();
-    else await waitFor(() => expect(getCharacterPicture).toHaveBeenCalled());
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Message' })).toBeEnabled();
-    expect(getCharacterPicture).toHaveBeenCalledTimes(1);
-  });
-});
-
 const planningSnapshot: SessionSnapshot = {
   ...snapshotFixture,
   forum: bootstrapFixture.forums[1],
@@ -1683,7 +1656,6 @@ describe('prompt draft ownership', () => {
     const events = drivableEvents();
     render(<App client={fixtureClient()} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Still here');
     await user.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /Welcome/ }));
@@ -1701,7 +1673,6 @@ describe('prompt draft ownership', () => {
       },
     })} connectSessionEvents={events.connect} />);
     await attachInitial(events);
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Keep this');
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
     expect(await screen.findByRole('heading', { name: 'Session unavailable' })).toBeInTheDocument();
@@ -1725,7 +1696,6 @@ describe('prompt draft ownership', () => {
       contextEvents={maintenance.contextEvents}
     />);
     await attachInitial(events);
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.click(within(screen.getByLabelText('Recent sessions')).getByRole('button', { name: /^Planning/ }));
     await waitFor(() => expect(events.connections.at(-1)?.key).toBe('lobby/planning'));
     act(() => events.handlers.at(-1)?.onSnapshot(planningSnapshot));
@@ -1758,7 +1728,6 @@ describe('prompt draft ownership', () => {
       contextEvents={contextChangeSource().contextEvents}
     />);
     await attachInitial(events);
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Personal draft');
     await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');
     await waitFor(() => expect(switchVault).toHaveBeenCalledWith('Projects', undefined));
@@ -1778,7 +1747,6 @@ describe('prompt draft ownership', () => {
       connectSessionEvents={events.connect}
     />);
     await attachInitial(events);
-    act(() => window.__CHA_NATIVE_SET_LAYOUT__?.('toggle-pictures'));
     const input = screen.getByRole('textbox', { name: 'Message' });
     await user.type(input, 'Personal draft');
     await user.selectOptions(screen.getByLabelText('Vault'), 'Projects');

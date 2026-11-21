@@ -798,7 +798,7 @@ export function App({
   }
   useLayoutEffect(() => {
     reportNativeLayout(state);
-  }, [state.layoutMode, state.sidebarOpen, state.pictureOpen, state.notesToolbarVisible,
+  }, [state.layoutMode, state.sidebarOpen, state.notesToolbarVisible,
     state.notesFontSize, state.notesPromptVisible, state.chatToolbarVisible, state.russianVisible]);
   const changeWorkspace = useCallback((action: Extract<DataAction, {
     type: 'set-layout' | 'show-chat-tab' | 'show-notes-tab';
@@ -833,10 +833,6 @@ export function App({
     }
     if (requested === 'toggle-toolbar') {
       dispatch({ type: 'toggle-notes-toolbar' });
-      return;
-    }
-    if (requested === 'toggle-pictures') {
-      dispatch({ type: 'toggle-picture' });
       return;
     }
     if (requested === 'toggle-sidebar') {

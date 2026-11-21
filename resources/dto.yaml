@@ -1116,19 +1116,6 @@ components:
         label:
           type: string
 
-    CharacterPicture:
-      type: object
-      additionalProperties: false
-      required: [filename, mime_type, content_base64]
-      properties:
-        filename:
-          type: string
-        mime_type:
-          type: string
-          enum: [image/png, image/webp, image/jpeg, image/gif]
-        content_base64:
-          type: string
-
     CharacterDetail:
       type: object
       additionalProperties: false

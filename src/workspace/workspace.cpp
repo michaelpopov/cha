@@ -1935,7 +1935,6 @@ LoadedCharacters load_characters(
                 expand_template_file(prompt_path, description_options)),
             .editable_markdown = editable_markdown,
             .markdown_files = std::move(markdown_files),
-            .filenames = direct_filenames(source, directory),
             .nicknames = std::move(nicknames),
         });
     }
@@ -1971,7 +1970,6 @@ WorkspaceCharacter load_assistant(
         .prompt_template = std::string(embedded_application_guide()),
         .markdown = std::string(embedded_application_guide()),
         .editable_markdown = std::string(embedded_application_guide()),
-        .filenames = direct_filenames(source, assistant_path.parent_path()),
     };
 }
 
@@ -2661,7 +2659,6 @@ CharacterDefinition Workspace::character_definition(
 
 std::optional<std::filesystem::path> Workspace::character_directory(
     std::string_view id) const {
-    if (id == workspace_assistant_id) return root_ / "system" / "assistant";
     const auto config = character_config_paths_.find(std::string(id));
     if (config == character_config_paths_.end()) return std::nullopt;
     return config->second.parent_path();

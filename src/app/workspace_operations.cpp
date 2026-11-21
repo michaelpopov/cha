@@ -4,7 +4,6 @@
 #include "app/application_result.h"
 #include "util/logging.h"
 #include "util/text.h"
-#include "util/picture.h"
 #include "runtime/live_session.h"
 #include "runtime/live_session_manager.h"
 #include "runtime/protocol.h"
@@ -72,11 +71,8 @@ MarkdownFile edit_markdown_file(
     bool create) {
     const auto workspace = store.snapshot();
     if (character) {
-        const auto* picture = picture_format(filename);
-        const bool picture_delete = !content && !create && picture;
         if (workspace->find_character(id) == nullptr
-            || !(picture_delete ? workspace->character_settings_are_writable(id)
-                                : workspace->character_is_writable(id))) {
+            || !workspace->character_is_writable(id)) {
             fail(ErrorCode::not_found, "That character file was not found.");
         }
     } else if (workspace->find_forum(id) == nullptr
@@ -154,8 +150,9 @@ CharacterDetail character_detail(
         .editable_markdown = character.editable_markdown,
     };
     detail.writable = workspace.character_is_writable(character.character.id);
-    // Keep the existing wire field; the UI list now includes every file type.
-    detail.markdown_files = character.filenames;
+    for (const auto& [filename, content] : character.markdown_files) {
+        detail.markdown_files.push_back(filename);
+    }
     if (!detail.writable && std::ranges::find(detail.markdown_files, "CHARACTER.md")
         == detail.markdown_files.end()) {
         detail.markdown_files.push_back("CHARACTER.md");
@@ -303,36 +300,6 @@ void refresh_affected_sessions(
     }
 }
 
-std::optional<CharacterPicture> get_character_picture(
-    const WorkspaceConfigStore& store,
-    std::string_view id, std::string_view filename) {
-    try {
-        auto picture = store.get_character_picture(id, filename);
-        if (!picture) return std::nullopt;
-        return CharacterPicture{
-            .filename = std::move(picture->filename),
-            .mime_type = std::move(picture->mime_type),
-            .content_base64 = std::move(picture->content_base64),
-        };
-    } catch (const std::out_of_range&) {
-        fail(ErrorCode::not_found, "That character was not found.");
-    } catch (const std::invalid_argument&) {
-        fail(ErrorCode::invalid_argument, "Unsupported picture filename.");
-    }
-}
-
-void update_character_picture(
-    WorkspaceConfigStore& store,
-    std::string_view id,
-    std::string_view filename,
-    std::string_view content_base64, std::string_view previous_filename) {
-    if (!store.snapshot()->character_settings_are_writable(id)) {
-        fail(ErrorCode::not_found, "That character was not found.");
-    }
-    with_workspace_edit([&] {
-        store.apply_character_picture(id, filename, content_base64, previous_filename);
-    });
-}
 
 CharacterDetail get_character(
     const Workspace& workspace,
@@ -534,8 +501,7 @@ void rename_character_file(
     WorkspaceConfigStore& store, std::string_view id,
     std::string_view filename, std::string_view new_filename) {
     const auto workspace = store.snapshot();
-    if (!(picture_format(filename) ? workspace->character_settings_are_writable(id)
-                                  : workspace->character_is_writable(id))) {
+    if (!workspace->character_is_writable(id)) {
         fail(ErrorCode::not_found, "That character file was not found.");
     }
     with_workspace_edit([&] { store.rename_character_file(id, filename, new_filename); });

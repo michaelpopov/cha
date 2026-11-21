@@ -4,7 +4,6 @@ import WebKit
 struct NativeViewState: Equatable {
     var split = false
     var sidebar = true
-    var pictures = false
     var toolbar = true
     var chatToolbar = true
     var notesPrompt = true
@@ -12,7 +11,7 @@ struct NativeViewState: Equatable {
     var notesFontSize = 14
 
     private var flags: [String: Bool] {
-        ["split": split, "sidebar": sidebar, "pictures": pictures, "toolbar": toolbar,
+        ["split": split, "sidebar": sidebar, "toolbar": toolbar,
          "chat_toolbar": chatToolbar, "notes_prompt": notesPrompt, "russian": russian]
     }
     var object: [String: Any] {
@@ -46,7 +45,7 @@ struct NativeViewState: Equatable {
                 }
                 values[key] = number.boolValue
             }
-            result = NativeViewState(split: values["split"]!, sidebar: values["sidebar"]!, pictures: values["pictures"]!,
+            result = NativeViewState(split: values["split"]!, sidebar: values["sidebar"]!,
                 toolbar: values["toolbar"]!, chatToolbar: values["chat_toolbar"]!, notesPrompt: values["notes_prompt"]!,
                 russian: values["russian"]!, notesFontSize: notesFontSize)
         } catch {
@@ -381,8 +380,6 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
                       CFGetTypeID(split) == CFBooleanGetTypeID(),
                       let sidebar = object["sidebar"] as? NSNumber,
                       CFGetTypeID(sidebar) == CFBooleanGetTypeID(),
-                      let pictures = object["pictures"] as? NSNumber,
-                      CFGetTypeID(pictures) == CFBooleanGetTypeID(),
                       let chatToolbar = object["chat_toolbar"] as? NSNumber,
                       CFGetTypeID(chatToolbar) == CFBooleanGetTypeID(),
                       let toolbar = object["toolbar"] as? NSNumber,
@@ -393,7 +390,7 @@ final class ChaNativeBridgeReceiver: NSObject, WKScriptMessageHandler {
                       CFGetTypeID(russian) == CFBooleanGetTypeID(),
                       let notesFontSize = NativeViewState.parseNotesFontSize(object["notes_font_size"]) else { return }
                 onLayoutChanged?(NativeViewState(split: split.boolValue, sidebar: sidebar.boolValue,
-                    pictures: pictures.boolValue, toolbar: toolbar.boolValue, chatToolbar: chatToolbar.boolValue,
+                    toolbar: toolbar.boolValue, chatToolbar: chatToolbar.boolValue,
                     notesPrompt: notesPrompt.boolValue, russian: russian.boolValue, notesFontSize: notesFontSize))
                 return
             }

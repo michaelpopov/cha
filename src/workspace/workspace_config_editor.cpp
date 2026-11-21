@@ -2,9 +2,7 @@
 #include "workspace/prompt_catalog.h"
 #include "workspace/workspace_internal.h"
 #include "providers/voice_output_config.h"
-#include "util/base64.h"
 #include "util/path_name.h"
-#include "util/picture.h"
 #include "util/public_name.h"
 #include "util/text.h"
 
@@ -800,20 +798,6 @@ void WorkspaceConfigEditor::write_character_file(
     std::string_view filename,
     std::optional<std::string_view> content,
     bool create) {
-    const auto* picture = picture_format(filename);
-    if (picture && !content && !create) {
-        try {
-            require_path_component(filename, workspace_.root());
-        } catch (const std::runtime_error&) {
-            throw std::invalid_argument("Invalid picture filename.");
-        }
-        const auto directory = workspace_.character_directory(character_id);
-        if (!directory || !source_.is_regular_file(*directory / filename)) {
-            throw std::out_of_range("Unknown character picture");
-        }
-        files_.erase(source_.name(*directory / filename));
-        return;
-    }
     const auto config = workspace_.character_config_paths_.find(std::string(character_id));
     const auto* character = workspace_.find_character(character_id);
     if (config == workspace_.character_config_paths_.end() || !character) {
@@ -841,13 +825,7 @@ void WorkspaceConfigEditor::rename_character_file(
     }
     const auto old_path = *directory / path_from_utf8(filename);
     const auto new_path = *directory / path_from_utf8(new_filename);
-    const auto* picture = picture_format(filename);
-    if (picture) {
-        const auto* replacement = picture_format(new_filename);
-        if (!replacement || replacement->mime_type != picture->mime_type) {
-            throw std::invalid_argument("Keep the picture's file format when renaming it.");
-        }
-    } else if ((old_path.extension() != ".md" && old_path.extension() != ".txt")
+    if ((old_path.extension() != ".md" && old_path.extension() != ".txt")
         || (new_path.extension() != ".md" && new_path.extension() != ".txt")) {
         throw std::invalid_argument("Use a .md or .txt filename for a text file.");
     }
@@ -864,7 +842,6 @@ void WorkspaceConfigEditor::rename_character_file(
     auto file = files_.extract(found);
     file.key() = source_.name(new_path);
     files_.insert(std::move(file));
-    if (picture) return;
 
     // Keep prompt includes pointing at the renamed file. Ordinary prose and
     // escaped macros are left alone; the file stays in the same directory.
@@ -1102,43 +1079,6 @@ void WorkspaceConfigEditor::delete_forum(std::string_view forum_id) {
             + "' has no writable configuration");
     }
     remove_directory(path->second.parent_path());
-}
-
-void WorkspaceConfigEditor::write_character_picture(
-    std::string_view character_id,
-    std::string_view filename,
-    std::string_view content_base64, std::string_view previous_filename) {
-    const auto directory = workspace_.character_directory(character_id);
-    if (!directory) throw std::out_of_range("That character was not found.");
-    try {
-        require_path_component(filename, *directory);
-        if (!previous_filename.empty()) require_path_component(previous_filename, *directory);
-    } catch (const std::runtime_error&) {
-        throw std::invalid_argument("Invalid picture filename.");
-    }
-    const auto* format = picture_format(filename);
-    if (!format) {
-        throw std::invalid_argument("Unsupported picture format.");
-    }
-    try {
-        (void)decode_base64(content_base64);
-    } catch (const std::runtime_error&) {
-        throw std::invalid_argument("Invalid picture data.");
-    }
-    if (!previous_filename.empty()) {
-        const auto* previous = picture_format(previous_filename);
-        if (!previous) {
-            throw std::invalid_argument("Unsupported picture filename.");
-        }
-        if (!source_.is_regular_file(*directory / previous_filename)) {
-            throw std::out_of_range("That picture was not found.");
-        }
-        if (previous_filename != filename && source_.exists(*directory / filename)) {
-            throw std::invalid_argument("A picture with this filename already exists.");
-        }
-        files_.erase(source_.name(*directory / previous_filename));
-    }
-    write_file(*directory / filename, content_base64);
 }
 
 void WorkspaceConfigEditor::write_character_settings(

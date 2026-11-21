@@ -1356,38 +1356,9 @@ TEST(Application, EventsAreBestEffortAndReadFailuresHidePrivateData) {
     EXPECT_EQ(warnings.find("private"), std::string::npos);
 }
 
-TEST(Application, PictureReadsNeedNoSessionAndUseApplicationErrors) {
-    test::TestWorkspace workspace;
-    std::ofstream(workspace.root() / "characters/guide/PICTURE.png") << "not an image";
-    auto application = Application::open(make_command(
-        workspace, test::import_test_database(workspace.root())));
-    const auto epoch = application->context_epoch();
-    EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
-        (std::vector<std::string>{"CHARACTER.md", "PICTURE.png", "character.toml"}));
-    const auto picture = application->get_character_picture("guide", epoch);
-    ASSERT_TRUE(picture);
-    EXPECT_EQ(picture->filename, "PICTURE.png");
-    EXPECT_EQ(picture->content_base64, "bm90IGFuIGltYWdl");
-    EXPECT_FALSE(application->get_character_picture(assistant_id, epoch));
-    for (const auto& [id, context, expected] :
-         std::vector<std::tuple<std::string, std::uint64_t, ErrorCode>>{
-             {"missing", epoch, ErrorCode::not_found},
-             {"guide", 0, ErrorCode::vault_changed},
-             {"guide", epoch + 1, ErrorCode::vault_changed}}) {
-        try {
-            (void)application->get_character_picture(id, context);
-            FAIL() << "Expected application error";
-        } catch (const ApplicationError& error) {
-            EXPECT_EQ(error.code, expected);
-        }
-    }
-}
-
-TEST(Application, CharacterTextAndPictureFilesUseTheirOwnReadAndEditPaths) {
+TEST(Application, CharacterTextFilesCanBeReadAndEdited) {
     test::TestWorkspace workspace;
     std::ofstream(workspace.root() / "characters/guide/NOTES.txt", std::ios::binary) << "# Plain text\n<not-markdown>";
-    std::ofstream(workspace.root() / "characters/guide/PICTURE.png") << "png";
-    std::ofstream(workspace.root() / "characters/guide/PICTURE.jpg") << "jpg";
     auto application = Application::open(make_command(
         workspace, test::import_test_database(workspace.root())));
     const auto epoch = application->context_epoch();
@@ -1399,25 +1370,10 @@ TEST(Application, CharacterTextAndPictureFilesUseTheirOwnReadAndEditPaths) {
     EXPECT_EQ(application->get_character_file("guide", "MORE.txt", epoch).content, "More text");
     application->delete_character_file("guide", "NOTES.txt", epoch);
     EXPECT_THROW((void)application->get_character_file("guide", "NOTES.txt", epoch), ApplicationError);
-    const auto picture = application->get_character_picture("guide", epoch, "PICTURE.jpg");
-    ASSERT_TRUE(picture);
-    EXPECT_EQ(picture->filename, "PICTURE.jpg");
-    EXPECT_EQ(picture->content_base64, "anBn");
-    application->delete_character_file("guide", "PICTURE.jpg", epoch);
-    EXPECT_FALSE(application->get_character_picture("guide", epoch, "PICTURE.jpg"));
-    ASSERT_TRUE(application->get_character_picture("guide", epoch));
-    EXPECT_EQ(application->get_character_picture("guide", epoch)->filename, "PICTURE.png");
-    application->update_character_picture(assistant_id, "assistant-portrait.png", "cG5n", epoch);
-    EXPECT_EQ(application->get_character_picture(assistant_id, epoch, "assistant-portrait.png")->content_base64, "cG5n");
-    ASSERT_TRUE(application->get_character_picture(assistant_id, epoch));
-    EXPECT_EQ(application->get_character_picture(assistant_id, epoch)->filename, "assistant-portrait.png");
-    application->delete_character_file(assistant_id, "assistant-portrait.png", epoch);
-    EXPECT_FALSE(application->get_character_picture(assistant_id, epoch));
-    EXPECT_THROW(application->delete_character_file("guide", "../PICTURE.png", epoch), ApplicationError);
     EXPECT_THROW(application->delete_character_file("guide", "character.toml", epoch), ApplicationError);
 }
 
-TEST(Application, CharacterFileListsIncludeAllDirectVaultFiles) {
+TEST(Application, CharacterFileListsOnlyIncludeDirectTextFiles) {
     test::TestWorkspace workspace;
     const auto group = workspace.root() / "characters/philosophers";
     std::filesystem::create_directory(group);
@@ -1425,22 +1381,22 @@ TEST(Application, CharacterFileListsIncludeAllDirectVaultFiles) {
     std::filesystem::create_directory(group / "guide/notes");
     std::ofstream(group / "guide/notes/CHILD.md") << "Nested note";
     std::ofstream(group / "guide/NOTES.md") << "Direct note";
-    for (const auto* filename : {"PICTURE.png", "PICTURE.webp", "PICTURE.jpg", "PICTURE.jpeg", "PICTURE.gif"}) {
-        std::ofstream(group / "guide" / filename, std::ios::binary) << "picture bytes";
+    const auto database = test::import_test_database(workspace.root());
+    {
+        storage::SqliteDatabase handle(database, storage::SqliteDatabase::Mode::read_write);
+        handle.execute("INSERT INTO config VALUES "
+            "('characters/philosophers/guide/PICTURE.png', 'AP8='), "
+            "('system/assistant/PORTRAIT.JPG', 'AP8=')");
     }
-    std::ofstream(workspace.root() / "system/assistant/PICTURE.jpg", std::ios::binary) << "assistant picture";
-    auto application = Application::open(make_command(
-        workspace, test::import_test_database(workspace.root())));
+    auto application = Application::open(make_command(workspace, database));
+    ASSERT_TRUE(application->running());
     const auto epoch = application->context_epoch();
     EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
-        (std::vector<std::string>{"CHARACTER.md", "NOTES.md", "PICTURE.gif", "PICTURE.jpeg",
-            "PICTURE.jpg", "PICTURE.png", "PICTURE.webp", "character.toml"}));
+        (std::vector<std::string>{"CHARACTER.md", "NOTES.md"}));
     EXPECT_EQ(application->get_character(assistant_id, epoch).markdown_files,
-        (std::vector<std::string>{"CHARACTER.md", "PICTURE.jpg", "character.toml"}));
-    application->update_character_picture("guide", "PICTURE.png", "cG5n", epoch);
-    EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
-        (std::vector<std::string>{"CHARACTER.md", "NOTES.md", "PICTURE.gif", "PICTURE.jpeg",
-            "PICTURE.jpg", "PICTURE.png", "PICTURE.webp", "character.toml"}));
+        (std::vector<std::string>{"CHARACTER.md"}));
+    EXPECT_THROW((void)application->get_character_file("guide", "PICTURE.png", epoch), ApplicationError);
+    EXPECT_THROW(application->delete_character_file("guide", "PICTURE.png", epoch), ApplicationError);
     EXPECT_EQ(application->get_character_file("guide", "NOTES.md", epoch).content, "Direct note");
 }
 
