@@ -17,7 +17,6 @@
 #include "util/text.h"
 #include "app/current_vault.h"
 #include "session/session_markdown.h"
-#include "session/session_mirror.h"
 #include "runtime/session_projection.h"
 #include "workspace/builtins.h"
 #include "session/session_open.h"
@@ -280,7 +279,6 @@ Application::Impl::Impl(
                       {"data", utf8_path(vault.data)},
                       {"password_protected", vault.password_protected},
                       {"parent", optional_text(vault.parent)},
-                      {"mirror", optional_path(vault.mirror)},
                       {"modify", optional_path(vault.modify)},
                       {"r2_etag", optional_text(vault.r2_etag)},
                   });
@@ -294,7 +292,6 @@ Application::Impl::Impl(
                   }},
                   {"active_vault", current_vault_.get().name},
                   {"vaults", std::move(vaults)},
-                  {"mirror_base", optional_path(command.mirror_base)},
                   {"modify_base", optional_path(command.modify_base)},
                   {"log_level", diagnostic_log_level()},
                   {"log_file", utf8_path(diagnostic_log_file())},
@@ -305,12 +302,10 @@ Application::Impl::Impl(
               std::vector<std::filesystem::path> paths;
               const auto add = [&](const VaultDefinition& vault) {
                   paths.push_back(vault.data.parent_path());
-                  if (vault.mirror) paths.push_back(*vault.mirror);
                   if (vault.modify) paths.push_back(*vault.modify);
               };
               for (const auto& vault : command.vaults) add(vault);
               add(current_vault_.get());
-              if (command.mirror_base) paths.push_back(*command.mirror_base);
               if (command.modify_base) paths.push_back(*command.modify_base);
               paths.push_back(command.log_file.parent_path());
               return paths;
@@ -365,21 +360,6 @@ Application::Impl::Impl(
         seed,
         active_password);
     sessions->set_sync_machine(command.machine);
-    mirror = std::make_shared<SessionMirror>();
-    store->on_forums_changed([mirror = mirror](const Workspace& workspace) {
-        mirror->reconcile_forums(workspace);
-    });
-    if (const auto root = session_mirror_root(command.vault)) {
-        try {
-            mirror->rebuild(root, *sessions);
-        } catch (const std::exception& error) {
-            log_warn(
-                "Session mirror rebuild failed: "
-                + std::string(error.what()));
-            mirror->rebuild(std::nullopt, *sessions);
-        }
-    }
-
     maintenance_prompt = std::make_shared<const std::string>(
         maintenance_reference());
     auto opener = [this](
@@ -389,12 +369,6 @@ Application::Impl::Impl(
         OpenedSession opened = cha::open_session(
             *sessions, identity, providers, std::move(notifier), *store,
             epoch, maintenance_prompt);
-        const auto selected_mirror = mirror;
-        opened.mirror = [selected_mirror, identity](
-                            std::string_view label,
-                            std::span<const TranscriptEntry> entries) {
-            selected_mirror->update(identity, label, entries);
-        };
         opened.update_audio = [this, identity](std::span<const TranscriptEntry> entries) {
             if (audio_downloads) audio_downloads->update_live(identity, entries);
         };
@@ -442,10 +416,6 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
             }
             if (callback && state.load() == ApplicationState::running && !stopping_flag)
                 callback(published_epoch.load());
-        };
-        // Live chats update the mirror themselves; incoming records need this.
-        config.on_chat_changed = [this](const FullSessionId& identity, const std::string& label) {
-            mirror->update(identity, label, sessions->history(identity));
         };
         sync_worker = std::make_unique<D1SyncWorker>(std::move(config));
         if (mode == SyncStart::recover) sync_worker->ensure_local_queue();
@@ -700,7 +670,6 @@ CreateSessionSuccess Application::create_session(
         if (!label.empty()) validate_session_label(label);
         const StoredSession created =
             impl_->sessions->create(forum_id, std::move(label));
-        if (impl_->mirror && !is_temporary_session_label(created.label)) impl_->mirror->add(created);
         return {created.identity.session_id, created.label};
     } catch (const std::invalid_argument&) {
         throw ApplicationError(
@@ -962,12 +931,6 @@ SessionLabelResult Application::rename_session(
     try {
         const StoredSession renamed =
             impl_->sessions->rename(key, std::move(label));
-        if (impl_->mirror) {
-            impl_->mirror->update(
-                renamed.identity,
-                renamed.label,
-                impl_->sessions->history(renamed.identity));
-        }
         return {renamed.identity.session_id, renamed.label};
     } catch (const std::invalid_argument&) {
         throw ApplicationError(

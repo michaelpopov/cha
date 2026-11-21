@@ -21,11 +21,6 @@ struct OpenedSession {
     // thread. Every forum gets one; built-in forums have no config file, so the
     // call fails there and the session reports the change as unsaved.
     std::function<void(std::string_view)> persist_default_character;
-    // Called synchronously on the session owner thread after a durable
-    // transcript boundary or label change.
-    std::function<void(
-        std::string_view,
-        std::span<const TranscriptEntry>)> mirror;
     // Optional initial presentation notice. Production currently leaves this
     // empty; test openers use it to exercise startup-notice behavior.
     std::optional<std::string> notice;

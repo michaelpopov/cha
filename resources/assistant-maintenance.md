@@ -166,7 +166,7 @@ The legacy `elevenlabs_voice_id` field holds the selected service's voice
 reference. Do not convert services without evidence and authorization.
 
 Host configuration is outside these rows: `app.toml`, vault registration TOML,
-database paths, encryption/password files, mirror/modify directories,
+database paths, encryption/password files, modify directories,
 `openai-auth.json`, and file permissions.
 Use `host_config_list`, `host_config_read`, and `host_config_write` for
 `app.toml` and vault registration TOML files in the host configuration directory.

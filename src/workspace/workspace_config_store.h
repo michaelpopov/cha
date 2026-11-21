@@ -221,8 +221,6 @@ public:
     WorkspaceConfigStore& operator=(WorkspaceConfigStore&&) = delete;
 
     [[nodiscard]] std::shared_ptr<const Workspace> snapshot() const;
-    // Delivered in commit order. The callback must not call back into the store.
-    void on_forums_changed(std::function<void(const Workspace&)> callback);
 
     [[nodiscard]] const std::filesystem::path& private_root() const noexcept;
     // Logical root for snapshot/session identity and configuration diagnostics.

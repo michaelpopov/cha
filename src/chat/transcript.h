@@ -90,7 +90,6 @@ struct TranscriptEntry {
 // it, so renderers may retain only scalar positions derived from this value.
 struct TranscriptView {
     std::span<const TranscriptEntry> entries;
-    std::size_t revision{};
     std::optional<EntryId> open_entry_id;
     std::optional<EntryId> covered_until;
 
@@ -180,7 +179,6 @@ private:
     EntryId boundary() const;
 
     std::vector<TranscriptEntry> entries_;
-    std::size_t revision_{};
     std::optional<EntryId> open_entry_id_;
     std::optional<EntryId> covered_until_;
 };

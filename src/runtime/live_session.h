@@ -151,7 +151,6 @@ private:
         ControllerStateUpdate state,
         bool presentation_changed);
     void publish_current_snapshot();
-    void mirror_if_changed();
     void log_generation_transitions(const ControllerView& current);
     void log_fatal_once() noexcept;
     void log_event(std::string_view event) const noexcept;
@@ -179,11 +178,6 @@ private:
     std::string label_;
     std::atomic<bool> naming_{};
     std::function<void(std::string_view)> persist_default_character_;
-    std::function<void(
-        std::string_view,
-        std::span<const TranscriptEntry>)> mirror_;
-    std::size_t mirrored_revision_{};
-    std::string mirrored_label_;
     std::optional<std::string> notice_;
     bool logged_generation_active_{};
     std::optional<RequestId> logged_active_request_;

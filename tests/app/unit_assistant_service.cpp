@@ -1066,7 +1066,7 @@ TEST(AssistantService, EventsRedactSecretsAndPathsAndBoundTheResult) {
         .id = "api_key_2", .display_name = "D1", .account_id = "account",
         .database_id = "database", .api_token = "event-d1-token-value"});
     const auto path = harness.store().workspace_path().string();
-    const auto external = (std::filesystem::temp_directory_path() / "external-cha-mirror").string();
+    const auto external = (std::filesystem::temp_directory_path() / "external-cha-modify").string();
     harness.external_paths = {external};
     harness.vault_password = "event-vault-password";
     harness.store().append_event(EventSeverity::warning,

@@ -25,7 +25,6 @@ struct VaultDefinition {
     std::filesystem::path data;
     bool password_protected{};
     std::optional<std::string> r2_etag;
-    std::optional<std::filesystem::path> mirror;
     std::optional<std::filesystem::path> modify;
     std::filesystem::path source;
     std::optional<std::string> parent;
@@ -35,7 +34,6 @@ struct ConfigurationDirectory {
     std::filesystem::path directory;
     std::string startup_vault;
     std::string machine;
-    std::optional<std::filesystem::path> mirror_base;
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
     std::filesystem::path log_file;
@@ -46,7 +44,6 @@ struct ConfigurationDirectory {
 struct ApplicationCommand {
     std::filesystem::path config_directory;
     std::string machine;
-    std::optional<std::filesystem::path> mirror_base;
     std::optional<std::filesystem::path> modify_base;
     std::vector<VaultDefinition> vaults;
     VaultDefinition vault;
@@ -81,8 +78,6 @@ void require_switchable_database(
 void require_openable_protected_database(
     const std::filesystem::path& database,
     std::string_view password);
-[[nodiscard]] std::optional<std::filesystem::path> session_mirror_root(
-    const VaultDefinition& vault);
 
 bool valid_machine_name(std::string_view name);
 bool same_machine_name(std::string_view left, std::string_view right);

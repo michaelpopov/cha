@@ -152,7 +152,6 @@ function isVaultDetail(value: unknown): value is VaultDetail {
     && typeof value.display_name === 'string'
     && typeof value.protected === 'boolean'
     && typeof value.data_path === 'string'
-    && (value.mirror_path === null || typeof value.mirror_path === 'string')
     && (value.modify_path === null || typeof value.modify_path === 'string')
     && typeof value.active === 'boolean'
     && typeof value.can_delete === 'boolean';

@@ -163,7 +163,6 @@ void Transcript::add_entry(TranscriptEntry entry) {
     require_next_id(entry.id);
 
     entries_.push_back(std::move(entry));
-    ++revision_;
 }
 
 void Transcript::begin_entry(TranscriptEntry entry) {
@@ -178,7 +177,6 @@ void Transcript::begin_entry(TranscriptEntry entry) {
 
     open_entry_id_ = entry.id;
     entries_.push_back(std::move(entry));
-    ++revision_;
 }
 
 void Transcript::append_answer(EntryId entry_id, std::string_view text) {
@@ -187,17 +185,13 @@ void Transcript::append_answer(EntryId entry_id, std::string_view text) {
     }
 
     entries_.back().text.append(text);
-    ++revision_;
 }
 
 void Transcript::mark_web_search_used(EntryId entry_id) {
     if (!open_entry_id_ || *open_entry_id_ != entry_id) {
         throw std::logic_error("The requested transcript entry is not streaming");
     }
-    if (!entries_.back().web_search_used) {
-        entries_.back().web_search_used = true;
-        ++revision_;
-    }
+    entries_.back().web_search_used = true;
 }
 
 void Transcript::finish_entry(
@@ -223,7 +217,6 @@ void Transcript::finish_entry(
     entries_.back().input_tokens = input_tokens;
     entries_.back().output_tokens = output_tokens;
     open_entry_id_.reset();
-    ++revision_;
 }
 
 void Transcript::discard_entry(EntryId entry_id) {
@@ -233,7 +226,6 @@ void Transcript::discard_entry(EntryId entry_id) {
 
     entries_.pop_back();
     open_entry_id_.reset();
-    ++revision_;
 }
 
 void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
@@ -251,7 +243,6 @@ void Transcript::replace_entries(std::vector<TranscriptEntry> entries) {
 
     entries_ = std::move(entries);
     covered_until_.reset();
-    ++revision_;
 }
 
 bool Transcript::can_delete_turn(EntryId response_entry_id) const {
@@ -287,7 +278,6 @@ bool Transcript::delete_turn(EntryId response_entry_id) {
             })) {
         covered_until_.reset();
     }
-    ++revision_;
     return true;
 }
 
@@ -310,7 +300,6 @@ bool Transcript::cover(
     require_next_id(marker.id);
     covered_until_ = covered_until;
     entries_.push_back(std::move(marker));
-    ++revision_;
     return true;
 }
 
@@ -326,12 +315,11 @@ bool Transcript::uncover(EntryId marker_id) {
     require_next_id(marker.id);
     covered_until_.reset();
     entries_.push_back(std::move(marker));
-    ++revision_;
     return true;
 }
 
 TranscriptView Transcript::view() const noexcept {
-    return {entries_, revision_, open_entry_id_, covered_until_};
+    return {entries_, open_entry_id_, covered_until_};
 }
 
 ModelHistory Transcript::model_history() const {

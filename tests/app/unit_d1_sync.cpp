@@ -532,16 +532,12 @@ TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
         ready_row(5, chat_id, sync_make_record(
             "chat.rename", {{"chat", {"remote", "session-from-d1"}}, {"label", "Shared chat"}})),
     };
-    auto command = make_d1_command(workspace, database);
-    const auto mirror = workspace.root() / "mirror";
-    command.vault.mirror = mirror;
-    command.vaults.front() = command.vault;
     auto application = Application::open(
-        command, {}, {}, mock.transport());
+        make_d1_command(workspace, database), {}, {}, mock.transport());
     const auto chats = application->list_sessions("remote", application->context_epoch());
     ASSERT_EQ(chats.size(), 1u);
     EXPECT_EQ(chats.front().id, "session-from-d1");
-    EXPECT_EQ(file_bytes(mirror / "Remote" / "Shared chat.md"), "<!-- CHA session: Shared chat -->\n");
+    EXPECT_EQ(chats.front().label, "Shared chat");
     EXPECT_EQ(mock.count("DELETE FROM"), 1u);
     EXPECT_TRUE(mock.incoming_v2.empty());
     EXPECT_EQ(mock.acknowledged_v2,
@@ -604,7 +600,7 @@ TEST(D1AppWiringTest, SettingsCreatedForumReceivesPeerChatWithoutLocalOpen) {
     EXPECT_EQ(chats.front().id, "session-from-d1");
 }
 
-TEST(D1AppWiringTest, IncomingChatIsWrittenToTheSessionMirror) {
+TEST(D1AppWiringTest, InitializesMissingForumBeforeReceivingChats) {
     test::TestWorkspace workspace;
     const auto database = test::import_test_database(workspace.root());
     seed_d1(database);
@@ -613,21 +609,17 @@ TEST(D1AppWiringTest, IncomingChatIsWrittenToTheSessionMirror) {
         Database db(database, Database::Mode::read_write);
         db.execute("DELETE FROM forums WHERE forum_id='lobby'");
     }
-    auto command = make_d1_command(workspace, database);
-    const auto mirror = workspace.root() / "mirror";
-    command.vault.mirror = mirror;
-    command.vaults.front() = command.vault;
     MockD1 mock;
     mock.incoming = {
         {{"rowid", 1}, {"piece", 1}, {"pieces", 1}, {"record", sync_make_record(
             "chat.rename", {{"chat", {"lobby", "session-from-d1"}}, {"label", "Incoming chat"}})}},
     };
-    auto application = Application::open(command, {}, {}, mock.transport());
-    bool found = false;
-    for (const auto& item : std::filesystem::recursive_directory_iterator(mirror)) {
-        if (item.path().filename().string().find("Incoming chat") != std::string::npos) found = true;
-    }
-    EXPECT_TRUE(found);
+    auto application = Application::open(
+        make_d1_command(workspace, database), {}, {}, mock.transport());
+    const auto chats = application->list_sessions("lobby", application->context_epoch());
+    ASSERT_EQ(chats.size(), 1u);
+    EXPECT_EQ(chats.front().id, "session-from-d1");
+    EXPECT_EQ(chats.front().label, "Incoming chat");
 }
 
 TEST(D1AppWiringTest, IncomingCharacterSettingsUseOrdinaryValidation) {
@@ -1090,25 +1082,18 @@ TEST(D1VaultTest, SyncsSummaryRecordsAndPreservesAudioUntilAnEdit) {
     }
 }
 
-TEST(D1AppWiringTest, FirstReceiveAfterSwitchUsesOnlyTheDestinationMirror) {
+TEST(D1AppWiringTest, FirstReceiveAfterSwitchWritesOnlyToTheDestinationVault) {
     for (const std::string password : {"", "second-password"}) {
         SCOPED_TRACE(password.empty() ? "unprotected" : "protected");
         test::TestWorkspace workspace;
         const auto database = test::import_test_database(workspace.root());
-        auto command = make_d1_command(workspace, database);
-        command.mirror_base = workspace.root() / "mirrors";
-        const auto old_mirror = *command.mirror_base / "Test";
-        command.vault.mirror = old_mirror;
-        command.vaults.front() = command.vault;
         MockD1 mock;
         mock.local_table = "q/Second/mac";
         mock.local_v2_exists = true;
-        auto application = Application::open(command, {}, {}, mock.transport());
+        auto application = Application::open(
+            make_d1_command(workspace, database), {}, {}, mock.transport());
         const auto epoch = application->context_epoch();
         (void)application->create_session("lobby", "Old chat", epoch);
-        const auto old_file = old_mirror / "The Lobby" / "Old chat.md";
-        ASSERT_TRUE(std::filesystem::is_regular_file(old_file));
-        const auto old_contents = file_bytes(old_file);
         const auto second = application->create_vault(
             {.display_name = "Second", .password = password}, epoch);
         seed_d1(second.data, password);
@@ -1141,23 +1126,18 @@ TEST(D1AppWiringTest, FirstReceiveAfterSwitchUsesOnlyTheDestinationMirror) {
         ASSERT_EQ(switched.state, ApplicationState::running);
         ASSERT_EQ(application->list_sessions("lobby", switched.context_epoch).size(), 1u);
         ASSERT_EQ(application->list_sessions("remote", switched.context_epoch).size(), 1u);
-        std::vector<std::filesystem::path> old_files;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(old_mirror)) {
-            if (entry.is_regular_file()) old_files.push_back(entry.path());
-        }
-        EXPECT_EQ(old_files, std::vector{old_file});
-        EXPECT_EQ(file_bytes(old_file), old_contents);
-        ASSERT_TRUE(second.mirror);
-        if (password.empty()) {
-            const auto transcript = file_bytes(*second.mirror / "The Lobby" / "Incoming chat.md");
-            EXPECT_TRUE(transcript.starts_with("<!-- CHA session: Incoming chat -->\n"));
-            EXPECT_NE(transcript.find("Destination vault question"), std::string::npos);
-            EXPECT_NE(transcript.find("Destination vault answer"), std::string::npos);
-            EXPECT_EQ(file_bytes(*second.mirror / "Remote" / "Remote chat.md"),
-                "<!-- CHA session: Remote chat -->\n");
-        } else {
-            EXPECT_FALSE(std::filesystem::exists(*second.mirror));
-        }
+        const auto transcript =
+            application->export_session("lobby", "incoming", switched.context_epoch).markdown;
+        EXPECT_TRUE(transcript.starts_with("<!-- CHA session: Incoming chat -->\n"));
+        EXPECT_NE(transcript.find("Destination vault question"), std::string::npos);
+        EXPECT_NE(transcript.find("Destination vault answer"), std::string::npos);
+        EXPECT_EQ(application->export_session("remote", "remote-chat", switched.context_epoch).markdown,
+            "<!-- CHA session: Remote chat -->\n");
+        Database original(database, Database::Mode::read_only);
+        auto sessions = original.prepare("SELECT label FROM sessions");
+        ASSERT_TRUE(sessions.step());
+        EXPECT_EQ(sessions.text(0), "Old chat");
+        EXPECT_FALSE(sessions.step());
     }
 }
 

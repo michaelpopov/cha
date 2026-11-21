@@ -174,11 +174,9 @@ TEST(Transcript, DeletesAResponseAndItsPromptAsOneTurn) {
     transcript.add_entry(human(3, "Second question", 11));
     transcript.add_entry(make_character_entry(
         4, "reviewer-id", "Reviewer", "Second answer", EntryStatus::complete, 11));
-    const std::size_t revision = transcript.view().revision;
 
     EXPECT_TRUE(transcript.can_delete_turn(2));
     EXPECT_TRUE(transcript.delete_turn(2));
-    EXPECT_EQ(transcript.view().revision, revision + 1);
     expect_entries(
         transcript.view().entries,
         {
@@ -252,26 +250,19 @@ TEST(Transcript, ManagesCoverBoundaryAndTransientMarkersAtomically) {
     expect_same_entry(transcript.view().entries.back(), make_uncover_marker(4));
 }
 
-TEST(Transcript, RepeatedCoverMovesTheBoundaryAndEachMarkerChangesOneRevision) {
+TEST(Transcript, RepeatedCoverMovesTheBoundary) {
     Transcript transcript;
     transcript.add_entry(human(2, "Earlier", 1));
-    const TranscriptView before = transcript.view();
 
     EXPECT_TRUE(transcript.cover(5));
-    const TranscriptView covered = transcript.view();
-    EXPECT_EQ(covered.revision, before.revision + 1);
     EXPECT_EQ(transcript.model_history().covered_until, 3U);
 
     transcript.add_entry(human(6, "Hidden", 2));
-    const TranscriptView before_move = transcript.view();
     EXPECT_TRUE(transcript.cover(9));
-    const TranscriptView moved = transcript.view();
-    EXPECT_EQ(moved.revision, before_move.revision + 1);
     EXPECT_EQ(transcript.model_history().covered_until, 7U);
 
     EXPECT_TRUE(transcript.uncover(12));
-    const TranscriptView uncovered = transcript.view();
-    EXPECT_EQ(uncovered.revision, moved.revision + 1);
+    EXPECT_EQ(transcript.model_history().covered_until, std::nullopt);
 }
 
 TEST(Transcript, CoversThroughASelectedEarlierEntry) {
@@ -290,7 +281,7 @@ TEST(Transcript, CoversThroughASelectedEarlierEntry) {
 
     const TranscriptView before_missing_target = transcript.view();
     EXPECT_FALSE(transcript.cover(7, 99));
-    EXPECT_EQ(transcript.view().revision, before_missing_target.revision);
+    EXPECT_EQ(transcript.view().covered_until, before_missing_target.covered_until);
     EXPECT_EQ(transcript.view().entries.size(), before_missing_target.entries.size());
 }
 

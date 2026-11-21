@@ -38,7 +38,7 @@ The runtime loop performs these steps:
 
 1. process a bounded batch of commands;
 2. receive provider events from every live controller, including idle ones;
-3. satisfy requested presentation snapshots and mirror durable changes;
+3. satisfy requested presentation snapshots;
 4. retire ended entries and unselected entries whose generation is complete;
 5. wait on the shared notifier unless a batch indicated more work.
 
@@ -123,9 +123,8 @@ bounds the join. A runtime that misses that deadline is left to the existing
 forced-exit path rather than being joined unconditionally by a destructor.
 
 Controller failures are contained to their entry. Authoritative journal
-failures end that session; Markdown mirror failures retain their best-effort
-policy. Provider workers may finish transport cleanup after their controller
-releases request handles, and late notifier wakes are harmless.
+failures end that session. Provider workers may finish transport cleanup after
+their controller releases request handles, and late notifier wakes are harmless.
 
 ## Source map
 

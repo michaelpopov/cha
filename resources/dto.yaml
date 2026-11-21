@@ -263,7 +263,6 @@ components:
         - display_name
         - protected
         - data_path
-        - mirror_path
         - modify_path
         - active
         - can_delete
@@ -276,9 +275,6 @@ components:
         data_path:
           type: string
           minLength: 1
-        mirror_path:
-          type: [string, "null"]
-          description: Absolute mirror directory path.
         modify_path:
           type: [string, "null"]
           description: Absolute editable-workspace directory path.

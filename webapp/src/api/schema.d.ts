@@ -138,8 +138,6 @@ export interface components {
             display_name: string;
             protected: boolean;
             data_path: string;
-            /** @description Absolute mirror directory path. */
-            mirror_path: string | null;
             /** @description Absolute editable-workspace directory path. */
             modify_path: string | null;
             active: boolean;

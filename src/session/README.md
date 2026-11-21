@@ -1,9 +1,8 @@
 # Session layer
 
 `session/` owns controller behavior, character selection, prompt construction,
-the presentation order of generation output, Markdown formatting, and the
-best-effort filesystem mirror. Durable storage lives in `storage/`. This layer
-has no HTTP or browser dependency.
+the presentation order of generation output, and Markdown formatting. Durable
+storage lives in `storage/`. This layer has no HTTP or browser dependency.
 
 ## Controller ownership
 
@@ -59,7 +58,6 @@ while idle together with the human prompt and other entries in their turn.
 | `opened_session.h` | Owning result returned after controller construction. |
 | `session_open.*` | Combines workspace state, prepared storage, providers, and notifier into a controller. |
 | `session_markdown.*` | Markdown rendering and export filenames. |
-| `session_mirror.*` | Best-effort projection of stored sessions into Markdown files. |
 
 The controller view is borrowed and owner-thread-only. Workers never receive a
 `TranscriptView`; provider input always owns its `ModelHistory` snapshot.

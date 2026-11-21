@@ -13,7 +13,6 @@
 #include "storage/session_repository.h"
 #include "app/d1_sync.h"
 #include "app/current_vault.h"
-#include "session/session_mirror.h"
 
 #include <atomic>
 
@@ -130,15 +129,13 @@ struct Application::Impl {
         void reopen_after_failure(
             WorkspaceConfigStore::MaintenanceGuard& database,
             const SessionRepository::MaintenanceGuard& repository);
-        void rebuild_mirror(const std::optional<std::filesystem::path>& root);
         template<typename Operation>
         auto maintain_database(
             std::uint64_t epoch,
             Operation operation,
             bool cancel_audio = true,
             SyncStart sync_start = SyncStart::resume,
-            const std::function<void()>& before_drain = {},
-            const std::function<void()>& after_reopen = {});
+            const std::function<void()>& before_drain = {});
 
         Impl& app;
         std::optional<LiveSessionGlobalMaintenance> global_maintenance;
@@ -154,7 +151,6 @@ struct Application::Impl {
     CurrentVault current_vault_;
     std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<SessionRepository> sessions;
-    std::shared_ptr<SessionMirror> mirror;
     std::unique_ptr<ApiKeyStore> api_keys;
     std::unique_ptr<OpenAiOAuth> openai_auth;
     std::mutex web_search_url_mutex;

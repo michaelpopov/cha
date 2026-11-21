@@ -75,7 +75,6 @@ toml::table vault_definition_table(const VaultDefinition& vault) {
 void assign_vault_paths(
     VaultDefinition& vault,
     const ApplicationCommand& command) {
-    vault.mirror = vault_path(command.mirror_base, vault.name);
     vault.modify = vault_path(command.modify_base, vault.name);
 }
 
@@ -103,12 +102,6 @@ void validate_candidate_vaults(
 }
 
 void validate_vault_paths(const VaultDefinition& vault) {
-    if (!vault.password_protected && vault.mirror
-        && std::filesystem::exists(*vault.mirror)
-        && !std::filesystem::is_directory(*vault.mirror)) {
-        throw std::invalid_argument(
-            "The mirror path must be an existing directory");
-    }
     if (!vault.modify || !std::filesystem::exists(*vault.modify)) return;
     if (!std::filesystem::is_directory(*vault.modify)) {
         throw std::invalid_argument(
@@ -140,33 +133,29 @@ void clear_existing_export(const std::filesystem::path& destination) {
     std::filesystem::remove_all(destination);
 }
 
-void move_vault_directory(
+bool move_modify_directory(
     const std::optional<std::filesystem::path>& from,
-    const std::optional<std::filesystem::path>& to,
-    std::string_view field,
-    std::vector<VaultDirectoryMove>& moved) {
-    if (!from || !to || *from == *to || !std::filesystem::exists(*from)) return;
+    const std::optional<std::filesystem::path>& to) {
+    if (!from || !to || *from == *to || !std::filesystem::exists(*from)) return false;
     if (std::filesystem::exists(*to)) {
-        if (std::filesystem::equivalent(*from, *to)) return;
+        if (std::filesystem::equivalent(*from, *to)) return false;
         throw std::invalid_argument(
-            "The " + std::string(field)
-            + " directory for the renamed vault already exists");
+            "The modify directory for the renamed vault already exists");
     }
     std::filesystem::rename(*from, *to);
-    moved.emplace_back(*from, *to);
+    return true;
 }
 
-void restore_vault_directories(
-    const std::vector<VaultDirectoryMove>& moved) noexcept {
-    for (auto entry = moved.rbegin(); entry != moved.rend(); ++entry) {
-        std::error_code error;
-        std::filesystem::rename(entry->second, entry->first, error);
-        if (error) {
-            log_critical(
-                "Failed to restore vault directory '"
-                + utf8_path(entry->second) + "' to '"
-                + utf8_path(entry->first) + "': " + error.message());
-        }
+void restore_modify_directory(
+    const std::filesystem::path& from,
+    const std::filesystem::path& to) noexcept {
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    if (error) {
+        log_critical(
+            "Failed to restore vault directory '"
+            + utf8_path(from) + "' to '"
+            + utf8_path(to) + "': " + error.message());
     }
 }
 
@@ -178,8 +167,6 @@ nlohmann::json vault_detail_json(
         {"display_name", vault.name},
         {"protected", vault.password_protected},
         {"data_path", utf8_path(vault.data)},
-        {"mirror_path", vault.mirror
-            ? nlohmann::json(utf8_path(*vault.mirror)) : nlohmann::json(nullptr)},
         {"modify_path", vault.modify
             ? nlohmann::json(utf8_path(*vault.modify)) : nlohmann::json(nullptr)},
         {"active", same_vault_name(vault.name, active_name)},
@@ -383,23 +370,12 @@ void Application::Impl::VaultMaintenance::reopen_after_failure(
     }
 }
 
-void Application::Impl::VaultMaintenance::rebuild_mirror(const std::optional<std::filesystem::path>& root) {
-    try {
-        app.mirror->rebuild(root, *app.sessions);
-    } catch (const std::exception& error) {
-        log_warn(
-            "Session mirror rebuild failed: " + std::string(error.what()));
-        app.mirror->rebuild(std::nullopt, *app.sessions);
-    }
-}
-
 template<typename Operation>
 auto Application::Impl::VaultMaintenance::maintain_database(
     std::uint64_t epoch,
     Operation operation,
     bool cancel_audio, SyncStart sync_start,
-    const std::function<void()>& before_drain,
-    const std::function<void()>& after_reopen) {
+    const std::function<void()>& before_drain) {
     PendingContextNotice notice;
     using Result = std::invoke_result_t<Operation,
         WorkspaceConfigStore::MaintenanceGuard&, SessionRepository::MaintenanceGuard&>;
@@ -427,7 +403,6 @@ auto Application::Impl::VaultMaintenance::maintain_database(
                 // A failed reopen needs a restart, also after a successful operation.
                 reopen_after_failure(database, repository);
             }
-            if (!error && after_reopen) after_reopen();
             end_maintenance_locked(true, notice, error ? SyncStart::resume : sync_start);
         } catch (const WorkspaceRestartRequiredError&) {
             end_maintenance_locked(false, notice);
@@ -565,7 +540,6 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
 VaultDefinition Application::Impl::VaultMaintenance::update_vault(
     std::string_view current_name, VaultUpdate update, std::uint64_t epoch) {
     bool active;
-    bool mirror_changed = false;
     {
         const std::lock_guard lifecycle(app.lifecycle_mutex);
         app.require_admitted(epoch);
@@ -611,11 +585,10 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
                 throw std::invalid_argument("Disconnect this vault from D1 before you rename it.");
             }
         }
-        std::vector<vault::VaultDirectoryMove> moved;
+        bool modify_moved = false;
         bool selection_written = false;
         try {
-            vault::move_vault_directory(previous.modify, candidate.modify, "modify", moved);
-            vault::move_vault_directory(previous.mirror, candidate.mirror, "mirror", moved);
+            modify_moved = vault::move_modify_directory(previous.modify, candidate.modify);
             write_toml_file(candidate.source, vault::vault_definition_table(candidate));
             if (active) {
                 vault::write_vault_selection(app.command.config_directory, candidate.name);
@@ -654,7 +627,9 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
                             + std::string(error.what()));
                     }
                 }
-                vault::restore_vault_directories(moved);
+                if (modify_moved) {
+                    vault::restore_modify_directory(*candidate.modify, *previous.modify);
+                }
             }
             throw;
         }
@@ -663,8 +638,6 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
         });
         app.command.vaults = std::move(updated);
         if (active) {
-            mirror_changed = previous.mirror != candidate.mirror
-                || previous.password_protected != candidate.password_protected;
             app.command.vault = candidate;
             publish_vault(candidate);
         } else publish_vault_names();
@@ -679,9 +652,6 @@ VaultDefinition Application::Impl::VaultMaintenance::update_vault(
                 && app.api_keys->d1().has_value()) {
                 throw std::invalid_argument("Disconnect this vault from D1 before you rename it.");
             }
-        },
-        [&] {
-            if (mirror_changed) rebuild_mirror(session_mirror_root(app.current_vault_.get()));
         });
     }
     const std::lock_guard lifecycle(app.lifecycle_mutex);
@@ -878,7 +848,6 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
                 "Legacy API-key migration failed after switching vault: "
                 + std::string(error.what()));
         }
-        rebuild_mirror(session_mirror_root(selected));
         end_maintenance_locked(true, notice, SyncStart::open);
     } catch (...) {
         if (app.unusable) {
@@ -947,8 +916,6 @@ MaintenanceResult Application::Impl::VaultMaintenance::merge_vault(
                     app.sessions->reserve_maintenance();
                 repository.synchronize_forums(*app.store->snapshot());
             }
-            rebuild_mirror(
-                session_mirror_root(app.current_vault_.get()));
         } catch (const std::exception& error) {
             if (app.state.load() == ApplicationState::maintenance) {
                 if (!merged) {
@@ -1140,7 +1107,6 @@ static bool covers_sync_receipts(
 
 R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
     std::uint64_t epoch) {
-    std::optional<VaultDefinition> downloaded_vault;
     return maintain_database(
         epoch,
         [&](auto&, auto&) {
@@ -1163,8 +1129,8 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
                 app.active_password, [this] { return app.shutdown_requested(); },
                 check_candidate);
             app.clear_current_note();
-            downloaded_vault = load_vault_definition_file(app.command.config_directory, active.source);
-            vault::assign_vault_paths(*downloaded_vault, app.command);
+            auto downloaded_vault = load_vault_definition_file(app.command.config_directory, active.source);
+            vault::assign_vault_paths(downloaded_vault, app.command);
             const auto configured = std::find_if(
                 app.command.vaults.begin(), app.command.vaults.end(),
                 [&](const VaultDefinition& candidate) {
@@ -1174,12 +1140,11 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
                 throw std::runtime_error(
                     "The downloaded active vault is not in the vault registry");
             }
-            *configured = *downloaded_vault;
-            app.command.vault = *downloaded_vault;
-            publish_vault(*downloaded_vault);
+            *configured = downloaded_vault;
+            app.command.vault = downloaded_vault;
+            publish_vault(downloaded_vault);
             return transferred;
-        }, true, SyncStart::recover, {},
-        [&] { rebuild_mirror(session_mirror_root(*downloaded_vault)); });
+        }, true, SyncStart::recover);
 }
 
 WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuration(
@@ -1197,8 +1162,7 @@ WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuratio
             WorkspaceConfigLease::already_held,
             app.active_password,
             app.command.machine);
-    }, true, SyncStart::resume, {},
-    [&] { app.mirror->reconcile_forums(*app.store->snapshot()); });
+    });
 }
 
 WorkspaceConfigTransfer Application::Impl::VaultMaintenance::export_configuration(

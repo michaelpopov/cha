@@ -911,18 +911,7 @@ TEST(LiveSessionManager, StaleSelectionAndCleanupLeaveCurrentSessionsAlone) {
 TEST(LiveSessionManager, SessionNoticeStaysWithItsConversationAcrossUnloading) {
     test::TestWorkspace fixture;
     const test::WebGraph graph(fixture.root());
-    std::mutex mirror_mutex;
-    std::vector<TranscriptEntry> mirrored;
-    SessionOpener opener = [inner = graph.opener(), &mirror_mutex, &mirrored](
-        const FullSessionId& identity, std::shared_ptr<WakeNotifier> notifier, std::uint64_t epoch) {
-        OpenedSession opened = inner(identity, std::move(notifier), epoch);
-        opened.mirror = [&mirror_mutex, &mirrored](std::string_view, std::span<const TranscriptEntry> entries) {
-            const std::lock_guard lock(mirror_mutex);
-            mirrored.assign(entries.begin(), entries.end());
-        };
-        return opened;
-    };
-    LiveSessionManager manager(manager_settings(3), std::move(opener));
+    LiveSessionManager manager(manager_settings(3), graph.opener());
     const auto source = graph.sessions()->create("lobby", "Planning").identity;
     const auto other = graph.sessions()->create("lobby", "Other").identity;
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open(source, 5s)));
@@ -948,11 +937,6 @@ TEST(LiveSessionManager, SessionNoticeStaysWithItsConversationAcrossUnloading) {
     ASSERT_EQ(transcript.size(), 2u);
     EXPECT_EQ(transcript.back().kind, EntryKind::notice);
     EXPECT_EQ(transcript.back().text, "Saved while unloaded.");
-    {
-        const std::lock_guard lock(mirror_mutex);
-        ASSERT_EQ(mirrored.size(), 2u);
-        EXPECT_EQ(mirrored.back().text, "Saved while unloaded.");
-    }
     result = unrelated->snapshot(5s);
     ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(result));
     EXPECT_TRUE(std::get<SessionSnapshot>(result).transcript.empty());

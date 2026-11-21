@@ -302,14 +302,9 @@ std::optional<std::filesystem::path> optional_app_path(
 
 void assign_vault_paths(
     VaultDefinition& vault,
-    const std::optional<std::filesystem::path>& mirror_base,
     const std::optional<std::filesystem::path>& modify_base) {
-    const std::filesystem::path name = path_from_utf8(vault.name);
-    if (mirror_base) {
-        vault.mirror = std::filesystem::weakly_canonical(*mirror_base / name);
-    }
     if (modify_base) {
-        vault.modify = std::filesystem::weakly_canonical(*modify_base / name);
+        vault.modify = std::filesystem::weakly_canonical(*modify_base / path_from_utf8(vault.name));
     }
 }
 
@@ -386,11 +381,9 @@ void bootstrap_configuration_directory(
     const std::filesystem::path app = root / "app.toml";
     const std::filesystem::path vault = root / "default.toml";
     const std::filesystem::path database_path = root / "default.sqlite3";
-    const std::filesystem::path mirror_base = root / "mirror";
     const std::filesystem::path modify_base = root / "modify";
     bool database_created = false;
     bool vault_created = false;
-    bool mirror_created = false;
     bool modify_created = false;
     try {
         create_empty_workspace_session_database(database_path);
@@ -432,14 +425,11 @@ void bootstrap_configuration_directory(
         vault_contents << vault_config << '\n';
         create_private_file(vault, vault_contents.str());
         vault_created = true;
-        create_private_directory(mirror_base);
-        mirror_created = true;
         create_private_directory(modify_base);
         modify_created = true;
         create_private_file(
             app,
             "vault = \"Default\"\n\n"
-            "mirror = \"mirror\"\n"
             "modify = \"modify\"\n\n"
             "[logging]\n"
             "file = \"logs/cha.log\"\n"
@@ -447,7 +437,6 @@ void bootstrap_configuration_directory(
     } catch (...) {
         std::error_code ignored;
         if (modify_created) std::filesystem::remove(modify_base, ignored);
-        if (mirror_created) std::filesystem::remove(mirror_base, ignored);
         if (vault_created) std::filesystem::remove(vault, ignored);
         if (database_created) {
             std::filesystem::remove(database_path, ignored);
@@ -554,13 +543,11 @@ ConfigurationDirectory load_configuration_directory(
     warn_unknown_fields(
         app,
         app_file,
-        {"vault", "machine", "mirror", "modify", "web", "logging", "voice_input", "text_to_speech"},
+        {"vault", "machine", "modify", "web", "logging", "voice_input", "text_to_speech"},
         "root",
         app_kind, warnings);
     const std::string configured_vault =
         required_string(app, app_file, "vault", app_kind);
-    const std::optional<std::filesystem::path> mirror_base = optional_app_path(
-        app, root, app_file, "mirror", app_kind);
     const std::optional<std::filesystem::path> modify_base = optional_app_path(
         app, root, app_file, "modify", app_kind);
     const std::string machine = load_machine_name(app, app_file, warnings);
@@ -609,8 +596,7 @@ ConfigurationDirectory load_configuration_directory(
     loaded.reserve(vault_files.size());
     for (const std::filesystem::path& file : vault_files) {
         loaded.push_back(load_vault_definition(root, file, warnings, replacement(file)));
-        assign_vault_paths(
-            loaded.back().definition, mirror_base, modify_base);
+        assign_vault_paths(loaded.back().definition, modify_base);
     }
     validate_vault_registry(root, loaded);
 
@@ -645,7 +631,6 @@ ConfigurationDirectory load_configuration_directory(
         .directory = root,
         .startup_vault = startup->name,
         .machine = machine,
-        .mirror_base = mirror_base,
         .modify_base = modify_base,
         .vaults = std::move(vaults),
         .log_file = resolve_config_path(
@@ -683,7 +668,6 @@ ApplicationCommand parse_application_command(
     return {
         .config_directory = settings.directory,
         .machine = settings.machine,
-        .mirror_base = settings.mirror_base,
         .modify_base = settings.modify_base,
         .vaults = settings.vaults,
         .vault = *selected,
@@ -754,18 +738,6 @@ void require_openable_protected_database(
             "The vault password is incorrect, or its database is damaged");
     }
     require_switchable_database(database, password);
-}
-
-std::optional<std::filesystem::path> session_mirror_root(
-    const VaultDefinition& vault) {
-    if (vault.password_protected) {
-        if (vault.mirror) {
-            log_warn("Ignoring session mirror for password-protected vault '"
-                + vault.name + "'");
-        }
-        return std::nullopt;
-    }
-    return vault.mirror;
 }
 
 } // namespace cha

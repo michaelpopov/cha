@@ -1865,7 +1865,7 @@ describe('Notes in the application', () => {
       }
     }));
     const vault = { display_name: 'Personal', protected: false, active: true, can_delete: false,
-      data_path: '/data/personal.sqlite3', mirror_path: null, modify_path: null };
+      data_path: '/data/personal.sqlite3', modify_path: null };
     const uploadVault = vi.fn(async () => { transferred = stored; return 42; });
     const createVault = vi.fn(async () => { transferred = stored; return { ...vault, display_name: 'Copy', active: false }; });
     render(<App client={fixtureClient({
@@ -1910,7 +1910,7 @@ describe('Notes in the application', () => {
   it('reports an upload that fails after the vault page closed', async () => {
     let reject!: (failure: Error) => void;
     const vault = { display_name: 'Personal', protected: false, active: true, can_delete: false,
-      data_path: '/data/personal.sqlite3', mirror_path: null, modify_path: null };
+      data_path: '/data/personal.sqlite3', modify_path: null };
     render(<App client={fixtureClient({
       getBootstrap: async () => ({ ...bootstrapFixture, capabilities: { can_transfer_r2: true, can_modify: false } }),
       listNoteItems: async () => [plan], getNote: async (id) => ({ id, document_id: id, document: noteDocument('Saved plan') }),

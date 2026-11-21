@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
-#include <map>
 #include <mutex>
 #include <vector>
 
@@ -310,9 +309,6 @@ struct ApplyResult {
     std::string_view reason = {};
 };
 
-// Changed chats and their current labels.
-using ChangedChats = std::map<FullSessionId, std::string>;
-
 // The ordinary validation of SessionController::set_character_settings.
 bool valid_character_record(
     const Workspace& workspace, std::string_view forum_id, const nlohmann::json& record) {
@@ -331,7 +327,7 @@ bool valid_character_record(
 
 ApplyResult apply_complete_record(
     const std::string& record_text,
-    const D1SyncWorker::Config& config, bool& notes_changed, ChangedChats& chats_changed,
+    const D1SyncWorker::Config& config, bool& notes_changed,
     std::string_view op_id = {}) {
     const auto skip = [&](std::string_view reason, std::string_view legacy_warning) -> ApplyResult {
         if (op_id.empty()) log_warn(std::string(legacy_warning));
@@ -391,13 +387,7 @@ ApplyResult apply_complete_record(
             }, op_id);
             if (outcome.retry) return {ApplyOutcome::retry, "configuration is busy"};
             if (!outcome.applied) return {ApplyOutcome::skipped, "configuration change rejected"};
-            if (outcome.notes_changed) {
-                notes_changed = true;
-                const auto workspace = config.store->snapshot();
-                std::erase_if(chats_changed, [&](const auto& chat) {
-                    return !workspace->find_forum(chat.first.forum_id);
-                });
-            }
+            if (outcome.notes_changed) notes_changed = true;
             return {ApplyOutcome::applied};
         }
         if (kind.rfind("chat.", 0) == 0) {
@@ -421,10 +411,7 @@ ApplyResult apply_complete_record(
                 reservation.emplace(
                     std::move(std::get<LiveSessionMaintenanceReservation>(reserved)));
             }
-            if (sync_apply_chat_record(database, envelope, op_id)) {
-                if (kind == "chat.delete") chats_changed.erase(identity);
-                else chats_changed[identity] = chat.label;
-            }
+            sync_apply_chat_record(database, envelope, op_id);
             return {ApplyOutcome::applied};
         }
         return skip("invalid record", "Skipped incoming sync record with unknown kind.");
@@ -445,22 +432,12 @@ ApplyResult apply_complete_record(
     }
 }
 
-void notify_changes(const D1SyncWorker::Config& config, bool notify_notes, bool notes_changed,
-    const ChangedChats& chats_changed) {
+void notify_notes_changed(const D1SyncWorker::Config& config, bool notify_notes, bool notes_changed) {
     if (notify_notes && notes_changed && config.on_notes_changed) {
         try {
             config.on_notes_changed();
         } catch (...) {
             log_warn("Could not deliver the D1 notes change notification.");
-        }
-    }
-    if (config.on_chat_changed) {
-        for (const auto& [identity, label] : chats_changed) {
-            try {
-                config.on_chat_changed(identity, label);
-            } catch (const std::exception&) {
-                log_warn("Could not update the session mirror after D1 sync.");
-            }
         }
     }
 }
@@ -498,7 +475,6 @@ bool D1SyncWorker::receive_legacy(D1Client& client, std::stop_token stop, bool n
         }
         if (rows.empty()) return true;
         bool notes_changed = false;
-        ChangedChats chats_changed;
         std::string_view retry_reason;
         for (const auto& row : rows) {
             if (interrupted(stop)) break;
@@ -523,7 +499,7 @@ bool D1SyncWorker::receive_legacy(D1Client& client, std::stop_token stop, bool n
             }
             if (pending || (row.piece == 1 && row.pieces == 1)) {
                 const auto outcome = apply_complete_record(
-                    *complete, config_, notes_changed, chats_changed);
+                    *complete, config_, notes_changed);
                 if (outcome.outcome == ApplyOutcome::retry) {
                     retry_reason = outcome.reason;
                     break;
@@ -534,7 +510,7 @@ bool D1SyncWorker::receive_legacy(D1Client& client, std::stop_token stop, bool n
             }
             handled = row.rowid;
         }
-        notify_changes(config_, notify_notes, notes_changed, chats_changed);
+        notify_notes_changed(config_, notify_notes, notes_changed);
         if (handled > acknowledged) {
             if (const auto error = client.delete_through(local_table, handled)) {
                 if (error->failure == D1Client::Failure::missing_table) return true;
@@ -571,7 +547,6 @@ void D1SyncWorker::receive_v2(D1Client& client, std::stop_token stop, bool notif
             return;
         }
         bool notes_changed = false;
-        ChangedChats chats_changed;
         std::vector<std::string> handled;
         std::string_view retry_reason;
         std::string_view retry_id;
@@ -625,7 +600,7 @@ void D1SyncWorker::receive_v2(D1Client& client, std::stop_token stop, bool notif
                     if (!retry_reason.empty() || interrupted(stop)) break;
                 }
                 if (receipts_read && operation.pieces > 0 && operation.record)
-                    result = apply_complete_record(*operation.record, config_, notes_changed, chats_changed, id);
+                    result = apply_complete_record(*operation.record, config_, notes_changed, id);
             }
             if (result.outcome == ApplyOutcome::retry) {
                 retry_reason = result.reason;
@@ -639,7 +614,7 @@ void D1SyncWorker::receive_v2(D1Client& client, std::stop_token stop, bool notif
             }
             handled.push_back(id);
         }
-        notify_changes(config_, notify_notes, notes_changed, chats_changed);
+        notify_notes_changed(config_, notify_notes, notes_changed);
         if (!stopped()) {
             if (const auto error = client.delete_operations(table, handled)) {
                 request_failed(*error, "acknowledgement",

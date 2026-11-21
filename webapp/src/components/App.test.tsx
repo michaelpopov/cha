@@ -2054,7 +2054,6 @@ it('does not abandon an in-flight session open when merge refreshes bootstrap', 
             display_name: 'Personal',
             protected: false,
             data_path: '/data/personal.sqlite3',
-            mirror_path: null,
             modify_path: '/work/personal',
             active: true,
             can_delete: false,
@@ -2063,7 +2062,6 @@ it('does not abandon an in-flight session open when merge refreshes bootstrap', 
             display_name: 'Projects',
             protected: false,
             data_path: '/data/projects.sqlite3',
-            mirror_path: null,
             modify_path: null,
             active: false,
             can_delete: true,
@@ -2122,7 +2120,7 @@ it('clears a live chat and reopens its current vault snapshot after Settings dow
     getSessionSnapshot,
     listVaults: async () => [{
       display_name: replaced ? 'personal' : 'Personal', protected: false,
-      data_path: '/data/personal.sqlite3', mirror_path: null,
+      data_path: '/data/personal.sqlite3',
       modify_path: '/work/personal', active: true, can_delete: false,
     }],
     downloadVault: async () => (await bridge.invoke<{ byte_count: number }>(
@@ -2192,7 +2190,7 @@ it('offers bootstrap retry when discovery refresh fails after Settings download'
     getBootstrap,
     listVaults: async () => [{
       display_name: 'Personal', protected: false,
-      data_path: '/data/personal.sqlite3', mirror_path: null,
+      data_path: '/data/personal.sqlite3',
       modify_path: '/work/personal', active: true, can_delete: false,
     }],
     downloadVault: async () => (await bridge.invoke<{ byte_count: number }>(

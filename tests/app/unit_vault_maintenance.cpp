@@ -433,16 +433,14 @@ TEST(ApplicationVault, DownloadRefusesInvalidWorkspaceBeforeReplacingTheVault) {
     EXPECT_FALSE(std::filesystem::exists(pair.command.vault.source.string() + ".bac"));
 }
 
-TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
+TEST(ApplicationVault, ConfigurationTransferExcludesNotes) {
     TwoVaults pair;
     const auto note = seed_notes(pair.database_a, "Destination");
     (void)seed_notes(pair.database_b, "Source");
     const auto before = stored_notes(pair.database_a);
     const auto source_before = stored_notes(pair.database_b);
     const auto exported = pair.workspace_a.root() / "export";
-    const auto mirror = pair.workspace_a.root() / "mirror";
     pair.command.vault.modify = exported;
-    pair.command.vault.mirror = mirror;
     pair.command.vaults.front() = pair.command.vault;
     auto application = Application::open(pair.command);
     application->select_note(note, application->context_epoch());
@@ -462,58 +460,35 @@ TEST(ApplicationVault, ConfigurationTransferAndSessionMirrorExcludeNotes) {
     (void)application->import_configuration(application->context_epoch());
     EXPECT_EQ(application->bootstrap().presentation.current_note_id, note);
     EXPECT_EQ(stored_notes(pair.database_a), before);
-    // Rebuild a mirror containing an actual session, not just an empty directory.
-    (void)application->create_session("lobby", "Mirrored session", application->context_epoch());
     application.reset();
     application = Application::open(pair.command);
     EXPECT_FALSE(application->bootstrap().presentation.current_note_id);
-    ASSERT_TRUE(std::filesystem::exists(mirror));
-    std::size_t documents = 0;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(mirror)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".md") {
-            ++documents;
-            EXPECT_EQ(file_contents(entry.path()).find("日本語 Привет café"), std::string::npos);
-        }
-    }
-    EXPECT_EQ(documents, 1U);
     EXPECT_EQ(stored_notes(pair.database_a), before);
 }
 
-TEST(ApplicationVault, ForumEditsAndImportKeepSessionMirrorMappingsCurrent) {
+TEST(ApplicationVault, IgnoresLegacyMirrorDirectory) {
     TwoVaults pair;
-    const auto mirror = pair.workspace_a.root() / "mirror";
-    const auto exported = pair.workspace_a.root() / "export";
-    pair.command.vault.mirror = mirror;
-    pair.command.vault.modify = exported;
-    pair.command.vaults.front() = pair.command.vault;
-    auto app = Application::open(pair.command);
-    const auto first = app->create_forum(
-        {.display_name = "First forum", .persona_id = "alpha"}, app->context_epoch());
-    ASSERT_EQ(first.summary.id, "forum_1");
-    (void)app->create_session("forum_1", "Shared label", app->context_epoch());
-    const auto archive = mirror / "First forum" / "Shared label.md";
-    ASSERT_TRUE(std::filesystem::is_regular_file(archive));
-    const auto archive_contents = file_contents(archive);
-    app->delete_forum("forum_1", app->context_epoch());
+    const auto config = pair.command.config_directory;
+    std::ofstream(config / "app.toml")
+        << "vault = \"A\"\nmirror = \"mirror\"\n"
+        << "[logging]\nfile = \"runtime.log\"\nlevel = \"off\"\n";
+    const auto directory = config / "mirror" / "A" / "The Lobby";
+    std::filesystem::create_directories(directory);
+    const auto existing = directory / "Planning.md";
+    std::ofstream(existing) << "Previously written transcript\n";
 
-    const auto replacement = app->create_forum(
-        {.display_name = "Replacement", .persona_id = "alpha"}, app->context_epoch());
-    ASSERT_EQ(replacement.summary.id, "forum_1");
-    (void)app->create_session("forum_1", "Shared label", app->context_epoch());
-    EXPECT_EQ(file_contents(mirror / "Replacement" / "Shared label.md"), archive_contents);
-
-    (void)app->export_configuration(app->context_epoch());
-    pair.workspace_b.add_forum("imported", "Imported", "guide");
-    std::filesystem::copy(pair.workspace_b.root() / "forums" / "imported",
-        exported / "forums" / "imported", std::filesystem::copy_options::recursive);
-    (void)app->import_configuration(app->context_epoch());
-    (void)app->create_session("imported", "Imported chat", app->context_epoch());
-    (void)app->create_session("forum_1", "After import", app->context_epoch());
-    EXPECT_EQ(file_contents(mirror / "Imported" / "Imported chat.md"),
-        "<!-- CHA session: Imported chat -->\n");
-    EXPECT_EQ(file_contents(mirror / "Replacement" / "After import.md"),
-        "<!-- CHA session: After import -->\n");
-    EXPECT_EQ(file_contents(archive), archive_contents);
+    const auto config_path = config.string();
+    const char* args[] = {"CHA", "--config", config_path.c_str()};
+    const auto command = parse_application_command(3, args);
+    auto app = Application::open(command);
+    const auto epoch = app->context_epoch();
+    const auto session = app->create_session("lobby", "Planning", epoch);
+    (void)app->rename_session("lobby", session.id, "Renamed", epoch);
+    EXPECT_EQ(app->export_session("lobby", session.id, epoch).markdown,
+        "<!-- CHA session: Renamed -->\n");
+    EXPECT_EQ(file_contents(existing), "Previously written transcript\n");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory),
+        std::filesystem::directory_iterator{}), 1);
 }
 
 TEST(ApplicationVault, UploadResumesTheVaultBeforeTransferAndRefusesMaintenanceUntilItEnds) {

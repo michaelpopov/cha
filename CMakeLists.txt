@@ -375,7 +375,6 @@ add_library(cha_lib STATIC
     src/runtime/request_parser.cpp
     src/runtime/protocol.cpp
     src/session/session_markdown.cpp
-    src/session/session_mirror.cpp
     src/runtime/session_projection.cpp
     src/runtime/live_session.cpp
     src/runtime/live_session_manager.cpp
@@ -662,7 +661,6 @@ if(BUILD_TESTING)
         tests/runtime/unit_protocol.cpp
         tests/runtime/unit_wire_fixtures.cpp
         tests/session/unit_session_markdown.cpp
-        tests/session/unit_session_mirror.cpp
         tests/runtime/unit_session_projection.cpp
         tests/runtime/unit_live_session_manager.cpp
         tests/runtime/unit_text_command.cpp

@@ -27,7 +27,6 @@ struct BackingState {
             .default_persona_id = default_persona_id,
             .transcript = {
                 .entries = transcript,
-                .revision = 42,
                 .open_entry_id = 2,
                 .covered_until = covered_until,
             },

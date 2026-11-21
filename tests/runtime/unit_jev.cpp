@@ -1210,11 +1210,9 @@ TEST_P(SessionNamingRuntime, AcceptsThePromptWhileNamingIsPending) {
     release_title = release.get_future().share();
     providers = std::make_shared<Providers>(naming_factory(), ProviderThreadLauncher{},
         [](const auto&, const auto&) { return JevResult{JevOutcome::success, "undefined"}; });
-    std::string mirrored_label;
     LiveSessionManager manager({}, [&](const FullSessionId&, auto wake, std::uint64_t) {
         return OpenedSession{.label = "New session",
-            .controller = make_controller(wake, load_session_state(journal.path())),
-            .mirror = [&](std::string_view label, auto) { mirrored_label = label; }};
+            .controller = make_controller(wake, load_session_state(journal.path()))};
     });
     ASSERT_TRUE(std::holds_alternative<LiveSessionReady>(manager.open({"lobby", "session"}, 2s)));
     auto session = manager.lookup({"lobby", "session"});
@@ -1242,7 +1240,6 @@ TEST_P(SessionNamingRuntime, AcceptsThePromptWhileNamingIsPending) {
     EXPECT_EQ(snapshot.session_label, expected_label);
     EXPECT_FALSE(snapshot.recent_pending);
     EXPECT_EQ(read_session_database_metadata(journal.path()).label, expected_label);
-    EXPECT_EQ(mirrored_label, expected_label);
     EXPECT_TRUE(session->idle_for_retirement());
     ASSERT_EQ(snapshot.transcript.size(), 2u);
 }

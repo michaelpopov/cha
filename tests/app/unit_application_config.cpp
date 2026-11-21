@@ -140,7 +140,6 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
             command.log_file,
             std::filesystem::weakly_canonical(item.log));
         EXPECT_EQ(command.log_level, item.level);
-        EXPECT_FALSE(command.mirror_base);
         EXPECT_FALSE(command.modify_base);
         EXPECT_FALSE(command.vault.modify);
     }
@@ -165,14 +164,10 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
         command.vault.modify,
         std::filesystem::weakly_canonical(config_ / "modify" / "Default"));
     EXPECT_EQ(
-        command.vault.mirror,
-        std::filesystem::weakly_canonical(config_ / "mirror" / "Default"));
-    EXPECT_EQ(
         command.modify_base,
         std::filesystem::weakly_canonical(config_ / "modify"));
-    EXPECT_EQ(
-        command.mirror_base,
-        std::filesystem::weakly_canonical(config_ / "mirror"));
+    EXPECT_TRUE(command.warnings.empty());
+    EXPECT_FALSE(std::filesystem::exists(config_ / "mirror"));
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "app.toml"));
     EXPECT_TRUE(std::filesystem::is_regular_file(config_ / "default.toml"));
 
@@ -211,27 +206,22 @@ TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyDirectory) {
     EXPECT_FALSE(std::filesystem::exists(config_ / "default.sqlite3"));
 }
 
-TEST_F(ApplicationConfigTest, DerivesVaultPathsFromAppBasePaths) {
+TEST_F(ApplicationConfigTest, DerivesVaultModifyPathFromAppBasePath) {
     struct Case {
-        std::string mirror;
         std::string modify;
-        std::filesystem::path expected_mirror;
         std::filesystem::path expected_modify;
     };
     const Case cases[]{
-        {toml_path(root_ / "mirror"), toml_path(root_ / "modify"), root_ / "mirror/Personal", root_ / "modify/Personal"},
-        {"\"../mirror\"", "\"modify\"", root_ / "mirror/Personal", config_ / "modify/Personal"},
+        {toml_path(root_ / "modify"), root_ / "modify/Personal"},
+        {"\"modify\"", config_ / "modify/Personal"},
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.modify);
-        write_app("vault = \"Personal\"\nmirror = " + item.mirror
-                  + "\nmodify = " + item.modify
+        write_app("vault = \"Personal\"\nmodify = " + item.modify
                   + "\n[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
                     "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
         const ApplicationCommand command = load({"CHA", "--config", config_.string()});
-        ASSERT_TRUE(command.vault.mirror);
         ASSERT_TRUE(command.vault.modify);
-        EXPECT_EQ(*command.vault.mirror, std::filesystem::weakly_canonical(item.expected_mirror));
         EXPECT_EQ(*command.vault.modify, std::filesystem::weakly_canonical(item.expected_modify));
     }
 }
@@ -250,16 +240,17 @@ TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
     EXPECT_NE(error.find("config"), std::string::npos) << error;
 }
 
-TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {
+TEST_F(ApplicationConfigTest, WarnsAndIgnoresAnObsoleteMirrorSetting) {
     write_app(
         "vault = \"Personal\"\n"
         "mirror = \"\"\n"
-        "[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
         "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
 
+    const ApplicationCommand command = load({"CHA", "--config", config_.string()});
+    EXPECT_EQ(command.vault.name, "Personal");
+    ASSERT_EQ(command.warnings.size(), 1u);
     EXPECT_NE(
-        error_text({"CHA", "--config", config_.string()})
-            .find("non-empty string 'mirror'"),
+        command.warnings.front().find("field 'mirror' is unused and was ignored"),
         std::string::npos);
 }
 

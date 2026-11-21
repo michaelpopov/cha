@@ -1459,7 +1459,6 @@ struct WorkspaceConfigStore::Impl {
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
-    std::function<void(const Workspace&)> forums_changed;
     WorkspaceConfigRevision revision{};
     struct UndoRecord {
         WorkspaceConfigRevision resulting_revision{};
@@ -1621,7 +1620,6 @@ struct WorkspaceConfigStore::Impl {
             transaction.commit();
         }
         published_workspace.swap(candidate);
-        if (notes_changed && forums_changed) forums_changed(*published_workspace);
         if (config_changed) {
             ++revision;
             if (undo_update == UndoUpdate::clear) undo.reset();
@@ -2212,11 +2210,6 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
 
 std::shared_ptr<const Workspace> WorkspaceConfigStore::snapshot() const {
     return impl_->snapshot();
-}
-
-void WorkspaceConfigStore::on_forums_changed(std::function<void(const Workspace&)> callback) {
-    const std::lock_guard lock(impl_->mutex);
-    impl_->forums_changed = std::move(callback);
 }
 
 const std::filesystem::path& WorkspaceConfigStore::private_root()

@@ -72,7 +72,6 @@ const vaults: VaultDetail[] = [
     display_name: 'Personal',
     protected: false,
     data_path: '/data/personal.sqlite3',
-    mirror_path: null,
     modify_path: '/work/personal',
     active: true,
     can_delete: false,
@@ -81,7 +80,6 @@ const vaults: VaultDetail[] = [
     display_name: 'Projects',
     protected: false,
     data_path: '/data/projects.sqlite3',
-    mirror_path: '/mirror/projects',
     modify_path: null,
     active: false,
     can_delete: true,
@@ -224,7 +222,6 @@ describe('Settings screens', () => {
       display_name: 'Archive',
       protected: false,
       data_path: '/data/Archive.sqlite3',
-      mirror_path: null,
       modify_path: null,
       active: false,
       can_delete: true,
@@ -456,7 +453,6 @@ describe('Settings screens', () => {
       display_name: 'Archive',
       protected: false,
       data_path: '/data/archive.sqlite3',
-      mirror_path: '/mirror/archive',
       modify_path: null,
       active: false,
       can_delete: true,
@@ -475,7 +471,6 @@ describe('Settings screens', () => {
     await userEvent.selectOptions(screen.getByLabelText('Initial database'), 'Projects');
     expect(screen.queryByLabelText('Database path')).not.toBeInTheDocument();
     expect(screen.queryByText('Vault details')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Mirror path/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Modify path/)).not.toBeInTheDocument();
     expect(screen.queryByText(/active vault does not change/i)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Create vault' }));
@@ -493,7 +488,6 @@ describe('Settings screens', () => {
       display_name: 'Empty',
       protected: false,
       data_path: '/data/empty.sqlite3',
-      mirror_path: null,
       modify_path: null,
       active: false,
       can_delete: true,
@@ -525,7 +519,6 @@ describe('Settings screens', () => {
       display_name: 'Private',
       protected: true,
       data_path: '/data/private.sqlite3',
-      mirror_path: null,
       modify_path: null,
       active: false,
       can_delete: true,
@@ -814,7 +807,6 @@ describe('Settings screens', () => {
     expect(screen.queryByLabelText('Display name')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Database path')).not.toBeInTheDocument();
     expect(screen.queryByText('Vault details')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Mirror path/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Modify path/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete vault' }));

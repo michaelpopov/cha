@@ -101,8 +101,7 @@ Generation workers never read it; the controller captures an immutable
 | `cover` | Hides entries through the selected entry from model context and appends `[cover]`. |
 | `uncover` | Clears the boundary and appends `[uncover]`. |
 
-Every presentation-changing mutation bumps `revision`, and every entry ID must
-be strictly greater than the last. Renderers use `revision` to detect change.
+Every entry ID must be strictly greater than the last.
 
 ### The cover boundary
 
@@ -134,7 +133,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart TD
-    C["Transcript<br/>entries + revision + epoch"]
+    C["Transcript<br/>entries + streaming and cover state"]
     V["TranscriptView<br/>borrowed span + scalar state"]
     H["ModelHistory<br/>owned entries + projection state"]
     O["open_entry_text<br/>owned tail text"]

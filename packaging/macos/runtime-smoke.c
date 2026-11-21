@@ -146,7 +146,6 @@ int main(int argc, const char* argv[]) {
     if (!write_file(
             app_path,
             "vault = \"Default\"\n"
-            "mirror = \"mirror\"\n"
             "modify = \"modify\"\n"
             "[web]\nhost = \"127.0.0.1\"\nport = 8086\n"
             "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n")
@@ -156,7 +155,6 @@ int main(int argc, const char* argv[]) {
     if (!write_file(
             app_path,
             "vault = \"Default\"\n"
-            "mirror = \"mirror\"\n"
             "modify = \"modify\"\n"
             "[web]\nhost = 1\nport = \"bad\"\nextra = true\n"
             "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n")

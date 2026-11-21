@@ -94,7 +94,6 @@ cha-config/
 ```toml
 # app.toml
 vault = "Personal"
-mirror = "mirror"
 modify = "modify"
 
 [logging]
@@ -108,17 +107,6 @@ vault_name = "Personal"
 data = "/var/lib/cha/workspace.sqlite3"
 protected = false
 ```
-
-The optional `app.toml` `mirror` setting names a base directory. CHA appends
-the vault name and writes persistent sessions as Markdown under display-named
-forum directories; omit it to disable mirroring. Protected vaults never mirror.
-The base directory must already exist. Sessions are refreshed after terminal
-responses and context-boundary changes, renamed with their sessions, and
-retained after deletion.
-This copies transcripts out of the SQLite workspace into plain files. CHA
-writes those files with mode `0600`, but does not change permissions on the
-configured root or existing forum directories, so choose the location
-accordingly.
 
 Each completed provider request writes its HTTP metadata, provider request ID,
 and reported `input_tokens`, `output_tokens`, `cache_read_tokens`, and
@@ -247,9 +235,9 @@ credentials live in `openai-auth.json` in the application configuration
 directory.
 
 Native hosts load packaged frontend assets themselves. Relative `data`,
-`logging.file`, and application-level `mirror` and `modify` bases resolve
-against the configuration directory. CHA appends the vault name to mirror/modify
-bases; obsolete per-vault values are ignored with warnings. Template includes
+`logging.file`, and the application-level `modify` base resolve against the
+configuration directory. CHA appends the vault name to the `modify` base.
+Obsolete settings are ignored with warnings. Template includes
 resolve within the logical workspace root using the in-memory configuration.
 
 ### Command line and configuration maintenance

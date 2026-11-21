@@ -440,7 +440,6 @@ describe('native CHA client', () => {
       display_name: 'Personal',
       protected: false,
       data_path: '/tmp/personal.sqlite3',
-      mirror_path: null,
       modify_path: null,
       active: true,
       can_delete: false,

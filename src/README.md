@@ -43,7 +43,7 @@ diagnostic logging remains available until teardown finishes.
 | `bridge/` | Native request envelopes and the operation dispatcher. |
 | `runtime/` | Live-session runtime, chat-input grammar, wire DTOs, and projection. |
 | `workspace/` | The loaded workspace model and built-ins. |
-| `session/` | Session controller state, controller opening, Markdown formatting, and best-effort mirroring. |
+| `session/` | Session controller state, controller opening, and Markdown formatting. |
 | `storage/` | SQLite access, session persistence, repositories, and database leases. |
 | `providers/` | Provider transport, request execution, cancellation, protocol decoding, event delivery, and speech synthesis. |
 | `characters/` | Request-owned character/provider values, identity validation, and model context. |
