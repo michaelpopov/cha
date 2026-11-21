@@ -916,30 +916,6 @@ without text and without pictures does not become a note.
   each folder.
 - **Import folder…** adds such a file below the folder that you select.
 
-### Export a folder as a book
-
-**Export EPUB…** saves a folder as one EPUB book. You can read the book in an
-e-book reader.
-
-1. Open the menu of a folder and click **Export EPUB…**. The tree shows
-   **Exporting EPUB…**.
-2. In the system dialog, select the location of the file and click **Save**.
-
-CHA saves the open note before the export. The book has these parts:
-
-- The title of the book is the name of the folder. In L1, L2 or L3 mode, CHA
-  adds ` (L1)`, ` (L2)` or ` (L3)` to the title and to the file name.
-- Each note of the folder and of its subfolders is one chapter, in the order
-  of the tree. The **Summary** note of a folder is the first chapter of that
-  folder.
-- Each subfolder is a group in the table of contents of the book.
-- In L1, L2 or L3 mode, each chapter is the L1, L2 or L3 of its note. A note
-  that does not have the version gives its full text. In the other modes, each
-  chapter is the full text.
-- ANNOTATIONS is not in the book.
-
-The book contains the formatted text, the pictures and the web links.
-
 ### Versions of a note
 
 A note can have more versions than its full text. A model makes these
@@ -975,7 +951,7 @@ Important points:
   the full text, the other versions do **not** change. Make them again.
 - A new version from **Summarize** replaces the old version, with its
   changes, highlights and comments.
-- The text mode also controls **Generate audio** and **Export EPUB…**.
+- The text mode also controls **Generate audio**.
 
 ### Summarize a note or a folder
 
@@ -1425,7 +1401,7 @@ Rules for `@Name`:
 | Note as chat material | 256 KiB of text |
 | Note size | 12 MiB |
 | Picture in a note | 1 MiB; PNG, JPEG, WebP or GIF |
-| EPUB book | 16 MiB |
+| EPUB import request | 16 MiB |
 | Note for **Summarize** | A minimum of 4 KiB of text |
 | **Summarize** on a folder | Three notes at the same time |
 | Font size in notes | 10 px to 30 px, in steps of 2 px |
@@ -1461,10 +1437,6 @@ Rules for `@Name`:
 | **All selected outputs already exist.** | Turn on **Overwrite**, or select different versions. |
 | **Summarization is already running for “**_name_**”.** | Wait until [Events](#events) shows **Summarization finished for** _name_. |
 | **Could not start summarization. Try again.** | Click **Start** again. |
-| **This folder has no notes to export.** | The folder and its subfolders have no notes. |
-| **This folder has no L1 text to export.** (or **L2**, **L3**) | No note of the folder has that version. Select **Full text** mode, or use **Summarize** first. |
-| **Could not export the note “**_name_**”.** | The note was deleted, or it is damaged. |
-| **This folder is too large to export as one EPUB.** | Export the subfolders one at a time. |
 | **Select a compression provider in Notes settings.** | Setup is necessary. See the administrator guide. |
 | **Page reading is not configured. …** | Setup is necessary. See the administrator guide. |
 | **Save summary is only available for configured forums.** | You cannot save a summary of the Welcome session. |

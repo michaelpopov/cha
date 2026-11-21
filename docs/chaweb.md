@@ -1,5 +1,27 @@
 # ChaWeb
 
+## Archive status
+
+ChaWeb development is paused. The Git tag `archive/chaweb-v1` on `origin`
+preserves the browser client, `cha-daemon`, Linux deployment tooling, tests,
+and shared application code at commit `b71acc24`. The archived revision built
+from a clean checkout on macOS and passed its frontend, daemon, and nginx
+integration tests before ChaWeb was removed from `main`.
+
+Use a separate worktree to inspect, build, or run the archived version.
+Fetch the tag first if it is missing locally.
+
+```sh
+git fetch origin tag archive/chaweb-v1
+git worktree add --detach ../chaweb-v1 archive/chaweb-v1
+```
+
+The rest of this guide describes that archived version. Run its build and
+deployment commands from the archive worktree. For a future ChaWeb version,
+start a branch from the current `main` and use the archive as a reference.
+
+## Overview
+
 ChaWeb is the implemented browser interface for `cha-daemon`. It supports text
 conversations, OpenAI or xAI dictation, streamed FishAudio playback, and a small
 set of R2 vault actions. The daemon serves only `/api/cha/v1/`; the former
@@ -244,6 +266,6 @@ Build with `npm run build:chaweb` in `webapp/`; this runs type checking and
 writes the separate browser build. Run `npm test -- src/chaweb
 src/textToSpeech.test.ts` there for browser and shared playback tests. Native
 packaging serves its own frontend bundle; ChaWeb must be deployed with the
-matching daemon. See the
-[deployment guide](MaintainerGuide.md#16-chaweb-deployment-on-linux) for nginx,
-socket units, permissions, and macOS runner setup.
+matching daemon. In the archive worktree, see section 16 of
+`docs/MaintainerGuide.md` and `packaging/linux/README.md` for nginx, socket
+units, permissions, and macOS runner setup.

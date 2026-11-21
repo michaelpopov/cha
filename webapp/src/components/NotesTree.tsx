@@ -19,8 +19,7 @@ import {
   type NotesClient,
   type NoteTextMode,
 } from '../api/client';
-import { downloadEpub, noteFolderFilename } from '../download';
-import { buildFolderEpub, EpubExportError } from '../notes/epubExport';
+import { noteFolderFilename } from '../download';
 import {
   availableNoteName,
   buildNoteIndex,
@@ -97,7 +96,6 @@ type RefreshResult = 'applied' | 'ignored' | 'failed';
 const folderTransferStatus = {
   export: 'Exporting folder…',
   import: 'Importing folder…',
-  epub: 'Exporting EPUB…',
 };
 
 export function NotesTree({
@@ -497,52 +495,9 @@ export function NotesTree({
     setFolderTransfer('export');
     setError(null);
     try {
-      await transfer.exportFolder(noteFolderFilename(source.name, 'sqlite'), source.id);
+      await transfer.exportFolder(noteFolderFilename(source.name), source.id);
     } catch (failure: unknown) {
       if (alive.current) setError(publicErrorMessage(failure, 'The folder could not be exported.'));
-    } finally {
-      busy.current = false;
-      flushBackgroundRefresh();
-      if (alive.current) setFolderTransfer(null);
-    }
-  }
-
-  async function exportEpub() {
-    const epoch = menu?.epoch;
-    const source = takeMenuSource();
-    if (source?.kind !== 'folder' || epoch === undefined || !canMutateNow()) return;
-    const exportClient = clientRef.current;
-
-    function requireContext() {
-      if (!alive.current) throw new Error('Notes tree unmounted');
-      if (clientRef.current !== exportClient || exportClient.contextEpoch() !== epoch) {
-        throw new ChaError('vault_changed', 'The vault changed. Start again in the current vault.');
-      }
-    }
-
-    async function readCurrent<T>(read: () => Promise<T>): Promise<T> {
-      requireContext();
-      try { return await read(); }
-      finally { requireContext(); }
-    }
-
-    busy.current = true;
-    setFolderTransfer('epub');
-    setError(null);
-    try {
-      requireContext();
-      if (!await beforeCreateRef.current()) return;
-      const listing = await readCurrent(() => exportClient.listNoteItems());
-      const book = await buildFolderEpub(source.id, listing, noteTextMode, (note, mode) =>
-        readCurrent(async () => (await exportClient.getNote(note.id, mode)).document));
-      requireContext();
-      downloadEpub(book.title, book.bytes);
-    } catch (failure: unknown) {
-      if (alive.current) {
-        const expected = failure instanceof EpubExportError
-          || failure instanceof ChaError && (failure.code === 'vault_changed' || failure.code === 'application_unavailable');
-        setError(expected ? failure.message : 'The EPUB could not be exported.');
-      }
     } finally {
       busy.current = false;
       flushBackgroundRefresh();
@@ -957,10 +912,6 @@ export function NotesTree({
           {client.noteFolderTransfer && !menuIsNote && menu.sourceId !== 'vault' && (
             <button disabled={menuFolderBusy && !menuManaged} onClick={() => void exportFolder()}
               role="menuitem" type="button">Export folder…</button>
-          )}
-          {menuRow?.kind === 'folder' && menu.sourceId !== 'vault' && (
-            <button disabled={menuFolderBusy && !menuManaged} onClick={() => void exportEpub()}
-              role="menuitem" type="button">Export EPUB…</button>
           )}
           {!menuManaged && menu.sourceId !== 'vault' && (
             <>

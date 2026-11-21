@@ -10,6 +10,12 @@ This report catalogs the features, subsystems, duplicate integrations, and dead 
 
 ---
 
+## My List
+
+1. Export EPUB
+2. Pictures panel
+
+
 ## Summary Matrix
 
 | # | Feature / Subsystem | Area | Removal Priority | Primary Reason to Remove |
