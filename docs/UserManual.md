@@ -141,7 +141,7 @@ Escape to close the menu.
 The main panel shows the chat or a note. With **View → Split view**, it shows
 the note on the left and the chat on the right.
 
-The window title shows the vault name and the name of the open session or
+The window title shows the name of the open session and the name of the open
 note.
 
 ### Parts that you can resize
@@ -170,20 +170,22 @@ selections for the next start.
 CHA saves the open note, changes the vault, and shows the Welcome
 conversation. The text that you typed in a prompt but did not send is removed.
 
+Only one CHA process can open a vault at a time. If a different CHA process,
+for example ChaWeb, has the vault open, CHA shows **Close other CHA processes
+using this vault, then try again.** in the sidebar. For a protected vault,
+the message shows in the password dialog. If CHA cannot open the vault for a
+different reason, it also shows the reason. In these cases the active vault
+does not change.
+
 In ChaWeb, use the command `/open`. See
 [Change and refresh the vault](#change-and-refresh-the-vault).
 
 **Setup:** The administrator guide describes how to create and manage vaults.
 
-### A second window
-
-On macOS, **Window → New Instance** (Cmd+N) starts one more CHA window.
-
 ### Events
 
-Some tasks continue in the background: note audio, session summaries, and
-uploads to a store. CHA records their results as events. CHA also records the
-results of note compression and note summaries.
+Some tasks continue in the background: note audio, **Summarize**, session
+summaries, and uploads to a store. CHA records their results as events.
 
 To see the events:
 
@@ -394,9 +396,15 @@ generates an answer, or the target, or the last speaker.
   provider of the character. The list is disabled when the forum has a default
   provider.
 - **Effort** selects the reasoning effort: **Default**, **None**, **Low**,
-  **Medium**, **High** or **Extra high**.
+  **Medium**, **High** or **Extra high**. **Default** uses the effort of the
+  character. If the character has no effort setting, the effort of its
+  provider applies.
 
 The selections apply to that character in this session only.
+
+Google (Gemini) and Anthropic models also use the effort. With **None**, CHA
+sends no thinking settings to these models, and the model uses its own
+default.
 
 ### Information and controls on a message
 
@@ -434,8 +442,10 @@ The covered part moves into a box. The characters do not get it with later
 messages. To move the limit, click the cover button on a different answer. To
 remove the cover, click **Uncover transcript** on the last covered message.
 
-CHA does not store the cover with the session. After a restart of CHA, the
-characters get the full conversation again.
+The cover is temporary. CHA keeps it in memory only, and does not store it
+with the session. The cover stays only while the session is open. When you
+open a different session, change the vault, or close CHA, the cover is
+removed. Then the characters get the full conversation again.
 
 ### Delete the full conversation
 
@@ -493,11 +503,41 @@ Important points:
 - The chat has its own copy. Later changes in the note do not change the copy.
   To refresh the copy, send the Ref ID again.
 - If the note has a compressed version, the chat uses the compressed text. See
-  [Compress a note](#compress-a-note). A chat never uses L1 or L2.
+  [Summarize a note or a folder](#summarize-a-note-or-a-folder). A chat never
+  uses L1, L2 or L3.
 - The limit is 256 KiB of text.
 
 With **View → Split view** you can read the note and use the chat at the same
 time.
+
+### Ask about the note that you read
+
+**Setup:** This function works only when recipient detection is configured.
+
+The note that you opened last on the **Notes** tab is the current note. It
+stays the current note when you go to the **Chat** tab, and in split view.
+
+In the chat, ask about the note in normal words. For example:
+
+```
+What does this note say about refunds?
+```
+
+You can also use words such as “this note”, “my current note”, or the name
+of the note. Recipient detection decides if your message is about the
+current note. If it is, CHA adds a copy of the note to the chat before the
+character answers. The conversation shows *Added note “name” to this chat.*
+If the chat already has an older copy, it shows *Updated this chat’s copy of
+note “name”.* If the chat already has the same copy, no message shows.
+
+Important points:
+
+- The same rules apply as for [Add a note](#add-a-note): CHA uses the
+  compressed text if the note has one, and the limit is 256 KiB of text. The
+  text mode of the Notes screen is not important.
+- “Summarize this” alone is not sufficient. Say which note you mean.
+- If you change the vault or delete the note, there is no current note.
+- ChaWeb does not have this function.
 
 ## 8. What characters can use
 
@@ -604,6 +644,13 @@ speaker button to generate it again.
 While audio plays, CHA mutes the microphone and ignores what it hears. This
 prevents the voice of a character from going into your message.
 
+### Costs of voice
+
+CHA records the use of the voice services: the audio of each answer, each
+dictated message, and the audio of notes. When CHA knows the price of the
+model, it also calculates an estimate of the cost. CHA writes this data into
+its log. No screen shows it. The administrator guide tells where to find it.
+
 ### Type Russian with a Latin keyboard
 
 1. Select **View → Russian**. The **A→Я** button shows in the prompt areas.
@@ -655,7 +702,7 @@ each folder the order is: folders, then notes in alphabetical order, then the
 item **ANNOTATIONS**.
 
 Each row has a menu button, **⋯**. A small dot on a note shows that the note
-has other versions: a compressed version, L1 or L2. See
+has other versions: a compressed version, L1, L2 or L3. See
 [Versions of a note](#versions-of-a-note). A read-only note that has audio has
 a tinted background. The tint shows the audio of the selected text mode. See
 [Audio for a note](#audio-for-a-note).
@@ -672,8 +719,8 @@ The tree has no command to move an item to a different folder.
 | Folder | Holds notes and folders. | All folder commands. |
 | Note | A document. | All note commands. |
 | **Forums** folder | CHA makes it. It has one folder for each forum, with the name of the forum. | **Export folder…** only. You cannot create, rename or delete items here. When a forum is deleted, its folder and the notes in it are deleted too. |
-| Session summary note | The summary of a session, in the folder of its forum. | The note commands, but not **Rename**, **Compress**, **Summarize** and **Exclude from summaries**. |
-| **Summary** note of a folder | **Summarize** on a folder makes it. See [Summarize a note or a folder](#summarize-a-note-or-a-folder). | The note commands, but not **Rename**, **Compress**, **Summarize** and **Exclude from summaries**. |
+| Session summary note | The summary of a session, in the folder of its forum. | The note commands, but not **Rename**, **Summarize** and **Exclude from summaries**. |
+| **Summary** note of a folder | **Summarize** on a folder makes it. See [Summarize a note or a folder](#summarize-a-note-or-a-folder). | The note commands, but not **Rename**, **Summarize** and **Exclude from summaries**. |
 | **ANNOTATIONS** | CHA makes it. It lists the highlights and comments of the notes in one folder. | Open it and use **Copy Ref ID**. You cannot change it. |
 
 ### Create a note or a folder
@@ -706,7 +753,7 @@ Type in the note. The toolbar has these controls:
 
 | Button | Commands |
 | --- | --- |
-| **Note text mode** | **Full text**, **L1**, **L2**, **Compressed**. See [Versions of a note](#versions-of-a-note). |
+| **Note text mode** | **Full text**, **L1**, **L2**, **L3**, **Compressed**. See [Versions of a note](#versions-of-a-note). |
 | **Content** | **Upload** (import a text file), **Copy All** |
 | **History** | **Undo**, **Redo** |
 | **Edit** | **Bold**, **Italic**, **Underline** |
@@ -775,7 +822,7 @@ page into an empty note. Session summary notes and **Summary** notes of
 folders are also read-only.
 
 The read-only state applies to all versions of the note: the full text, L1,
-L2 and the compressed version.
+L2, L3 and the compressed version.
 
 ### Find and replace
 
@@ -815,7 +862,7 @@ When a note in a folder gets a highlight or a comment, CHA makes the item
 notes that are directly in the folder, by note and by chapter.
 
 ANNOTATIONS collects only the highlights and comments of the full text. It
-does not collect them from L1, L2 and the compressed version.
+does not collect them from L1, L2, L3 and the compressed version.
 
 Click the button at an entry to open the note at that highlight or comment.
 The note opens in **Full text** mode.
@@ -864,7 +911,7 @@ without text and without pictures does not become a note.
 ### Export and import a folder
 
 - **Export folder…** saves a folder with all its notes as one file. The file
-  also contains the other versions of each note (compressed, L1, L2), the
+  also contains the other versions of each note (compressed, L1, L2, L3), the
   **Exclude from summaries** setting, and the link to the **Summary** note of
   each folder.
 - **Import folder…** adds such a file below the folder that you select.
@@ -880,15 +927,15 @@ e-book reader.
 
 CHA saves the open note before the export. The book has these parts:
 
-- The title of the book is the name of the folder. In L1 or L2 mode, CHA adds
-  ` (L1)` or ` (L2)` to the title and to the file name.
+- The title of the book is the name of the folder. In L1, L2 or L3 mode, CHA
+  adds ` (L1)`, ` (L2)` or ` (L3)` to the title and to the file name.
 - Each note of the folder and of its subfolders is one chapter, in the order
   of the tree. The **Summary** note of a folder is the first chapter of that
   folder.
 - Each subfolder is a group in the table of contents of the book.
-- In L1 or L2 mode, each chapter is the L1 or L2 of its note. A note that has
-  no L1 or L2 gives its full text. In the other modes, each chapter is the full
-  text.
+- In L1, L2 or L3 mode, each chapter is the L1, L2 or L3 of its note. A note
+  that does not have the version gives its full text. In the other modes, each
+  chapter is the full text.
 - ANNOTATIONS is not in the book.
 
 The book contains the formatted text, the pictures and the web links.
@@ -903,7 +950,8 @@ versions:
 | **Full text** | The original text of the note. | — |
 | **L1** | The text without the parts that are not necessary. It stays close to the original text. | **Summarize** |
 | **L2** | A short form of the main ideas and the key facts, for example lists. It starts with the name of the note. | **Summarize** |
-| **Compressed** | A shorter text for chats. | **Compress** |
+| **L3** | A short section about the note. The **Summary** note of the folder contains the L3 of each note. | **Summarize** |
+| **Compressed** | A shorter text for chats. | **Summarize** |
 
 The tree shows one row for each note. A dot on the row shows that the note
 has other versions.
@@ -912,7 +960,7 @@ To open a version, use the **Note text mode** button at the start of the
 toolbar:
 
 1. Click **Note text mode**.
-2. Click **Full text**, **L1**, **L2** or **Compressed**.
+2. Click **Full text**, **L1**, **L2**, **L3** or **Compressed**.
 
 The mode applies to all notes that you open after this. If the note does not
 have the version of the mode, CHA shows the full text. The tooltip of the
@@ -925,95 +973,88 @@ Important points:
   full text. The read-only state of the note applies to all versions.
 - A change in one version does not change the other versions. When you change
   the full text, the other versions do **not** change. Make them again.
-- A new version from **Compress** or **Summarize** replaces the old version,
-  with its changes, highlights and comments.
+- A new version from **Summarize** replaces the old version, with its
+  changes, highlights and comments.
 - The text mode also controls **Generate audio** and **Export EPUB…**.
-
-### Compress a note
-
-**Setup:** A compression provider must be selected.
-
-A compressed version is a shorter text of the note that a model makes. A chat
-uses it in place of the full text when you add the note to the chat. Thus a
-long note uses less of the model's capacity.
-
-1. Open the menu of a note and click **Compress**.
-2. CHA saves the open note. A dialog shows the progress, for example
-   **Compressing “Chapter 3”…**. You cannot use the window while the dialog
-   shows.
-3. Wait until the dialog closes. The result shows in [Events](#events).
-
-To stop the work, click **Cancel** in the dialog or press Escape.
-
-When the work is complete, a dot shows on the note in the tree. To read the
-compressed text, select **Compressed** in **Note text mode**.
-
-**Compress** on a folder compresses all notes in the folder and its
-subfolders, one at a time. The dialog shows the number of the note, for
-example **Note 3 of 8**. It ignores summary notes, notes that already have a
-compressed version, and notes with less than 4 KiB of text. If the work for
-one note fails, the work continues with the next note.
-
-Important points:
-
-- A note must have a minimum of 4 KiB of text.
-- The model always uses the full text.
-- When you change a note, the compressed version does **not** change. Chats
-  continue to use the old compressed text. Click **Compress** again to make a
-  new version.
 
 ### Summarize a note or a folder
 
-**Setup:** A compression provider must be selected.
+**Setup:** The vault must have a provider. The administrator can set the
+provider and the effort that the dialog shows at the start.
 
-**Summarize** makes text at different levels. You can then read a book, or a
-set of articles, at the depth that you select:
+**Summarize** makes the other versions of a note: the compressed version, L1,
+L2 and L3. On a folder, it also makes the **Summary** note of the folder. You
+can then read a book, or a set of articles, at the depth that you select:
 
-1. The **Summary** note of the folder: the subject of the folder and a short
-   section for each note.
+1. The **Summary** note of the folder: an overview of the folder and the L3
+   of each note.
 2. The L2 of a note: the main ideas and the key facts.
 3. The L1 of a note: the text without the parts that are not necessary.
 4. The full text.
 
-L1, L2 and the **Summary** note are in the language of the text.
+A chat uses the compressed version in place of the full text when you add the
+note to the chat. Thus a long note uses less of the model's capacity.
 
-**Summarize** on a note:
+L1, L2, L3 and the **Summary** note are in the language of the text.
 
-1. Open the menu of a note and click **Summarize**.
-2. CHA saves the open note. A dialog shows **Summarizing “**_name_**”…**. You
-   cannot use the window while the dialog shows.
-3. Wait until the dialog closes. The result shows in [Events](#events).
+To start **Summarize**:
 
-CHA makes L1 and L2 of the note again. They replace the old L1 and L2. The
-note must have 4 KiB to 256 KiB of text.
+1. Open the menu of a note or a folder and click **Summarize**.
+2. Set the fields of the dialog:
 
-**Summarize** on a folder:
+   | Field | Value |
+   | --- | --- |
+   | **Provider** | The provider that makes the text. |
+   | **Effort** | The reasoning effort. |
+   | **Compressed**, **L1**, **L2**, **L3** | The versions to make. At the start, all are selected. |
+   | **Overwrite** | When it is on, CHA replaces the versions that exist. At the start, it is on for a note and off for a folder. |
 
-1. Open the menu of a folder and click **Summarize**.
-2. Wait until the dialog closes. The dialog shows the note that is in work and
-   its number, for example **Note 3 of 8**, and at the end **Writing the
-   Summary note…**.
+3. Click **Start**. **Start** is available when a provider and a minimum of
+   one version are selected.
 
-The folder operation uses only the notes directly in the folder, not the
+CHA saves the open note and starts the work. The dialog closes. The work
+continues in the background. You can read and edit notes and use the chat.
+[Events](#events) records the start, the result of each version, and the end.
+There is no other progress indicator. When CHA saves a new version, the tree
+and the open note show it.
+
+Only one **Summarize** can run at a time. While one runs, the dialog shows
+**Summarization is already running for “**_name_**”.**
+
+There is no command to stop a running **Summarize**. When you change the
+vault or close CHA, the work stops. The versions that CHA saved before stay.
+Events records **Summarization cancelled for** _name_.
+
+**Summarize** on a note makes the selected versions of the note. It does not
+make a **Summary** note. The note must have a minimum of 4 KiB of text.
+
+**Summarize** on a folder uses only the notes directly in the folder, not the
 notes of subfolders. It ignores summary notes, notes with less than 4 KiB of
-text, and notes with **Exclude from summaries**. For each of the other notes:
+text, and notes with **Exclude from summaries**. CHA works on a maximum of
+three notes at the same time. For each note, it makes the selected versions
+in this order: compressed, L1, L2, L3.
 
-- CHA makes L1 if the note has no L1, and L2 if the note has no L2. It does
-  not replace an L1 or an L2 that exists.
-- CHA makes a short section for the **Summary** note. It uses the compressed
-  text if the note has one, else the full text.
+With **Overwrite** off, CHA does not replace a version that exists. It makes
+only the versions that are missing.
 
-Then CHA writes the **Summary** note of the folder. It starts with the name of
-the folder and an overview: the subject of the folder, its main argument, and
-how the notes connect. Then it has one section for each note, with the name of
-the note as the heading.
+If **L3** is selected for a folder, CHA then writes the **Summary** note of
+the folder. It starts with the name of the folder and an overview: the subject
+of the folder, its main argument, and how the notes connect. Then it has one
+section for each note: the name of the note as the heading, and the L3 of
+the note. CHA writes the **Summary** note again also when all notes already
+have an L3.
+
+The **Summary** note contains a copy of the L3 of each note, with your
+changes, highlights and comments in the L3. To change a section, edit the L3
+of the note. Then use **Summarize** on the folder with only **L3** selected
+and **Overwrite** off.
 
 Rules for the **Summary** note:
 
-- The **Summary** note is read-only. Each folder operation replaces its
-  content, also your highlights and comments. If an item with the name
-  **Summary** exists, CHA uses a name with a number, for example **Summary
-  (2)**.
+- The **Summary** note is read-only. Each folder operation with **L3**
+  replaces its content. The highlights and comments that you added in the
+  **Summary** note itself are lost. If an item with the name **Summary**
+  exists, CHA uses a name with a number, for example **Summary (2)**.
 - CHA does not replace a note that you made with the name **Summary**. Such a
   note is an ordinary note.
 - If you delete the **Summary** note, the next folder operation makes a new
@@ -1023,29 +1064,32 @@ Rules for the **Summary** note:
 
 To keep a note out of the folder operation, open the menu of the note and
 click **Exclude from summaries**. A check mark shows in the menu. Click again
-to remove it. The tree does not show this setting.
-
-To stop the work, click **Cancel** in the dialog or press Escape. The L1 and L2
-that CHA saved before stay. The **Summary** note does not change.
+to remove it. The tree does not show this setting. **Summarize** on the note
+itself ignores this setting.
 
 If one step fails:
 
-- An L1 or an L2 that fails does not change. The old version stays. The work
-  continues with the next note.
-- If a section or the overview fails, CHA does not write the **Summary** note.
-  The old **Summary** note stays.
+- A version that fails does not change. The old version stays. The work
+  continues with the next step.
+- If the L3 of a note or the overview fails, CHA does not write the
+  **Summary** note. The old **Summary** note stays.
 - Events records each failure.
-
-A new folder operation makes only the L1 and L2 that are missing, and all of
-the **Summary** note.
 
 Important points:
 
 - A model rewrites the text. L1 can be different from the original text.
-- L1 and L2 have no pictures. A table becomes lines of text.
-- A chat never uses L1 or L2.
-- A folder with many notes can take one hour or more. For each note, CHA makes
-  up to three model requests.
+- The model always uses the full text of the note.
+- L1, L2 and L3 have no pictures. A table becomes lines of text.
+- A chat never uses L1, L2 or L3.
+- When you change a note, the other versions do **not** change. Chats
+  continue to use the old compressed text. Use **Summarize** again to make
+  new versions.
+- A very long note can be too large for the model. Then the step fails, and
+  Events records the reason.
+- A folder with many notes can take one hour or more.
+- When the provider uses an API key of OpenAI or of Google (Gemini), CHA
+  writes an estimate of the cost of each note into its log. No screen shows
+  it.
 
 ### Audio for a note
 
@@ -1058,14 +1102,15 @@ which text CHA reads aloud:
 | --- | --- |
 | **Full text** | Makes audio of the full text. |
 | **L1** | Makes audio of the L1. A note without L1 gets no audio. |
-| **L2**, **Compressed** | Not available. |
+| **L2**, **L3**, **Compressed** | Not available. |
 
 To generate the audio:
 
 1. Select **Full text** or **L1** in **Note text mode**.
 2. Open the menu of a read-only note and click **Generate audio**.
 3. Select a voice and click **Generate**. Below the list, the dialog shows
-   information about the selected voice.
+   information about the selected voice. To hear a short sample of an English
+   or Russian voice, click **Listen**. Click **Stop** to stop the sample.
 4. Wait. The work continues in the background. The result shows in
    [Events](#events).
 
@@ -1235,7 +1280,7 @@ continues from that position.
 Tap **Notes**, select a folder at the top, and tap a note.
 
 In ChaWeb you can only read notes. You cannot change them. ChaWeb shows the
-full text of a note. It does not show L1, L2 and the compressed version. It
+full text of a note. It does not show L1, L2, L3 and the compressed version. It
 shows the **Summary** note of a folder as a regular note.
 
 ### Change and refresh the vault
@@ -1298,8 +1343,10 @@ not there.
 - Delete and cover for single answers.
 - The target list, and the **Model** and **Effort** lists.
 - Text files as chat material.
+- Questions about the note that you read. See
+  [Ask about the note that you read](#ask-about-the-note-that-you-read).
 - Creation and change of notes.
-- Compression, summaries, audio and export of notes.
+- **Summarize**, audio and export of notes.
 - Pictures.
 - Settings, and the **Vault** list. To change the vault, use the commands in
   [Change and refresh the vault](#change-and-refresh-the-vault).
@@ -1336,9 +1383,6 @@ Rules for `@Name`:
 - Capital letters are not important.
 - Nicknames work only with automatic recipient detection, not with `@`.
 
-The command `/detach` also exists. It removes a folder record from a chat. The
-screens give Ref IDs for notes only, so this command has no use in daily work.
-
 ## 15. Keyboard
 
 | Where | Keys | Function |
@@ -1359,7 +1403,6 @@ screens give Ref IDs for notes only, so this command has no use in daily work.
 | Notes tree | Shift+F10 | Open the menu of the row |
 | Menus | Up, Down, Home, End, Escape | Move, close |
 | Dialogs | Escape | Cancel |
-| macOS | Cmd+N | Start one more CHA window |
 
 ## 16. View menu
 
@@ -1383,8 +1426,8 @@ screens give Ref IDs for notes only, so this command has no use in daily work.
 | Note size | 12 MiB |
 | Picture in a note | 1 MiB; PNG, JPEG, WebP or GIF |
 | EPUB book | 16 MiB |
-| Note for compression | A minimum of 4 KiB of text |
-| Note for **Summarize** | 4 KiB to 256 KiB of text |
+| Note for **Summarize** | A minimum of 4 KiB of text |
+| **Summarize** on a folder | Three notes at the same time |
 | Font size in notes | 10 px to 30 px, in steps of 2 px |
 | Note audio | 1,000 paragraphs; 5,000 characters in one paragraph |
 | Name of a note, folder or session | 200 characters |
@@ -1400,24 +1443,26 @@ screens give Ref IDs for notes only, so this command has no use in daily work.
 | **Ambiguous character @x: matches …** | Type more of the name. |
 | **Generation in progress; use the Stop button** | Wait for the answer, or click **Stop generation**. |
 | **Recipient detection failed. Sent to …** | No action is necessary. CHA used the current target. |
+| **Close other CHA processes using this vault, then try again.** | A different CHA process, for example ChaWeb, has the vault open. Close that process, or select a different vault. |
 | **Session unavailable** | Click **Retry**, or click **Browse sessions** and open the session again. |
 | **Waiting for another session to close** | Wait. CHA keeps a limited number of sessions open at the same time. |
 | **This file is too large to add to a chat. The limit is 256 KiB of text.** | Use a smaller file. |
 | **Choose a UTF-8 text file.** | The file is not text, or it has a different encoding. Convert it to UTF-8. |
 | **That file was not found.** | Make sure that the path is complete and correct. |
 | **That note was not found.** | Copy the Ref ID again from the menu of the note. |
-| **This note is too large to add to a chat. The limit is 256 KiB of text.** | Compress the note, or divide it. |
+| **This note is too large to add to a chat. The limit is 256 KiB of text.** | Use **Summarize** to make a compressed version, or divide the note. |
 | **Cached audio is no longer available. Generate it again.** | Click the speaker button again. |
 | **Microphone access was denied. Allow it in System Settings and try again.** | Give CHA access to the microphone in the system settings. |
 | **This note is read-only. Make it editable first.** | Open the menu of the note and click **Make editable**. |
 | **This folder is managed by CHA.** | You cannot change the **Forums** folders. Use a different folder. |
 | **An item with this name already exists here.** | Use a different name. |
-| **This note is under 4 KiB and does not need compression.** | No action is necessary. |
 | **This note is under 4 KiB and does not need summaries.** | No action is necessary. |
-| **This note is over 256 KiB. Summaries are limited to 256 KiB of text.** | Divide the note. |
-| **Could not start summaries. Try again.** | Click **Summarize** again. |
+| **No eligible notes to summarize.** | No note directly in the folder has 4 KiB of text, or all such notes have **Exclude from summaries**. |
+| **All selected outputs already exist.** | Turn on **Overwrite**, or select different versions. |
+| **Summarization is already running for “**_name_**”.** | Wait until [Events](#events) shows **Summarization finished for** _name_. |
+| **Could not start summarization. Try again.** | Click **Start** again. |
 | **This folder has no notes to export.** | The folder and its subfolders have no notes. |
-| **This folder has no L1 text to export.** (or **L2**) | No note of the folder has L1 (or L2). Select **Full text** mode, or use **Summarize** first. |
+| **This folder has no L1 text to export.** (or **L2**, **L3**) | No note of the folder has that version. Select **Full text** mode, or use **Summarize** first. |
 | **Could not export the note “**_name_**”.** | The note was deleted, or it is damaged. |
 | **This folder is too large to export as one EPUB.** | Export the subfolders one at a time. |
 | **Select a compression provider in Notes settings.** | Setup is necessary. See the administrator guide. |

@@ -82,7 +82,6 @@ systemd, nginx and TLS certificates.
 | Vault | One complete set of data: configuration, sessions and notes. A vault is one database file and one definition file. |
 | Configuration | The personas, characters, forums, providers, styles, voices, saved keys and service settings of one vault. CHA keeps the configuration in the vault database, not in files. |
 | Active vault | The vault that is open. The Settings screens show and change the active vault. |
-| Main process | The first CHA process that opens a vault. Only the main process can change settings. See [More than one CHA process](#more-than-one-cha-process). |
 | ID | The internal name of an item, for example `character_3`. An ID does not change when you rename the item. |
 
 ### Conventions
@@ -252,30 +251,25 @@ store the password.
 
 ### More than one CHA process
 
-On macOS, **Window → New Instance** starts a second CHA process. On Windows, a
-second start of `CHA.exe` does the same. ChaWeb is one more process when it
-uses the same vault on the same computer.
+Only one CHA process can open a vault at a time. On Windows, a second start of
+`CHA.exe` starts a second process. ChaWeb (`cha-daemon`) is one more process
+when it uses the same files on the same computer.
 
-For each vault, the first process that opens it is the **main** process. Each
-later process is a **secondary** process. A secondary process keeps this role
-until it opens a vault again.
+While a process has a vault open, it holds the lock file `<db>.cha-lock` next
+to the database. If a different process has the vault open, the message is
+**Close other CHA processes using this vault, then try again.** This message
+shows:
 
-A secondary process has these limits:
+- At the start, in the dialog **CHA cannot continue**. CHA stops. For a
+  protected vault, the message shows after the password. `cha-daemon` writes
+  the message to the journal and to the log, and stops.
+- When you select the vault in the **Vault** list. The active vault does not
+  change.
+- For a vault command on a vault that is not active, for example a copy, a
+  rename, a merge or a deletion.
+- In ChaWeb, for `/open`.
 
-- It cannot change settings. The message is **Settings can be changed only in
-  the main CHA process.** This includes all Settings screens, the vault
-  commands, and the upload to a store.
-- It cannot generate note audio. The message is **Close other CHA processes
-  using this vault, then try again.**
-- It does not run D1 synchronization.
-- It does not write the session mirror.
-- It does not save the vault selection for the next start.
-
-Two processes cannot have the same session open. The message is **This session
-is open in another CHA process.**
-
-Some vault commands need all other processes to close the vault first. The
-message is **Close other CHA processes using this vault, then try again.**
+To use a vault in a different process, close the process that has it open.
 
 ## 5. Minimum setup for the first conversation
 
@@ -364,7 +358,6 @@ See [Connect a ChatGPT account](#connect-a-chatgpt-account).
 - The screens show and change the **active vault**. Each vault has its own
   configuration. The ChatGPT connection is the exception: it applies to all
   vaults of the computer.
-- Only the main process can change settings.
 - CHA makes a check of the full configuration before it saves a change. If the
   check fails, nothing changes, and the screen shows the error.
 - A change applies immediately. You do not have to restart CHA. Open sessions
@@ -493,7 +486,7 @@ Examples of **Base URL** values:
    | Field | Value |
    | --- | --- |
    | **Model** | The model name, as the service defines it. |
-   | **Reasoning effort** | **None**, **Low**, **Medium**, **High** or **Extra high**. The field does not show for **Google (Gemini)** and **Anthropic**. |
+   | **Reasoning effort** | **None**, **Low**, **Medium**, **High** or **Extra high**. |
    | **Base URL** | The address of the service, without the API path. See the table above. |
    | **API format** | See the table above. |
    | **Credentials** | **No credentials**, **OpenAI OAuth** (the ChatGPT connection), or a saved API key. |
@@ -526,8 +519,14 @@ The provider gives the start value. A character can replace it
 (**Character settings → Reasoning effort**). A user can replace it for one
 session with the **Effort** list of the chat toolbar.
 
-Providers with the format **Google (Gemini)** or **Anthropic** ignore all
-reasoning effort settings.
+Session naming and the note tasks do not use these values. They have their
+own **Effort** fields. See [Session naming](#session-naming) and
+[Compression provider](#compression-provider).
+
+Providers with the format **Google (Gemini)** or **Anthropic** also use the
+reasoning effort. CHA sends thinking settings only for the models that it
+knows. With **None**, or with a model that CHA does not know, CHA sends no
+thinking settings, and the model uses its own default.
 
 ### Rename and delete a provider
 
@@ -930,7 +929,6 @@ web, and one to read a page. The character decides when to use them.
    | **Firecrawl API key** | The key of Firecrawl. Shows only for **Firecrawl**. |
    | **Use web_reader** | Select the check box to use a web_reader service. |
    | **web_reader URL** | The base address of the web_reader service, for example `http://<host>:<port>`. |
-   | **web_reader API key** | CHA saves this selection but does not send the key. |
 
 5. Click **Save**.
 
@@ -1029,18 +1027,19 @@ Click **Settings → Notes settings**.
 
 Click **Save**.
 
-CHA uses this provider for four tasks:
+CHA uses this provider for these tasks:
 
-- **Compress** on a note or a folder.
-- **Summarize** on a note or a folder. It makes L1, L2 and the **Summary**
-  note of a folder.
 - **Save summary** on a session.
 - The formatting of imported video transcripts and of pages with very long
   paragraphs.
+- **Summarize** on a note or a folder. The dialog **Summarize** shows this
+  provider and this effort at the start. The user can select a different
+  provider and effort for each run. **Summarize** makes the compressed
+  version, L1, L2, L3, and the **Summary** note of a folder.
 
-Without it, these functions show **Select a compression provider in Notes
-settings.** Each task sends the text of its prompt to the model. See
-[Prompts](#prompts).
+Without it, **Save summary** and the formatting show **Select a compression
+provider in Notes settings.** Each task sends the text of its prompt to the
+model. See [Prompts](#prompts).
 
 These tasks send long texts. Select a provider whose model accepts long input.
 If the provider uses the ChatGPT subscription and no account is connected, the
@@ -1048,29 +1047,48 @@ message is **Connect your OpenAI account in Settings before compressing
 notes.**
 
 Some models do not accept a reasoning effort. With such a model, each task
-fails with the message **This compression provider's model does not support
-high reasoning effort.** Set **Effort** to **None**.
+fails with the message **This compression provider's model does not support**
+*effort* **reasoning effort.** Set **Effort** to **None**.
+
+For **Summarize** and **Save summary**, each model request has a time limit of
+7,200 seconds. If the service has no capacity, CHA tries a request three more
+times, after 10, 20 and 40 seconds.
 
 ### Flex processing for Summarize
 
-For **Summarize**, CHA requests Flex processing when the compression provider
+For **Summarize**, CHA requests Flex processing when the provider of the run
 meets all these conditions:
 
 - It uses an API key, not the ChatGPT subscription.
 - Its host is `api.openai.com` (API format Responses or Chat Completions), or
   `generativelanguage.googleapis.com` (API format Google).
 
-Flex costs less, but the answers can come much later. The other tasks, and
-providers at other hosts, do not use Flex.
+Flex costs less, but the answers can come much later. **Save summary**, the
+formatting of pages, and providers at other hosts do not use Flex.
 
 There is no setting for Flex and no fallback to the standard processing. The
 model must accept Flex. If it does not, each **Summarize** request fails, and
-Events records the failure. Then select a provider with a different model.
-This also changes the provider of the other tasks above.
+Events records the failure. Then select a provider with a different model in
+the dialog **Summarize**.
 
-If the service has no capacity, CHA tries a request three more times, after
-10, 20 and 40 seconds. A request has no time limit. The user can stop it with
-**Cancel**.
+To find out if a provider accepts Flex:
+
+1. Select the provider in **Compression provider**. You do not have to save
+   it.
+2. Click **Test Flex API**. The button shows **Testing…** until the result
+   comes. CHA sends one short request with Flex. The test has a time limit of
+   900 seconds.
+
+| Result | Meaning |
+| --- | --- |
+| **Flex test passed.** | The provider accepts Flex. |
+| **CHA does not use Flex with this provider.** | The provider does not meet the conditions above. |
+| **The provider did not use Flex for this request.** | The service answered, but not with Flex. |
+| **Select an existing compression API key in Settings.** | The key of the provider does not exist. |
+| **Flex test failed:** … | The request failed. Read the reason. |
+
+There is no command to stop a running **Summarize**. When the vault changes or
+CHA closes, CHA cancels it.
 
 ### Note audio service
 
@@ -1095,9 +1113,31 @@ The dialog **Generate audio** gets the list of voices from the service, at
 If the service does not give the list, the dialog shows **Voices
 unavailable** and the reason.
 
+CHA keeps the list of voices in memory. It gets the list again when the active
+vault, the **Audio service URL** or the value of the key changes, and after a
+restart. CHA does not keep a list that it could not get. If the settings
+change while the dialog gets the list, the dialog shows **The audio service
+settings changed. Reopen the dialog.**
+
+The button **Listen** in the dialog plays a short sample of an English or
+Russian voice. CHA gets the sample from
+`<Audio service URL>/v1beta/models/gemini-3.8-flash-tts:generateContent`.
+Each sample is a request to the service. If the request fails, the dialog
+shows **Could not preview this voice. Check the audio service in Notes
+settings.**
+
 With the Google service, CHA also asks for the style of an audiobook narrator.
 
 The service must return WAV audio.
+
+After each audio task, CHA writes the number of tokens and an estimate of the
+cost into the log. See [Cost estimates](#cost-estimates).
+
+On this screen you can select each saved key. The Assistant can select only
+the key that the note audio service already uses, or the key of recipient
+detection when the **Audio service URL** has the same origin as the URL of
+recipient detection. See
+[The Assistant as a configuration tool](#22-the-assistant-as-a-configuration-tool).
 
 Note audio generation works only in the desktop application on macOS and
 Windows. ChaWeb cannot start it.
@@ -1110,10 +1150,10 @@ Each vault has its own prompts.
 
 | Prompt | Task |
 | --- | --- |
-| **Note compression** | **Compress**: the compressed version of a note. |
+| **Note compression** | **Summarize**: the compressed version of a note. |
 | **Summary L1** | **Summarize**: the L1 of a note. Its default text is a copy of the default text of **Note compression**. |
 | **Summary L2** | **Summarize**: the L2 of a note. |
-| **Summary L3 section** | **Summarize** on a folder: the section of one note in the **Summary** note. |
+| **Summary L3 section** | **Summarize**: the L3 of a note. The **Summary** note of the folder contains it as the section of the note. |
 | **Summary L3 overview** | **Summarize** on a folder: the overview at the start of the **Summary** note. |
 | **Short session summary** | **Save summary**: the short summary of a session. |
 | **Long session summary** | **Save summary**: the long summary of a session. |
@@ -1153,14 +1193,15 @@ Rules for the summary prompts:
   adds the headings *Short summary* and *Long summary* itself. Thus these
   prompts must ask for text without a level-1 heading. If the answer has a
   level-1 heading, the summary fails.
-- For **Summary L2**, **Summary L3 section** and **Summary L3 overview**, CHA
-  adds the name of the note or of the folder as a level-1 heading. Thus these
-  prompts must not ask for a title.
+- For **Summary L2** and **Summary L3 overview**, CHA adds the name of the
+  note or of the folder as a level-1 heading. In the **Summary** note, CHA
+  adds the name of each note as a level-1 heading before its L3. Thus the
+  summary prompts must not ask for a title.
 - The results of **Summarize** are in Markdown. CHA changes tables into lines
   of text.
 
 A new version of CHA does not change the prompts of a vault. A vault that has
-no prompts gets the default texts when the main process opens it.
+no prompts gets the default texts when CHA opens it.
 
 ## 16. Voices
 
@@ -1285,6 +1326,13 @@ A persona has no voice.
 CHA stores the audio of answers and of notes in the vault database. The
 commands to remove the audio of one session are in the User Manual. An R2
 transfer does not include audio. See [R2 storage](#19-r2-storage).
+
+### Usage and costs
+
+For each audio that voice output makes, and for each dictated message that
+goes to a character, CHA writes the use of the service and an estimate of the
+cost into the log. CHA knows the prices of some models only. For a different
+model, the estimate is `null`. See [Cost estimates](#cost-estimates).
 
 ## 17. Cloud stores and the Library
 
@@ -1439,9 +1487,15 @@ CHA changes the name in the definition file and renames the directories of the
 vault in the `mirror` and `modify` directories. The name of the database file
 does not change.
 
-> **CAUTION:** Do not rename a vault that uses D1 synchronization. The vault
-> name is part of the synchronization. See
-> [D1 synchronization](#20-d1-synchronization).
+The vault name is part of D1 synchronization. Thus CHA refuses to rename a
+vault that has D1 credentials: **Disconnect this vault from D1 before you
+rename it.** This applies to the active vault and to a vault that is not
+active. A new name that changes only capital letters is permitted. See
+[D1 synchronization](#20-d1-synchronization).
+
+CHA cannot read a protected vault that is not active. Thus, for such a vault,
+CHA also refuses a new name with more changes than capital letters: **Open
+this protected vault before you rename it.**
 
 If the vault has a copy in R2, upload it again after you rename it. Until
 then, **Download** fails, because the copy in R2 has the old name.
@@ -1579,6 +1633,12 @@ To remove them, click **Remove R2 credentials**.
 The row shows **Uploading…**. You can continue to work. The result shows as
 **Uploaded** with the size.
 
+Before the upload, CHA compares the copy in R2 with its record. If an upload
+of this vault is in progress, CHA does not do this check. The message is **A
+vault upload is running. Try again when it finishes.** If an upload starts
+while the check is in progress, the result of the check is not valid. CHA
+then shows that the active vault changed. Click **Upload** again.
+
 Important points:
 
 - The upload does not include stored audio: not the audio of answers, and not
@@ -1586,7 +1646,10 @@ Important points:
 - A protected vault stays encrypted in R2.
 - If the vault uses D1 synchronization and has changes that are not sent, CHA
   refuses the upload: **Changes are not sent to D1 yet. Try again when D1 can
-  be reached.**
+  be reached, or save the D1 credentials again.** If the D1 synchronization
+  of this computer stopped, the message is **D1 sync has stopped. Select
+  “Save D1 credentials” in Settings, then try the upload again.** See
+  [D1 synchronization](#20-d1-synchronization).
 
 ### The uploading computer
 
@@ -1613,6 +1676,20 @@ Downloads have no such limit.
 > configuration, all sessions and all notes. The changes that you made after
 > the upload are lost. All stored audio of the vault is lost, because the copy
 > in R2 has none.
+
+CHA examines the copy before it replaces the database. It refuses the
+download, and changes nothing, in these cases:
+
+- The vault has changes that are not sent to D1. The message is **Changes are
+  not sent to D1 yet. Try again when D1 can be reached, or save the D1
+  credentials again.**
+- The copy in R2 does not have all the changes that this vault sent or got
+  through D1. The message is **The R2 copy is missing changes from this
+  vault. Upload a fresh copy from a machine that has received all changes,
+  then try again.**
+- The configuration in the copy has an error. The message shows the error.
+
+If R2 has no definition of the vault, CHA keeps the local definition.
 
 CHA keeps the replaced database and definition as files with the extension
 `.bac`. It keeps only one such copy. The next download replaces it. See
@@ -1649,10 +1726,15 @@ use the same vault. It uses one database in Cloudflare D1 as the transport.
 
 - Each computer has a name, the `machine` name.
 - For each vault and each computer, CHA makes one table in the D1 database.
-  The name of the table is `q/<vault name>/<machine name>`.
-- When you change something, CHA puts a record into the tables of the other
-  computers. Each computer reads its own table, applies the records, and
+  The name of the table is `q2/<vault name>/<machine name>`. Capital letters
+  in the two names are not important.
+- When you change something, CHA gives the change an ID and puts it into the
+  tables of the other computers. CHA divides a large change into more than
+  one record. Each computer reads its own table, applies the changes, and
   deletes them.
+- Each computer keeps a receipt for each change that it sent or applied. If
+  a change comes again, for example after an error, CHA does not apply it a
+  second time.
 - CHA does this when it opens the vault, and then every 30 seconds. When it
   closes, it sends its changes one more time. There is no command to start
   it.
@@ -1664,27 +1746,46 @@ change that comes last replaces the other.
 Thus a change is on the other computers after a maximum of approximately one
 minute, if the two computers are in operation and connected.
 
+### Tables of older CHA versions
+
+Older versions of CHA used tables with the name
+`q/<vault name>/<machine name>`. This version does not write to these tables.
+In each cycle, it first reads the `q/` table of this computer, applies the
+changes in it, and deletes them. If this table does not exist, this is normal.
+
+When this version first synchronizes a vault, it makes a `q2/` table for each
+`q/` table of the vault that has no `q2/` table. The changes for a computer
+that still uses an older version wait in its `q2/` table until you update CHA
+on that computer.
+
+CHA does not delete the `q/` tables, because older versions can still write
+to them. When all computers use this version, you can delete the `q/` tables
+in the Cloudflare console.
+
 ### What is synchronized
 
 | Synchronized | Not synchronized |
 | --- | --- |
-| Notes and folders, with the compressed version, L1, L2 and the **Exclude from summaries** setting of each note | Stored audio of answers and notes |
+| Notes and folders, with the compressed version, L1, L2, L3 and the **Exclude from summaries** setting of each note | Stored audio of answers and notes |
 | Configuration: personas, characters, forums, providers, styles, voices, settings, prompts, pictures | Events |
 | Saved API keys and R2 credentials | D1 credentials |
 | Sessions that have a name and whose first message is complete (answered, failed or stopped) | The `machine` name, `app.toml`, the vault password |
 | | The ChatGPT connection |
 
 When a note changes through synchronization, CHA deletes the stored audio of
-that note. A new compressed version, L1 or L2 from **Compress** or
-**Summarize** on a different computer does not delete the audio of the full
-text. A new L1 deletes the audio of the L1.
+that note. A new compressed version, L1, L2 or L3 from **Summarize** on a
+different computer does not delete the audio of the full text. A new L1
+deletes the audio of the L1.
 
 ### Rules
 
 - Each computer must have a different `machine` name. Capital letters do not
   make a name different.
-- The vault must have the same name on all computers.
-- Only the main process synchronizes.
+- The vault must have the same name on all computers. Capital letters are not
+  important.
+- You cannot rename a vault that has D1 credentials. Disconnect it first. See
+  [Rename a vault](#rename-a-vault).
+- `cha-daemon` (ChaWeb) does not synchronize. See [ChaWeb](#25-chaweb).
 - D1 moves changes. It does not move a complete vault. A new computer first
   gets the vault through R2.
 
@@ -1734,14 +1835,11 @@ that are made between step 1 and step 6 do not come to the new computer.
 6. Click **Save D1 credentials**. You can keep **API token** empty. This step
    makes the table of the second computer and starts the synchronization.
 
-Until step 6, the second computer does not synchronize, and no screen tells
-you so. The log contains **D1 sync stopped: download the vault from R2, or
-save the D1 credentials again.**
+Until step 6, the second computer does not synchronize. **Settings → Events**
+shows **D1 sync stopped. Download the vault from R2 or save the D1 credentials
+again.**
 
-For a ChaWeb server, do steps 1 and 2. If the active vault of the server has
-the R2 credentials, type `/open <name>` in ChaWeb in place of steps 3 to 6.
-CHA makes the table of the server and starts the synchronization. See
-[Download and open vaults](#download-and-open-vaults).
+A ChaWeb server does not synchronize. See [ChaWeb](#25-chaweb).
 
 ### Stop the synchronization
 
@@ -1749,7 +1847,8 @@ CHA makes the table of the server and starts the synchronization. See
 2. Click **Disconnect from D1** and confirm.
 
 CHA removes the D1 credentials from this vault on this computer, deletes the
-changes that are not sent, and deletes the table of this computer in D1.
+changes that are not sent, and deletes the tables of this computer in D1: the
+`q2/` table and the `q/` table of an older version.
 
 Disconnect each computer that stops using a vault. If you do not, its table
 stays in D1 and continues to collect records.
@@ -1757,34 +1856,40 @@ stays in D1 and continues to collect records.
 ### Synchronization and R2 together
 
 - An R2 upload is possible only when all changes are sent to D1.
+- **Download** on the active vault is possible only when all changes are sent
+  to D1, and when the copy in R2 has all the changes that this vault sent or
+  got. See
+  [Replace the active vault with the copy in R2](#replace-the-active-vault-with-the-copy-in-r2).
 - After **Download** on the active vault, CHA makes the table of this computer
   again, if it is missing, and synchronizes.
-- In ChaWeb, `/download confirm` and `/open` from R2 delete the records that
-  wait in the table of the server for that vault. They keep the table.
-  `/open` of a vault of the server deletes no records. The desktop
-  application deletes no records. See
-  [Download and open vaults](#download-and-open-vaults).
 - **Import** and **Merge** keep the D1 credentials of the target vault. A new
   vault gets the D1 credentials of its source. See
   [Create a vault](#create-a-vault).
 
 ### Problems
 
-The synchronization writes its problems only into the log. No screen shows
-them. See [The log](#the-log). Search the log for `D1` and for `Skipped`.
+The synchronization writes its problems into **Settings → Events** and into
+the log. See [Events](#events) and [The log](#the-log). Search for `D1`.
 
-| Log message | Cause and action |
+| Event | Cause and action |
 | --- | --- |
-| `D1 sync stopped: download the vault from R2, or save the D1 credentials again.` | The table of this computer does not exist in D1. Click **Save D1 credentials** again, or use **Download** on the vault. In ChaWeb, type `/download confirm`, or open a different vault and then this vault again. |
-| `D1 rejected the API token.` | The token is wrong or has no permission. Save a correct token. |
-| `D1 request was rate limited (HTTP 429).` | CHA tries again in the next cycle. |
-| `D1 daily row read limit exceeded.` / `D1 daily row write limit exceeded.` | A limit of the Cloudflare account. CHA tries again later. |
-| `D1 sync dropped the largest queue table to free space.` | The D1 database was full. This computer deleted the table with the most waiting records. That table can belong to a different computer of each vault in this D1 database. The computer that lost its table did not get those changes. Its log shows `D1 sync stopped`. To give it a complete copy: upload the vault to R2 from the uploading computer, then use **Download** on the computer that lost its table. |
-| `Skipped incoming sync record…` | CHA could not apply one record and ignored it. |
+| `D1 sync stopped. Download the vault from R2 or save the D1 credentials again.` | The table of this computer does not exist in D1. The synchronization stays stopped until you click **Save D1 credentials** again, or use **Download** on the vault. Until then, CHA refuses an R2 upload after the next change. |
+| `D1 send paused for operation <ID> (database is full).` | The D1 database is full. CHA keeps the changes that are not sent, and tries again in each cycle. It does not delete tables. To make space, start CHA on the computers that did not run for a long time, so that they read their tables. Disconnect each computer that does not use the vault any more. |
+| `D1 <step> paused` … `(D1 request failed).` | A request to D1 failed, for example because of a wrong API token, a token without the necessary permissions, no network connection, or a limit of the Cloudflare account. CHA tries again in each cycle. |
+| `D1 <step> paused` … `(<reason>).` with a different reason | A problem with the local vault database, for example `local storage is busy`. CHA tries again in each cycle. |
+| `D1 send resumed.` / `D1 receive resumed.` | The problem is gone. |
+| `D1 skipped operation <ID> (<reason>).` | CHA could not apply one change and ignored it, for example `chat forum does not exist`. |
+
+`<step>` is `discovery`, `provisioning`, `send`, `receive` or `acknowledgement`.
+CHA records the same problem only one time, until it changes or the
+synchronization continues.
+
+For a `q/` table of an older version, CHA writes skipped records only into the
+log, in messages that start with `Skipped`.
 
 A computer that does not start CHA for a long time collects many records in
-its table. If the D1 database becomes full, a computer that sends changes
-deletes the largest table of a different computer, as the table shows.
+its table. If the D1 database becomes full, the synchronization pauses on all
+computers that send changes.
 
 ## 21. Configuration files: export, edit, import
 
@@ -1899,7 +2004,7 @@ settings**. The Assistant cannot change its own settings.
 
 | Area | Functions |
 | --- | --- |
-| Examine | The version, the vaults, the providers, characters, personas, forums, styles, voices and service settings. Which keys exist. The list of sessions and notes. |
+| Examine | The version, the vaults, the providers, characters, personas, forums, styles, voices and service settings. Which keys exist. The list of sessions and notes. For notes and ANNOTATIONS items, it can tell you the Ref ID. Folders have no Ref ID. |
 | Change the configuration | Create and change characters, personas, forums and their members, providers, styles, voices. Change the session, notes, search and voice settings. |
 | Diagnose | Read the log: the current file and `cha.1.log`. Read the Events and the state of background tasks. Change the log level until the next start. |
 | Application files | Read and change `app.toml` and the vault definition files. Such a change needs a restart of CHA. |
@@ -1913,7 +2018,15 @@ settings**. The Assistant cannot change its own settings.
   save a new key.
 - Make a key go to an address that this key does not already use. Thus it
   cannot change the address of a provider or a service that has a key, and it
-  cannot select a key for a provider or a service at a new address.
+  cannot select a key for a provider or a service at a new address. CHA
+  compares the addresses in this way:
+  - A provider: the scheme, the host, the port and the base path.
+  - Recipient detection and voice input: the scheme, the host, the port and
+    the path. A `/` at the end of a path other than `/` makes a different
+    address.
+  - The note audio service: the origin, that is the scheme, the host and the
+    port. The Assistant can also select the key of recipient detection for
+    the note audio service when the two addresses have the same origin.
 - Change its own settings, or the provider that it uses.
 - Change the [prompts](#prompts).
 - Read the text of sessions or notes.
@@ -1941,9 +2054,13 @@ settings**. The Assistant cannot change its own settings.
   The changes stay.
 - The Assistant sends the configuration texts and the log lines that it reads
   to the model service of its provider. CHA never sends the value of a key.
-  In log lines and Events, CHA replaces key values and private paths before
-  it sends them. It sends the configuration files as they are, `app.toml` and
-  the vault definition files with their paths included.
+  In log lines, Events and the other results of its examination, CHA replaces
+  these values before it sends them: the key values, the D1 API token, the
+  password of the active vault, and private paths. The private paths include
+  the configuration directory, the directories of the vault databases, the
+  `mirror` and `modify` directories, and the directory of the log. CHA sends
+  the configuration files as they are, `app.toml` and the vault definition
+  files with their paths included.
 
 ### Examples of requests
 
@@ -1994,18 +2111,17 @@ These tasks write Events:
 
 | Task | Entries |
 | --- | --- |
-| Note compression | Start, result, cancellation, failure with a short reason. |
-| **Summarize** | The result of each L1, each L2 and each **Summary** note. Each failure with a short reason, and each cancelled request. |
+| **Summarize** | The start with the number of notes, the result of each version and of each **Summary** note, the end or the cancellation. Each failure with a short reason, and each cancelled request. |
 | **Save summary** | Start, result, cancellation, failure. |
 | Note audio | Start with the number of clips and the voice, result, each failed step, and the reason when CHA stops an audio task. |
 | **Upload to store** | The result, with the IDs of the store and its files. Problems with the removal of data at the provider. |
+| D1 synchronization | A stop, a pause and the end of a pause, and each change that it could not apply. See [D1 synchronization](#20-d1-synchronization). |
 
 A failure entry contains a short reason, for example **Provider rate limit
 exceeded.** The full technical message is in the log.
 
 These functions write no Events: conversations, provider requests, R2
-transfers, D1 synchronization, and changes of settings. For these, use the
-log.
+transfers, and changes of settings. For these, use the log.
 
 **If an upload to a store fails**, CHA tries to delete the data that it
 already sent. If it cannot confirm the deletion, an Event tells you that data
@@ -2016,8 +2132,8 @@ can remain at the provider, and gives the IDs. Delete those items with
 
 | Task | Result |
 | --- | --- |
-| Note compression, **Save summary** | Cancelled. Start it again. |
-| **Summarize** | Stopped. The L1 and L2 that CHA saved stay. The **Summary** note does not change. Start it again. |
+| **Save summary** | Cancelled. Start it again. |
+| **Summarize** | Cancelled. Events records **Summarization cancelled for** …. The versions that CHA saved stay. The **Summary** note does not change. Start it again. A change of the vault also cancels it. |
 | Note audio | CHA continues the task at the next start of the desktop application. |
 | **Upload to store** | Stopped. Data can remain at the provider. |
 | R2 upload | Stopped. Upload again. |
@@ -2055,10 +2171,28 @@ What you find in the log, and not on a screen:
 - Warnings about `app.toml` and the vault definition files, for example an
   unknown key.
 - Warnings from an import of configuration files.
-- Each problem of D1 synchronization.
+- The details of D1 synchronization. Its problems are also in Events.
 - The reason of a failed R2 transfer.
 - The reason when a character cannot search the web or the Library, for
   example a missing key.
+- The estimates of costs. See [Cost estimates](#cost-estimates).
+
+### Cost estimates
+
+CHA writes the use of some services, and an estimate of the cost in US
+dollars, into the log at the level `info`. No screen shows these values. The
+estimates use prices that are part of CHA. They can be different from the
+prices of your account.
+
+| Task | Start of the log line |
+| --- | --- |
+| Voice output: the audio of one answer | `Voice generation cost:`, then JSON text with the provider, the model, the size of the input, the time and `estimated_usd`. |
+| Voice input: the dictation of one message that goes to a character | `Speech-to-text cost:`, then JSON text with the provider, the model, `audio_seconds` and `estimated_usd`. |
+| **Summarize**: all versions of one note | `Summary line completed for` …, then the estimated token cost and the time. Only for providers at `api.openai.com` and `generativelanguage.googleapis.com` with an API key. |
+| Note audio: one audio task | The text of the Event **Audio ready for** …, then the processing time, the number of tokens, and `Estimated Gemini Batch cost:`. The cost is available only for the Google service. |
+
+When CHA does not know the price of a model, `estimated_usd` is `null`, or the
+line shows `unavailable`.
 
 ## 24. Backup and restore
 
@@ -2109,7 +2243,8 @@ it.
 
 If the vault uses D1 synchronization, the restored vault does not get the
 changes that the other computers sent after the backup. Changes that waited
-for D1 at the time of the backup are sent again.
+for D1 at the time of the backup are sent again. The other computers do not
+apply a change a second time.
 
 ### Restore from a .bac file
 
@@ -2148,7 +2283,8 @@ If the vault uses D1 synchronization:
 
 - Before the copy, upload the vault to R2 on the source computer. The upload
   is possible only when no changes wait for D1. Then close CHA and make the
-  copy. A copy with changes that are not sent sends them a second time.
+  copy. A copy with changes that are not sent sends them a second time. The
+  other computers do not apply them a second time.
 - The `machine` name is in `app.toml`, not in the vault. If you copy the
   complete configuration directory, change `machine` on the new computer to a
   name that no other computer uses.
@@ -2168,6 +2304,19 @@ with other programs. CHA never reads them back. They are not a backup that you
 can restore.
 
 CHA writes no mirror for a protected vault and none for the Welcome session.
+
+The mirror follows the changes of the forums: a new forum, a deleted forum, an
+import of configuration files, a change from the Assistant, and changes that
+come through D1 synchronization.
+
+- When you delete a forum, CHA does not delete its files in the mirror. The
+  files stay on the disk.
+- When a forum is created, CHA makes a directory with the name of the forum.
+  If that directory already exists, for example from a deleted forum, CHA
+  makes a directory with a number, for example `<forum name> (1)`. This also
+  applies when the new forum gets the ID of a deleted forum.
+- When you change the vault, CHA selects the mirror directory of the new
+  vault before it gets changes through D1.
 
 ## 25. ChaWeb
 
@@ -2287,9 +2436,9 @@ Then, before you add the user:
    the server. With `mirror`, the server writes readable copies of the
    sessions of a vault without a password.
 4. In the definition file, set `data` to the file name of the database.
-5. If the vault uses D1 synchronization, set `machine` in `app.toml` to a
-   name that no other computer uses. Read the rules in
-   [Move a vault to a different computer](#move-a-vault-to-a-different-computer).
+5. `cha-daemon` does not use D1 synchronization. If the vault has D1
+   credentials, the server ignores them. See
+   [D1 synchronization on the server](#d1-synchronization-on-the-server).
 
 The server does not create a first configuration. The directory must contain
 `app.toml`, a vault definition, and the database before the process starts.
@@ -2425,9 +2574,6 @@ ChaWeb has no Settings screens. You have these possibilities:
   Assistant changes `app.toml`
   or a vault definition file, start the process again with
   `sudo systemctl restart cha@<user>.service`.
-- **D1 synchronization.** If the server vault and a desktop vault synchronize,
-  change the configuration on the desktop. The change, saved keys included,
-  comes to the server.
 - **A new copy.** Stop the process, replace the vault files with a new copy
   from the desktop, and start again.
 - **R2.** Upload the vault on the desktop. Then type `/download` and
@@ -2512,35 +2658,29 @@ and `/download confirm`.
 `/download confirm`:
 
 1. CHA stops all work in progress of this ChaWeb process: the answers and
-   the note tasks of all sessions, in all browsers. It sends the changes to
-   D1 one last time.
+   the note tasks of all sessions, in all browsers.
 2. CHA downloads the database and the definition from R2 into temporary
    files, and examines them.
-3. If the vault uses D1 synchronization, CHA deletes the records that wait
-   in the D1 table of this server for this vault. It keeps the table.
-4. CHA replaces the database and the definition. It keeps the replaced files
+3. CHA replaces the database and the definition. It keeps the replaced files
    as `.bac` files, as **Download** on the desktop does. See
    [Restore from a .bac file](#restore-from-a-bac-file).
-5. CHA opens the vault again and starts the D1 synchronization. If the D1
-   table of this server is missing, CHA makes it.
+4. CHA opens the vault again.
 
 `/open` of a vault of the server:
 
 1. CHA stops all work in progress, as in step 1 above.
-2. CHA opens the vault and starts the D1 synchronization. The vault gets the
-   records that wait in its D1 table. If the D1 table of this server is
-   missing, CHA makes it.
+2. CHA opens the vault.
 
 `/open` of a vault from R2:
 
 1. CHA downloads the database and the definition into temporary files, and
    examines them. The work in progress continues.
-2. If the vault uses D1 synchronization, CHA deletes the records that wait
-   in the D1 table of this server for that vault. The D1 credentials in the
-   downloaded vault select the D1 database. CHA keeps the table.
-3. CHA writes the files and adds the vault to the server.
-4. CHA stops all work in progress and opens the vault, as for a vault of the
+2. CHA writes the files and adds the vault to the server.
+3. CHA stops all work in progress and opens the vault, as for a vault of the
    server.
+
+The commands do not change the D1 tables. See
+[D1 synchronization on the server](#d1-synchronization-on-the-server).
 
 After `/open`, CHA writes the new vault into the key `vault` of `app.toml`.
 The next start of the process opens this vault.
@@ -2550,13 +2690,6 @@ The next start of the process opens this vault.
 > file, and the next download replaces that file. The stored audio of the
 > vault is lost, because the copy in R2 has none. CHA does not compare the
 > two copies. The copy in R2 can be older than the vault on the server.
-
-> **CAUTION:** The D1 records that CHA deletes do not come to the server.
-> They can contain changes that are newer than the copy in R2. To make the
-> copy in R2 as new as possible, upload the vault on the uploading computer
-> immediately before the command. The deletion does not stop the
-> synchronization. The other computers can send records immediately after
-> it, also records of old changes.
 
 > **CAUTION:** `/open` does not ask for a confirmation. It stops all work in
 > progress, in all browsers of this user, as `/download confirm` does. `/open`
@@ -2600,19 +2733,11 @@ details. See [Messages](#32-messages).
 
 - A failed check changes nothing. Examples: no R2 credentials, a protected
   vault, a name that is already in use, a database that is not in R2.
-- `/open` from R2: if the transfer, the examination or the D1 deletion
-  fails, CHA adds no vault. The active vault stays open, and the work in
-  progress continues.
+- `/open` from R2: if the transfer or the examination fails, CHA adds no
+  vault. The active vault stays open, and the work in progress continues.
 - `/download confirm`: CHA stopped the work in progress before the
-  transfer. If the transfer, the examination or the D1 deletion fails, CHA
-  opens the unchanged database again.
-- If CHA cannot reach D1, it cannot delete the records. Then it does not
-  install the vault. Try again when D1 can be reached.
-- If the last send to D1 before a change of the vault fails, CHA writes this
-  into the log and continues. After `/open`, these changes stay in the old
-  vault. They go to D1 when you open that vault again. After
-  `/download confirm`, they are only in the `.bac` file.
-- CHA does not restore D1 records that it deleted before a later step failed.
+  transfer. If the transfer or the examination fails, CHA opens the unchanged
+  database again.
 - **Vault '…' was saved but could not be opened.** The vault is on the
   server and registered, but it is not open. Type `/open <name>` again.
 - A failure after CHA closed or replaced the database can make the process
@@ -2626,11 +2751,39 @@ details. See [Messages](#32-messages).
 - The generation of note audio.
 - Vault commands other than `/open` and `/download`: create, rename,
   protect, merge, delete, R2 upload, import and export.
+- D1 synchronization.
 
-D1 synchronization works on the server. Each time the process starts, and
-each time `/open` or `/download confirm` opens a vault, CHA makes the D1 table
-of the server if that table is missing. `/open` of the active vault does not
-do this.
+### D1 synchronization on the server
+
+`cha-daemon` does not use D1 synchronization. It opens each vault as a vault
+without a D1 connection. It sends no changes, gets no changes, and makes no D1
+tables. It does not use the key `machine` of `app.toml`. To bring the changes
+of a desktop computer to the server, upload the vault on the desktop computer,
+and then type `/download confirm` in ChaWeb.
+
+When the process opens a vault that has D1 credentials, it writes this warning
+to the log: `D1 sync is disabled in cha-daemon for vault '<name>'.` It writes
+it one time for each opening: at the start, after `/open`, and after
+`/download confirm`.
+
+- The D1 credentials stay in the vault. The process does not use them.
+- The process refuses to save D1 credentials: **D1 sync is disabled in
+  cha-daemon.**
+- A disconnect from D1 on the server does not delete D1 tables.
+- `/open` and `/download confirm` do not change the D1 tables.
+
+**Before you update a server that used D1 synchronization.** An older version
+of `cha-daemon` used D1 synchronization. Its tables stay in D1. The desktop
+computers continue to send changes to these tables, but no process reads
+them. Thus the D1 database becomes full, and the synchronization pauses on all
+computers. Before you install this version on such a server:
+
+1. Stop the processes of the users. See [Operate the service](#operate-the-service).
+2. In the Cloudflare console, delete the D1 tables of the server for each
+   vault: `q/<vault name>/<machine name>` and
+   `q2/<vault name>/<machine name>`. `<machine name>` is the value of
+   `machine` in `app.toml` of the server.
+3. Do the update. See [Update](#update).
 
 ### Operate the service
 
@@ -2664,6 +2817,9 @@ the password file is in the journal and in the log.
 ### Update
 
 Always install `cha-daemon` and the ChaWeb files from the same package.
+
+If an older version of the server used D1 synchronization, first delete its D1
+tables. See [D1 synchronization on the server](#d1-synchronization-on-the-server).
 
 1. Extract the new package and run `install.sh` with the same two paths.
 2. Start the processes again:
@@ -2708,7 +2864,7 @@ steps in the opposite order:
 | `default.toml`, `vault-<N>.toml` | Vault definitions. Each `.toml` file in this directory, other than `app.toml`, is a vault definition. |
 | `<db>` | The database of a vault. |
 | `<db>-wal`, `<db>-shm` | Work files of the database. They belong to the database. |
-| `<db>.cha-lock`, `<db>.cha-main-lock`, `<db>.cha-sessions/` | Lock files. CHA uses them to coordinate processes. You can ignore them. |
+| `<db>.cha-lock` | The lock file. The process that has the vault open holds it. See [More than one CHA process](#more-than-one-cha-process). You can ignore it. |
 | `<db>.bac`, `<definition file>.bac` | The vault that the last **Download**, or `/download confirm` in ChaWeb, replaced. |
 | `mirror/<vault name>/` | Readable copies of the sessions. |
 | `modify/<vault name>/` | The configuration files of **Export** and **Import**. |
@@ -2717,6 +2873,7 @@ steps in the opposite order:
 | `openai-auth.json.cha-lock` | A lock file. |
 | `view.json` | The state of the View menu and the font size of notes. |
 | `password` | ChaWeb only: the password of a protected vault. |
+| `<db>.cha-main-lock`, `<db>.cha-sessions/` | Lock files of older versions. CHA does not use them. You can delete them when no CHA process uses the vault. |
 | `api-keys.json` | Obsolete. See [Appendix B](#appendix-b--obsolete-settings). |
 
 CHA makes its directories and its database files readable only for your user
@@ -2737,7 +2894,7 @@ desktop application and `cha-daemon` use the same keys.
 | Key | Necessary | Value |
 | --- | --- | --- |
 | `vault` | Yes | The name of the vault that CHA opens at the start. It must be the name of an existing vault. CHA changes this key when you select a vault, and in ChaWeb when `/open` opens a vault. |
-| `machine` | No | The name of this computer for [D1 synchronization](#20-d1-synchronization). Not empty, no `/`. Without it, CHA does not synchronize. |
+| `machine` | No | The name of this computer for [D1 synchronization](#20-d1-synchronization). Not empty, no `/`. Without it, CHA does not synchronize. `cha-daemon` does not use it. |
 | `mirror` | No | The base directory of the [session mirror](#the-session-mirror). Without it, CHA writes no mirror. |
 | `modify` | No | The base directory for [Export and Import](#21-configuration-files-export-edit-import). Without it, these commands are disabled. |
 | `[logging]` `file` | Yes | The path of the log file. |
@@ -3006,9 +3163,14 @@ Rules:
 - Thus `web_search = "auto"` for a complete provider stays only until the
   next save on the provider screen. Use the character setting **Provider web
   search** in place of it.
-- For `google` and `anthropic`, CHA ignores `reasoning_effort`,
-  `reasoning_format`, `cache_retention`, `web_search` and
-  `openrouter_targets`. For `anthropic`, it also ignores `temperature`.
+- For `google` and `anthropic`, CHA ignores `reasoning_format`,
+  `cache_retention`, `web_search` and `openrouter_targets`. For `anthropic`,
+  it also ignores `temperature`.
+- For `google` and `anthropic`, CHA reads `reasoning_effort`. If the value is
+  not permitted, or if it is not a text, CHA writes a warning to the log and
+  uses `none`. The provider stays available. For the other API formats, a
+  value that is not permitted also gives a warning and `none`, but a value
+  that is not a text is an error.
 - With `auth = "openai_subscription"`, these values are necessary:
   `host = "chatgpt.com"`, `port = 443`, `https = true`,
   `base_path = "/backend-api/codex"`, `mode = "net"`, `api = "responses"`,
@@ -3072,7 +3234,7 @@ key in the files.
 | `system/session/config.toml` | `naming_provider` (a provider ID), `naming_reasoning_effort` (default `low`) |
 | `system/jev/config.toml` | `url`, `model`, `api_key` (a key ID). All three are necessary. Without this file, recipient detection is off. |
 | `system/notes/config.toml` | `compression_provider` (a provider ID), `compression_reasoning_effort` (default `high`), `audio_url`, `audio_api_key` (a key ID) |
-| `system/web-search/config.toml` | `tool_enabled` (default `false`), `provider` (`brave`, `tavily`; default `brave`), `api_key`, `read_provider` (`off`, `firecrawl`), `firecrawl_api_key`, `web_reader_enabled`, `web_reader_url`, `web_reader_api_key` |
+| `system/web-search/config.toml` | `tool_enabled` (default `false`), `provider` (`brave`, `tavily`; default `brave`), `api_key`, `read_provider` (`off`, `firecrawl`), `firecrawl_api_key`, `web_reader_enabled`, `web_reader_url` |
 | `system/voice-input/config.toml` | `provider` (`openai`, `xai`; default `openai`), `url`, `model`, `api_key`, `delay` (`low`, `medium`, `high`, `xhigh`), `prompt`, `send_phrase` (default `over to you`) |
 | `system/voice-output/config.toml` | `default_voice` (the **name** of a voice, not its ID). For FishAudio: `url`, `model`, `api_key`, `output_format`, `connection` (`http`, `websocket`). For ElevenLabs: the table `[elevenlabs]` with the same five keys. |
 
@@ -3259,7 +3421,10 @@ administration.
 | Complete text for one character | 1 MiB |
 | Includes in one text | 256, to a depth of 16 |
 | Text of a prompt in **Settings → Prompts** | 256 KiB |
-| **Summarize**: retries of one model request | 3, after 10, 20 and 40 seconds |
+| **Summarize** and **Save summary**: retries of one model request | 3, after 10, 20 and 40 seconds |
+| **Summarize** and **Save summary**: one model request | 7,200 seconds |
+| **Summarize**: notes at the same time | 3 |
+| **Test Flex API** | 900 seconds |
 | Log | 10 MiB for each file, three older files |
 | Events | The newest 1,000 |
 | Provider test | 10 seconds |
@@ -3277,9 +3442,7 @@ administration.
 | Message | Cause and action |
 | --- | --- |
 | **CHA cannot continue** | A start error. Read the text of the dialog. See [If CHA cannot start](#if-cha-cannot-start). |
-| **Settings can be changed only in the main CHA process.** | A different CHA process opened the vault first. Close the other processes, then select the vault again or start CHA again. |
-| **Close other CHA processes using this vault, then try again.** | The command needs the vault for itself. Close the other CHA windows, and stop ChaWeb if it uses the same files. |
-| **This session is open in another CHA process.** | Close the session in the other process. |
+| **Close other CHA processes using this vault, then try again.** | A different CHA process has the vault open. Close the other CHA process, and stop ChaWeb if it uses the same files. See [More than one CHA process](#more-than-one-cha-process). |
 | **Sign in to ChatGPT before using this provider.** | Connect a ChatGPT account. See [Connect a ChatGPT account](#connect-a-chatgpt-account). |
 | **Provider test failed:** … | Read the reason. Examine the address, the model name, the API format and the key. |
 | **Provider authentication or permission was rejected.** | The key is wrong, or it has no access to the model. |
@@ -3298,12 +3461,19 @@ administration.
 | **Page reading is not configured.** … | See [Web search and page reading](#13-web-search-and-page-reading). |
 | **Configure the audio service URL and API key in Notes settings.** | See [Note audio service](#note-audio-service). |
 | **Could not load voices. Check the audio service in Notes settings.** | The dialog **Generate audio** did not get the list of voices. Examine the **Audio service URL** and the key. See [Note audio service](#note-audio-service). |
+| **The audio service settings changed. Reopen the dialog.** | The note audio settings changed while the dialog got the list of voices. Close the dialog and open it again. |
+| **Could not preview this voice. Check the audio service in Notes settings.** | The sample of **Listen** failed. Examine the **Audio service URL** and the key. See [Note audio service](#note-audio-service). |
 | **Prompt text is too large. The limit is 256 KiB.** | Make the text of the prompt shorter. See [Prompts](#prompts). |
 | **That prompt was not found.** | Open **Settings → Prompts** again. |
 | **Modify directory is not configured** | Add the key `modify` to `app.toml`. See [app.toml](#27-apptoml). |
 | **This machine has no name. Add machine to app.toml, then save again.** | See [Set up the first computer](#set-up-the-first-computer). |
 | **D1 could not be reached. Check the account ID, database ID, and API token.** | Examine the three values and the network connection. |
-| **Changes are not sent to D1 yet. Try again when D1 can be reached.** | Wait until the synchronization sent all changes, then upload again. Read the log if it continues. |
+| **Changes are not sent to D1 yet. Try again when D1 can be reached, or save the D1 credentials again.** | Wait until the synchronization sent all changes, then try again. If it continues, read **Settings → Events**. See [D1 synchronization](#20-d1-synchronization). |
+| **D1 sync has stopped. Select “Save D1 credentials” in Settings, then try the upload again.** | The table of this computer does not exist in D1. Click **Save D1 credentials**, or **Disconnect from D1**. |
+| **The R2 copy is missing changes from this vault. Upload a fresh copy from a machine that has received all changes, then try again.** | The copy in R2 is older than this vault. Upload the vault from a computer that has all changes. See [Replace the active vault with the copy in R2](#replace-the-active-vault-with-the-copy-in-r2). |
+| **Disconnect this vault from D1 before you rename it.** | See [Rename a vault](#rename-a-vault). |
+| **Open this protected vault before you rename it.** | Select the vault in the **Vault** list, then rename it. |
+| **D1 sync is disabled in cha-daemon.** | ChaWeb does not use D1 synchronization. See [D1 synchronization on the server](#d1-synchronization-on-the-server). |
 | **R2 storage is not configured** | Save the R2 credentials. See [R2 storage](#19-r2-storage). |
 | `Only the registered uploader machine can upload this vault to R2.` … | See [The uploading computer](#the-uploading-computer). |
 | **The R2 vault changed since the check. Click Upload again to review it.** | A different upload occurred. Click **Upload** again. |
@@ -3314,9 +3484,8 @@ administration.
 | **A vault command is running. Try again when it finishes.** | Wait for the result notice of the first command. |
 | **Vault '…' is already open.** | `/open` with the name of the active vault. No action is necessary. |
 | **Download failed for vault '…'.** … / **Open failed for vault '…'.** … | The reason follows in the message. See the next rows and [Download and open vaults](#download-and-open-vaults). |
-| … **The active vault has no R2 key** | Save the R2 credentials in this vault on a desktop computer. D1 synchronization brings them to the server. Without D1, copy the vault to the server again. |
+| … **The active vault has no R2 key** | Save the R2 credentials in this vault on a desktop computer. Then copy the vault to the server again. |
 | … **R2 database object '…' was not found. Remote lookup requires the R2 file name without .sqlite3, in its exact case.** | Type the name of the database file in R2 without `.sqlite3`, with the correct capital letters. |
-| … **Could not clear the D1 inbox.** … | CHA could not delete the D1 records, and did not install the vault. Examine the connection to D1, then try again. |
 | … **Welcome cannot download a protected vault.** / **Protected vaults cannot be downloaded from R2 without a password** / **Password required to open this vault** | The ChaWeb commands do not work with a protected vault. Copy the files. See [Move a vault to a different computer](#move-a-vault-to-a-different-computer). |
 | … **The vault context changed.** | The vault changed before the command started, for example by a command from a different browser. Type the command again. |
 | **Vault '…' was saved but could not be opened.** … | The vault is on the server now. Type `/open <name>` again. |
@@ -3340,9 +3509,8 @@ administration.
 | Listen to an answer | The speaker buttons show only when voice output is configured. | [Configure voice output](#configure-voice-output) |
 | Pictures | A character must have picture files. | [Pictures](#pictures) |
 | Import a web page | Page reading must be configured. | [Configure the Search API](#configure-the-search-api), [Page import into Notes](#page-import-into-notes) |
-| Compress a note | A compression provider must be selected. | [Compression provider](#compression-provider) |
 | Audio for a note | The note audio service must be configured. | [Note audio service](#note-audio-service) |
-| Summarize a note or a folder | A compression provider must be selected. | [Compression provider](#compression-provider), [Flex processing for Summarize](#flex-processing-for-summarize), [Prompts](#prompts) |
+| Summarize a note or a folder | The vault must have a provider. The administrator can set the provider and the effort that the dialog shows at the start. | [Compression provider](#compression-provider), [Flex processing for Summarize](#flex-processing-for-summarize), [Prompts](#prompts) |
 | Session summaries | A compression provider must be selected. | [Compression provider](#compression-provider) |
 | Library | A cloud store API key is necessary. An administrator selects and manages the stores. | [Prepare a key](#prepare-a-key), [Manage stores](#manage-stores) |
 | Upload a folder to a store | An administrator must delete a store before a new upload. | [Manage stores](#manage-stores) |
@@ -3377,7 +3545,7 @@ For `CHA_LISTEN`, the warning shows in the terminal.
 | --- | --- | --- |
 | `[web]`, `[voice_input]`, `[text_to_speech]` | `app.toml` | Ignores them. |
 | `mirror`, `modify` | A vault definition file | Ignores them. The keys are now in `app.toml`. |
-| `api-keys.json` | Configuration directory | When the main process opens a vault that has no saved keys and no R2 credentials, CHA copies the keys of this file into the vault. CHA does not change the file. After the copy, you can delete it. If the file is damaged, CHA does not start with such a vault. |
+| `api-keys.json` | Configuration directory | When CHA opens a vault that has no saved keys and no R2 credentials, CHA copies the keys of this file into the vault. CHA does not change the file. After the copy, you can delete it. If the file is damaged, CHA does not start with such a vault. |
 | `web_search = "required"` | Provider and character files | Reads it as `auto`. |
 | `reasoning_effort = "minimal"` | Provider and character files | Reads it as `low`. |
 | `api_key_env` | Provider files | Reads it as the name of a saved key. It is not an environment variable. The provider screen writes `api_key` in place of it. |
@@ -3387,4 +3555,5 @@ For `CHA_LISTEN`, the warning shows in the terminal.
 | `stability`, `similarity_boost`, `style`, `use_speaker_boost` | Voice files | Ignores them. |
 | `CHA_LISTEN` | Environment of `install.sh` | Ignores it. Each ChaWeb port is set in nginx. |
 | `system/prompts/session-summary.md` | Configuration files and vault database | Ignores it. It keeps the file. **Short session summary** and **Long session summary** replace it. |
+| `web_reader_api_key` | `system/web-search/config.toml` | Ignores it. The next **Save** on the **Search API** screen removes it. |
 
