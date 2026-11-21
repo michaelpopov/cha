@@ -218,7 +218,7 @@ public:
         const std::filesystem::path& database_path,
         std::string database_password = {},
         std::string sync_machine = {},
-        bool desktop_host = false);
+        bool initialize_forum_rows = false);
 
     ~WorkspaceConfigStore();
     WorkspaceConfigStore(const WorkspaceConfigStore&) = delete;

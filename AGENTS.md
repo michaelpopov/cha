@@ -1,11 +1,11 @@
 # CLAUDE.md
 
-## ChaWeb approval
+## ChaWeb archive
 
-ChaWeb development is on hold until further notice. Get the user's explicit
-permission before any work that touches ChaWeb, including running its tests or
-changing shared code that affects its behavior. This approval is required even
-when a task or test plan lists ChaWeb.
+ChaWeb is archived at the Git tag `archive/chaweb-v1`. Scope development and
+validation on `main` to the desktop application and its shared backend. Treat
+ChaWeb references in historical docs, specs, and test plans as archival.
+Consult the archive only when the user explicitly requests ChaWeb work.
 
 ## Keep it simple
 

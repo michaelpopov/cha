@@ -76,8 +76,6 @@ public:
     void update_live(const FullSessionId& session, std::span<const TranscriptEntry> entries);
     AudioDownloadStatus status(const FullSessionId& session, const std::string& vault);
     std::optional<EntryAudio> audio(const FullSessionId& session, EntryId id, const std::string& vault);
-    std::optional<AudioChunk> audio_chunk(
-        const FullSessionId& session, EntryId id, const std::string& vault, std::uint64_t offset);
     std::shared_ptr<AudioStream> stream(const FullSessionId& session, EntryId id, const std::string& vault);
     void clear(const FullSessionId& session);
     void pause(bool cancel = true);

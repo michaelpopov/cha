@@ -66,8 +66,6 @@ struct Application::Impl {
     struct VaultMaintenance {
         explicit VaultMaintenance(Impl& application) : app(application) {}
 
-        std::optional<CommandResult> submit_welcome_command(
-            std::string_view input, std::uint64_t epoch);
         VaultRegistrySnapshot vault_snapshot() const;
         VaultDefinition create_vault(VaultCreate create, std::uint64_t epoch);
         VaultDefinition update_vault(
@@ -91,20 +89,17 @@ struct Application::Impl {
         std::shared_ptr<OperationReply> start_database_upload(
             std::optional<std::string> expected_etag,
             std::uint64_t epoch);
-        R2DatabaseTransfer download_database(std::uint64_t epoch, bool from_welcome = false);
+        R2DatabaseTransfer download_database(std::uint64_t epoch);
         WorkspaceConfigTransfer import_configuration(std::uint64_t epoch);
         WorkspaceConfigTransfer export_configuration(std::uint64_t epoch);
 
         void publish_vault_names();
     private:
-        void run_welcome_command(bool download, bool confirmed, std::string target,
-            std::uint64_t epoch);
-        void post_welcome_notice(std::string text, std::string error_code = {});
         R2StorageKey require_r2_key() const;
         VaultDefinition save_r2_vault_locked(
-            std::string_view name, const R2StorageKey& r2, bool from_welcome);
+            std::string_view name, const R2StorageKey& r2);
         void switch_vault_locked(const VaultDefinition& target, std::string password,
-            PendingContextNotice& notice, bool from_welcome = false);
+            PendingContextNotice& notice);
         void publish_vault(VaultDefinition vault);
         R2DatabaseUpload prepare_upload(
             std::uint64_t epoch, VaultDefinition& vault, R2StorageKey& storage);
@@ -182,7 +177,6 @@ struct Application::Impl {
     std::atomic_bool stopping_flag{};
     // Set from the maintenance copy of an R2 upload until its transfer ends.
     std::atomic_bool vault_upload_running{};
-    std::atomic_bool vault_command_running{};
     bool running{};
     bool stopped{};
     std::atomic_bool unusable{};

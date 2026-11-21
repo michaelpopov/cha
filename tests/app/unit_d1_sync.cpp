@@ -498,52 +498,6 @@ TEST(D1CredentialsTest, FailedDisconnectRetainsCredentialsQueueAndFlags) {
     EXPECT_EQ(flags.integer(0), 1);
 }
 
-TEST(D1AppWiringTest, DaemonOpensAsDisconnectedAndPreservesPendingWork) {
-    for (const std::string machine : {"mac", ""}) {
-        SCOPED_TRACE(machine);
-        test::TestWorkspace workspace;
-        const auto database = test::import_test_database(workspace.root());
-        auto command = make_d1_command(workspace, database, machine);
-        command.chaweb_host = true;
-        seed_d1(database);
-        queue_work(database);
-        flag_note(database);
-        MockD1 mock;
-        initialize_diagnostic_logging(command.log_file, "warn");
-        auto application = Application::open(command, {}, {}, mock.transport());
-        EXPECT_EQ(application->state(), ApplicationState::running);
-        const auto epoch = application->context_epoch();
-        (void)application->create_session("lobby", "Daemon chat", epoch);
-        (void)application->create_forum({.display_name = "Daemon forum", .persona_id = "reader"}, epoch);
-        const auto note = application->create_note_item({}, NoteItemKind::note, "Daemon note", epoch);
-        application->save_note(note.id,
-            {{"type", "doc"}, {"content", nlohmann::json::array()}}, epoch);
-        (void)application->update_vault("Test", {.display_name = "Test"}, epoch);
-        application.reset();
-        application = Application::open(command, {}, {}, mock.transport());
-        application.reset();
-        shutdown_diagnostic_logging();
-
-        EXPECT_EQ(mock.count(""), 0u);
-        Database db(database, Database::Mode::read_only);
-        const auto pending = sync_queue_list(db);
-        ASSERT_EQ(pending.size(), 1u);
-        EXPECT_EQ(pending.front().record,
-            sync_make_record("note.create", {{"path", {"Pending"}}, {"item", "note"}}));
-        auto flags = db.prepare("SELECT name FROM note_items WHERE changed=1");
-        ASSERT_TRUE(flags.step());
-        EXPECT_EQ(flags.text(0), "Flagged");
-        EXPECT_FALSE(flags.step());
-        const auto log = file_bytes(command.log_file);
-        constexpr std::string_view warning = "D1 sync is disabled in cha-daemon";
-        const auto first = log.find(warning);
-        ASSERT_NE(first, std::string::npos);
-        const auto second = log.find(warning, first + warning.size());
-        ASSERT_NE(second, std::string::npos);
-        EXPECT_EQ(log.find(warning, second + warning.size()), std::string::npos);
-    }
-}
-
 TEST(D1AppWiringTest, AppliesNewForumThenChatBeforeOpenReturns) {
     test::TestWorkspace source;
     source.add_forum("remote", "Remote", "guide");

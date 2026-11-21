@@ -1112,12 +1112,8 @@ std::string add_character_tool(
 
 } // namespace
 
-std::string maintenance_reference(bool chaweb_host) {
-    std::string text = chaweb_host
-        ? "Host: cha-daemon (ChaWeb)\n\n"
-        : "Host: desktop application\n\n";
-    text.append(embedded_assistant_maintenance());
-    return text;
+std::string maintenance_reference() {
+    return std::string(embedded_assistant_maintenance());
 }
 
 AssistantService::AssistantService(Links links) : links_(std::move(links)) {}

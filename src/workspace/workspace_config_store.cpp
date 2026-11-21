@@ -1497,8 +1497,8 @@ struct WorkspaceConfigStore::Impl {
     std::optional<RuntimePrivateRoot> tree;
     // Machine name carried from app.toml; empty means this vault never records.
     std::string sync_machine;
-    // Desktop adds forum rows at each config commit and at open; cha-daemon does not.
-    bool desktop_host = false;
+    // The application initializes forum rows for Notes and D1 sync.
+    bool initialize_forum_rows = false;
     mutable std::mutex mutex;
     mutable std::mutex snapshot_mutex;
     std::shared_ptr<const Workspace> published_workspace;
@@ -1581,7 +1581,7 @@ struct WorkspaceConfigStore::Impl {
         }
         const auto forums = forum_names(*workspace);
         note_sync_forums(*database, forums);
-        if (desktop_host) ensure_forum_rows(*database, forums);
+        if (initialize_forum_rows) ensure_forum_rows(*database, forums);
         if (initialize_prompts && consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
             fail_path("Forced SQLite commit failure");
         }
@@ -1654,8 +1654,8 @@ struct WorkspaceConfigStore::Impl {
             if (surviving_forums) {
                 prune_orphan_sessions(*database, *surviving_forums);
             }
-            if (desktop_host || surviving_forums) ensure_forum_rows(*database, candidate_forums);
-            if (clear_outgoing) sync_clear_outgoing(*database, desktop_host);
+            if (initialize_forum_rows || surviving_forums) ensure_forum_rows(*database, candidate_forums);
+            if (clear_outgoing) sync_clear_outgoing(*database, initialize_forum_rows);
             if (record_sync) record_config_edit(*database, sync_machine, committed_rows, rows);
             if (!op_id.empty()) sync_record_receipt(*database, op_id);
             if (consume_runtime_fault(WorkspaceConfigFault::sqlite_commit)) {
@@ -2232,10 +2232,10 @@ std::unique_ptr<WorkspaceConfigStore> WorkspaceConfigStore::open(
     const std::filesystem::path& database_path,
     std::string database_password,
     std::string sync_machine,
-    bool desktop_host) {
+    bool initialize_forum_rows) {
     auto impl = std::make_unique<Impl>();
     impl->sync_machine = std::move(sync_machine);
-    impl->desktop_host = desktop_host;
+    impl->initialize_forum_rows = initialize_forum_rows;
     impl->database_path = normalize_path(database_path);
     impl->database_password = std::move(database_password);
     (void)require_existing_directory(

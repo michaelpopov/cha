@@ -50,12 +50,6 @@ void write_vault_selection(
         });
 }
 
-std::string_view welcome_command_name(std::string_view input) {
-    input = trim_view(input);
-    const auto name = input.substr(0, find_whitespace(input));
-    return name == "/download" || name == "/open" ? name : std::string_view{};
-}
-
 } // namespace
 
 std::filesystem::path normalized_vault_path(
@@ -203,126 +197,6 @@ void save_file_replace(
 } // namespace cha::app::vault
 
 namespace cha::app {
-
-std::optional<CommandResult> Application::Impl::VaultMaintenance::submit_welcome_command(
-    std::string_view input, std::uint64_t epoch) {
-    input = trim_view(input);
-    const auto command = vault::welcome_command_name(input);
-    if (command.empty()) return std::nullopt;
-    const bool download = command == "/download";
-
-    const auto reject = [](std::string message) {
-        return CommandResult{.session = {.notice = std::move(message)}};
-    };
-    if (!app.command.chaweb_host) {
-        return reject("Vault commands are available in ChaWeb Welcome.");
-    }
-    const auto argument = trim_view(input.substr(command.size()));
-    const bool confirmed = download && argument == "confirm";
-    if (download && !argument.empty() && !confirmed)
-        return reject("Type /download or /download confirm.");
-    if (!download && argument.empty()) return reject("Type /open <name>.");
-
-    if (app.vault_command_running.exchange(true))
-        return reject("A vault command is running. Try again when it finishes.");
-    try {
-        if (app.background_jobs.launch(
-                [this, download, confirmed, target = std::string(argument), epoch]
-                (const std::atomic_bool& cancelled) mutable {
-                    struct Release {
-                        std::atomic_bool& flag;
-                        ~Release() { flag = false; }
-                    } release{app.vault_command_running};
-                    try {
-                        if (!cancelled) run_welcome_command(download, confirmed, std::move(target), epoch);
-                    } catch (const std::exception& error) {
-                        log_warn(std::string("Could not report the vault command result: ") + error.what());
-                    }
-                })) {
-            return CommandResult{.session = {.input_consumed = true}, .clear_input = true};
-        }
-    } catch (const std::exception& error) {
-        log_warn(std::string("Could not launch vault command: ") + error.what());
-    }
-    app.vault_command_running = false;
-    return reject("The vault command could not start.");
-}
-
-void Application::Impl::VaultMaintenance::post_welcome_notice(std::string text, std::string error_code) {
-    if (app.state.load() != ApplicationState::running || app.shutdown_requested()) return;
-    if (!app.live_sessions->post_session_notice(app.published_epoch.load(),
-            {std::string(entrance_id), std::string(welcome_id)}, std::move(text), std::move(error_code))) {
-        log_warn("Could not post the vault command notice.");
-    }
-}
-
-void Application::Impl::VaultMaintenance::run_welcome_command(
-    bool download, bool confirmed, std::string target, std::uint64_t epoch) {
-    if (download) target = app.current_vault_.get().name;
-    bool saved = false;
-    const auto report = [&](std::string message, std::string error_code = {}) {
-        const std::lock_guard lifecycle(app.lifecycle_mutex);
-        post_welcome_notice(std::move(message), std::move(error_code));
-    };
-    const auto failed = [&](std::string reason, std::string error_code = {}) {
-        report(saved
-            ? "Vault '" + target + "' was saved but could not be opened. " + reason
-            : std::string(download ? "Download" : "Open") + " failed for vault '"
-                + target + "'. " + reason, std::move(error_code));
-    };
-
-    try {
-        if (download && confirmed) {
-            download_database(epoch, true);
-            report("Downloaded and reopened vault '" + target + "'.");
-            return;
-        }
-        PendingContextNotice notice;
-        try {
-            const std::lock_guard lifecycle(app.lifecycle_mutex);
-            app.require_admitted(epoch);
-            if (download) {
-                const auto active = app.current_vault_.get();
-                if (active.password_protected)
-                    throw VaultPasswordError("Welcome cannot download a protected vault.");
-                (void)require_r2_key();
-                post_welcome_notice("Download will replace vault '" + active.name
-                    + "' with the R2 copy. Local changes absent from R2 will survive only "
-                      "in the .bac backup. Running work will stop. Type /download confirm to continue.");
-                return;
-            }
-            if (const auto* local = find_vault(app.command.vaults, target)) {
-                target = local->name;
-                if (same_vault_name(app.current_vault_.get().name, target)) {
-                    post_welcome_notice("Vault '" + target + "' is already open.");
-                    return;
-                }
-                switch_vault_locked(*local, {}, notice, true);
-            } else {
-                const auto key = require_r2_key();
-                target = save_r2_vault_locked(target, key, true).name;
-                saved = true;
-            }
-        } catch (...) {
-            notice.dispatch();
-            throw;
-        }
-        notice.dispatch();
-        if (saved) switch_vault(target, {}, epoch);
-        report(saved ? "Downloaded and opened vault '" + target + "'."
-                     : "Opened vault '" + target + "'.");
-    } catch (const R2ObjectNotFoundError& error) {
-        failed(download ? error.what() : std::string(error.what())
-            + " Remote lookup requires the R2 file name without .sqlite3, in its exact case.",
-            std::string(to_string(ErrorCode::not_found)));
-    } catch (const ApplicationError& error) {
-        failed(error.code == ErrorCode::vault_changed
-            ? "The vault context changed." : error.what());
-    } catch (const std::exception& error) {
-        log_warn(std::string("Vault command failed: ") + error.what());
-        failed(error.what());
-    }
-}
 
 R2StorageKey Application::Impl::VaultMaintenance::require_r2_key() const {
     const auto key = app.api_keys->r2();
@@ -653,7 +527,7 @@ VaultDefinition Application::Impl::VaultMaintenance::create_vault(VaultCreate cr
                     candidate.data, storage::SqliteDatabase::Mode::read_write,
                     create.password);
                 storage::SqliteTransaction transaction(fresh);
-                sync_clear_outgoing(fresh, !app.command.chaweb_host);
+                sync_clear_outgoing(fresh);
                 for (const auto& [name, content] : default_prompt_config_files()) {
                     fresh.prepare("INSERT INTO config (name, content) VALUES (?1, ?2)"
                                   " ON CONFLICT(name) DO NOTHING",
@@ -883,25 +757,20 @@ VaultDefinition Application::Impl::VaultMaintenance::download_r2_vault(
         throw std::invalid_argument(
             "R2 storage credentials are not configured for the active vault");
     }
-    return save_r2_vault_locked(name, *r2, false);
+    return save_r2_vault_locked(name, *r2);
 }
 
 VaultDefinition Application::Impl::VaultMaintenance::save_r2_vault_locked(
-    std::string_view name, const R2StorageKey& r2, bool from_welcome) {
-    if (from_welcome) {
-        validate_public_name(name, "vault name", app.command.config_directory);
-        require_path_component(name, app.command.config_directory);
-    }
+    std::string_view name, const R2StorageKey& r2) {
     const std::string database_name = std::string(name) + ".sqlite3";
     require_path_component(database_name, app.command.config_directory);
 
     const auto database = app.command.config_directory / path_from_utf8(database_name);
-    if (from_welcome) vault::require_available_database_path(database);
     const VaultDefinition destination{
         .data = vault::normalized_vault_path(app.command.config_directory, database),
         .source = vault::next_vault_file(app.command.config_directory),
     };
-    if (!from_welcome) vault::require_available_database_path(destination.data);
+    vault::require_available_database_path(destination.data);
 
     std::vector<VaultDefinition> updated = app.command.vaults;
     VaultDefinition candidate;
@@ -916,28 +785,17 @@ VaultDefinition Application::Impl::VaultMaintenance::save_r2_vault_locked(
             });
         candidate = std::move(definition);
     };
-    BeforeR2Install before_install;
-    if (from_welcome) {
-        vault::require_available_database_path(destination.source);
-        post_welcome_notice("Downloading vault '" + std::string(name) + "' from R2.");
-        before_install = [&](const std::filesystem::path&, VaultDefinition downloaded) {
-            register_candidate(std::move(downloaded));
-        };
-    }
-
     (void)download_new_database_from_r2(
         destination.data, destination.source, database_name, r2,
-        [this] { return app.shutdown_requested(); }, before_install);
-    if (!from_welcome) {
-        try {
-            register_candidate(load_vault_definition_file(
-                app.command.config_directory, destination.source));
-        } catch (...) {
-            std::error_code ignored;
-            std::filesystem::remove(destination.source, ignored);
-            std::filesystem::remove(destination.data, ignored);
-            throw;
-        }
+        [this] { return app.shutdown_requested(); });
+    try {
+        register_candidate(load_vault_definition_file(
+            app.command.config_directory, destination.source));
+    } catch (...) {
+        std::error_code ignored;
+        std::filesystem::remove(destination.source, ignored);
+        std::filesystem::remove(destination.data, ignored);
+        throw;
     }
     app.command.vaults = std::move(updated);
     publish_vault_names();
@@ -975,7 +833,7 @@ MaintenanceResult Application::Impl::VaultMaintenance::switch_vault(
 
 void Application::Impl::VaultMaintenance::switch_vault_locked(
     const VaultDefinition& selected, std::string password,
-    PendingContextNotice& notice, bool from_welcome) {
+    PendingContextNotice& notice) {
     if (selected.password_protected && password.empty()) {
         throw VaultPasswordError(
             "Password required to open this vault");
@@ -989,7 +847,6 @@ void Application::Impl::VaultMaintenance::switch_vault_locked(
     }
     require_switchable_database(selected.data, password);
 
-    if (from_welcome) post_welcome_notice("Opening vault '" + selected.name + "'.");
     if (!drain_for_maintenance(notice)) {
         throw std::runtime_error(
             "Could not pause active sessions for database maintenance");
@@ -1282,39 +1139,28 @@ static bool covers_sync_receipts(
 }
 
 R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
-    std::uint64_t epoch, bool from_welcome) {
+    std::uint64_t epoch) {
     std::optional<VaultDefinition> downloaded_vault;
-    std::optional<R2StorageKey> checked_key;
     return maintain_database(
         epoch,
         [&](auto&, auto&) {
-            const auto r2 = checked_key ? *checked_key : require_r2_key();
+            const auto r2 = require_r2_key();
             const VaultDefinition active = app.current_vault_.get();
-            BeforeR2Install before_install;
-            CheckR2Candidate check_candidate;
-            if (from_welcome) {
-                before_install = [](const std::filesystem::path&, VaultDefinition definition) {
-                    if (definition.password_protected) {
-                        throw VaultPasswordError("Welcome cannot download a protected vault.");
-                    }
-                };
-            } else if (!app.command.chaweb_host) {
-                require_no_pending_sync(active.data, app.active_password);
-                check_candidate = [&](const std::filesystem::path& temporary) {
-                    using Database = storage::SqliteDatabase;
-                    Database current(active.data, Database::Mode::read_only, app.active_password);
-                    Database staged(temporary, Database::Mode::read_only, app.active_password);
-                    if (!covers_sync_receipts(current, staged)) {
-                        throw ApplicationError(ErrorCode::invalid_argument,
-                            "The R2 copy is missing changes from this vault. Upload a fresh copy "
-                            "from a machine that has received all changes, then try again.");
-                    }
-                    validate_stored_workspace_configuration(staged);
-                };
-            }
+            require_no_pending_sync(active.data, app.active_password);
+            const auto check_candidate = [&](const std::filesystem::path& temporary) {
+                using Database = storage::SqliteDatabase;
+                Database current(active.data, Database::Mode::read_only, app.active_password);
+                Database staged(temporary, Database::Mode::read_only, app.active_password);
+                if (!covers_sync_receipts(current, staged)) {
+                    throw ApplicationError(ErrorCode::invalid_argument,
+                        "The R2 copy is missing changes from this vault. Upload a fresh copy "
+                        "from a machine that has received all changes, then try again.");
+                }
+                validate_stored_workspace_configuration(staged);
+            };
             const auto transferred = download_database_from_r2(
                 active.data, active.source, r2, R2DatabaseLease::already_held,
-                app.active_password, [this] { return app.shutdown_requested(); }, before_install,
+                app.active_password, [this] { return app.shutdown_requested(); },
                 check_candidate);
             app.clear_current_note();
             downloaded_vault = load_vault_definition_file(app.command.config_directory, active.source);
@@ -1332,15 +1178,7 @@ R2DatabaseTransfer Application::Impl::VaultMaintenance::download_database(
             app.command.vault = *downloaded_vault;
             publish_vault(*downloaded_vault);
             return transferred;
-        }, true, SyncStart::recover,
-        [&] {
-            if (!from_welcome) return;
-            const auto active = app.current_vault_.get();
-            if (active.password_protected)
-                throw VaultPasswordError("Welcome cannot download a protected vault.");
-            checked_key = require_r2_key();
-            post_welcome_notice("Downloading vault '" + active.name + "' from R2.");
-        },
+        }, true, SyncStart::recover, {},
         [&] { rebuild_mirror(session_mirror_root(*downloaded_vault)); });
 }
 
@@ -1358,7 +1196,7 @@ WorkspaceConfigTransfer Application::Impl::VaultMaintenance::import_configuratio
             vault.data,
             WorkspaceConfigLease::already_held,
             app.active_password,
-            app.command.chaweb_host ? "" : app.command.machine);
+            app.command.machine);
     }, true, SyncStart::resume, {},
     [&] { app.mirror->reconcile_forums(*app.store->snapshot()); });
 }

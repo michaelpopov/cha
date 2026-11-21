@@ -248,7 +248,6 @@ void LiveSession::install(OpenedSession opened) {
     mirror_ = std::move(opened.mirror);
     cached_audio_entries_ = std::move(opened.cached_audio_entries);
     update_audio_ = std::move(opened.update_audio);
-    host_command_ = std::move(opened.host_command);
     if (mirror_) {
         mirrored_revision_ = controller_->view().transcript.revision;
         mirrored_label_ = label_;
@@ -315,10 +314,6 @@ void LiveSession::execute(OwnerCommand command) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, RawCommand>) {
             const bool was_generating = controller.is_generating();
-            if (host_command_ && !was_generating
-                && !command.reply->submission()->expired()) {
-                if (auto result = host_command_(value.text)) return std::move(*result);
-            }
             auto result = handle_text_input(
                 controller, controller.view().default_persona_id, std::move(value.text), command.reply->submission(),
                 value.attach_paths, controller.current_note(value.current_note_id));

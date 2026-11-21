@@ -40,12 +40,9 @@ std::string file_text(const std::filesystem::path& path) {
         std::istreambuf_iterator<char>()};
 }
 
-std::string reference_from_sources(bool chaweb_host) {
+std::string reference_from_sources() {
     const std::filesystem::path root{CHA_SOURCE_DIRECTORY};
-    std::string text = chaweb_host
-        ? "Host: cha-daemon (ChaWeb)\n\n"
-        : "Host: desktop application\n\n";
-    text += file_text(root / "resources" / "assistant-maintenance.md");
+    std::string text = file_text(root / "resources" / "assistant-maintenance.md");
     for (std::size_t position = 0; (position = text.find("\r\n", position)) != std::string::npos;) {
         text.erase(position, 1);
     }
@@ -692,22 +689,11 @@ TEST(AssistantService, HostWritesCheckAdmissionAndCancellation) {
     EXPECT_EQ(file_text(file), original);
 }
 
-TEST(AssistantReference, EmbedsMaintenanceInstructionsAfterHostLine) {
+TEST(AssistantReference, EmbedsDesktopMaintenanceInstructions) {
     const std::filesystem::path root{CHA_SOURCE_DIRECTORY};
-    const std::string desktop = maintenance_reference(false);
-    const std::string chaweb = maintenance_reference(true);
-    EXPECT_EQ(desktop, reference_from_sources(false));
-    EXPECT_EQ(chaweb, reference_from_sources(true));
-    EXPECT_EQ(desktop.compare(0, std::string("Host: desktop application\n\n").size(),
-        "Host: desktop application\n\n"), 0);
-    EXPECT_EQ(chaweb.compare(0, std::string("Host: cha-daemon (ChaWeb)\n\n").size(),
-        "Host: cha-daemon (ChaWeb)\n\n"), 0);
-    EXPECT_NE(chaweb.find(
-        "Host: cha-daemon (ChaWeb)\n\n# Operating instructions for Assistant"),
-        std::string::npos);
-    EXPECT_EQ(desktop.find(
-        "Host: cha-daemon (ChaWeb)\n\n# Operating instructions for Assistant"),
-        std::string::npos);
+    const std::string desktop = maintenance_reference();
+    EXPECT_EQ(desktop, reference_from_sources());
+    EXPECT_TRUE(desktop.starts_with("# Operating instructions for Assistant"));
     EXPECT_NE(desktop.find("## Four recipes"), std::string::npos);
     const std::string guide = file_text(root / "resources" / "application-guide.md");
     EXPECT_EQ(guide.compare(0, std::string("# CHA application guide").size(),

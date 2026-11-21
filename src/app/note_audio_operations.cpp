@@ -31,7 +31,7 @@ std::shared_ptr<OperationReply> Application::preview_note_audio(std::string_view
     {
         const std::lock_guard lock(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        if (impl_->command.chaweb_host || trim_view(voice).empty() || trim_view(text).empty() || text.size() > 512)
+        if (trim_view(voice).empty() || trim_view(text).empty() || text.size() > 512)
             throw ApplicationError(ErrorCode::invalid_argument);
         service = impl_->notes->note_audio_service_locked(std::move(voice));
         pending = impl_->pending_media.remember(std::string(connection_id), request_id);

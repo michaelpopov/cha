@@ -852,7 +852,7 @@ TEST_F(NoteAudioBackground, RecoveredBatchReportsPartialUsageAfterARequestFails)
 TEST_F(NoteAudioBackground, NativeRecoveryReadsSavedBatchImmediatelyWithoutSubmitting) {
     MockHttpServer server({audio_json(audio_operation()), http_response("application/jsonl", audio_results())});
     const auto attempt = saved_attempt(server.port());
-    // A daemon/no native callback leaves the record untouched.
+    // Without a native callback the record stays untouched.
     EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
     application.reset();
     application = Application::open(make_command(workspace, path));
@@ -1295,16 +1295,6 @@ TEST_F(NoteAudioBackground, PostCommitAudioReadFailureDoesNotRejectTheNoteChange
     }
     EXPECT_EQ(application->list_note_items(epoch).size(), 2u);
     EXPECT_NE(log_text().find("after the note change committed"), std::string::npos);
-}
-
-TEST_F(NoteAudioBackground, MainDaemonDoesNotRecoverEvenWithACallback) {
-    const auto attempt = saved_attempt(1, false);
-    application.reset();
-    auto command = make_command(workspace, path); command.chaweb_host = true;
-    application = Application::open(command);
-    activate();
-    EXPECT_EQ(application->store().get_note_audio_attempt_for_note(note.id)->id, attempt.id);
-    EXPECT_TRUE(application->list_events(application->context_epoch()).empty());
 }
 
 #endif

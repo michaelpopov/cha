@@ -1014,7 +1014,7 @@ TEST(SessionController, AttachesMaintenanceToolsOnlyToAssistantInWelcome) {
             journal.path, providers,
             std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}),
             {}, {}, std::move(identity), 1, 0,
-            std::make_shared<const std::string>(maintenance_reference(false)));
+            std::make_shared<const std::string>(maintenance_reference()));
         (void)controller->submit_prompt("reader", "Fix it");
         (void)receive_until_idle(*controller);
         EXPECT_EQ(observed->inputs.size(), 1U);

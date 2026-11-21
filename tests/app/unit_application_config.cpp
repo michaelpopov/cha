@@ -126,8 +126,8 @@ TEST_F(ApplicationConfigTest, LoadsValidExternalConfigurations) {
             write_vault("personal.toml", "Personal", "../data/workspace.sqlite3");
         }
         const ApplicationCommand command = item.equals_option
-            ? load({"chaweb", "--config=" + config_.string()})
-            : load({"chaweb", "--config", config_.string()});
+            ? load({"CHA", "--config=" + config_.string()})
+            : load({"CHA", "--config", config_.string()});
 
         EXPECT_EQ(
             command.config_directory,
@@ -151,7 +151,7 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
     std::filesystem::create_directory(config_);
 
     const ApplicationCommand command = load({
-        "chaweb", "--config=" + config_.string()});
+        "CHA", "--config=" + config_.string()});
 
     EXPECT_EQ(command.vault.name, "Default");
     EXPECT_EQ(command.vaults.size(), 1U);
@@ -204,7 +204,7 @@ TEST_F(ApplicationConfigTest, DoesNotBootstrapANonemptyDirectory) {
     std::ofstream(config_ / "keep.txt") << "keep\n";
 
     const std::string nonempty =
-        error_text({"chaweb", "--config=" + config_.string()});
+        error_text({"CHA", "--config=" + config_.string()});
     EXPECT_NE(nonempty.find("Failed to read application config"), std::string::npos)
         << nonempty;
     EXPECT_FALSE(std::filesystem::exists(config_ / "default.toml"));
@@ -228,7 +228,7 @@ TEST_F(ApplicationConfigTest, DerivesVaultPathsFromAppBasePaths) {
                   + "\nmodify = " + item.modify
                   + "\n[web]\nhost = \"127.0.0.1\"\nport = 8080\n"
                     "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
-        const ApplicationCommand command = load({"chaweb", "--config", config_.string()});
+        const ApplicationCommand command = load({"CHA", "--config", config_.string()});
         ASSERT_TRUE(command.vault.mirror);
         ASSERT_TRUE(command.vault.modify);
         EXPECT_EQ(*command.vault.mirror, std::filesystem::weakly_canonical(item.expected_mirror));
@@ -245,7 +245,7 @@ TEST_F(ApplicationConfigTest, RejectsModifyContainingConfigOrDatabase) {
     write_vault("personal.toml", "config", "../data/workspace.sqlite3");
 
     const std::string error =
-        error_text({"chaweb", "--config", config_.string()});
+        error_text({"CHA", "--config", config_.string()});
     EXPECT_NE(error.find("modify"), std::string::npos) << error;
     EXPECT_NE(error.find("config"), std::string::npos) << error;
 }
@@ -258,7 +258,7 @@ TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {
         "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
 
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("non-empty string 'mirror'"),
         std::string::npos);
 }
@@ -268,27 +268,27 @@ TEST_F(ApplicationConfigTest, RejectsAnEmptyMirrorPath) {
 
 TEST_F(ApplicationConfigTest, RejectsMissingDuplicateAndUnknownOptions) {
     EXPECT_NE(
-        error_text({"chaweb"}).find("Missing --config"), std::string::npos);
+        error_text({"CHA"}).find("Missing --config"), std::string::npos);
     EXPECT_NE(
-        error_text({"chaweb", "--config"}).find("requires a value"),
+        error_text({"CHA", "--config"}).find("requires a value"),
         std::string::npos);
     EXPECT_NE(
         error_text({
-            "chaweb", "--config", config_.string(),
+            "CHA", "--config", config_.string(),
             "--config=" + config_.string()}).find("more than once"),
         std::string::npos);
     EXPECT_NE(
-        error_text({"chaweb", "--data", "old.sqlite3"}).find("Unknown option"),
+        error_text({"CHA", "--data", "old.sqlite3"}).find("Unknown option"),
         std::string::npos);
     EXPECT_NE(
-        error_text({"chaweb", "--host", "127.0.0.1"}).find("Unknown option"),
+        error_text({"CHA", "--host", "127.0.0.1"}).find("Unknown option"),
         std::string::npos);
     EXPECT_NE(
-        error_text({"chaweb", "--vault", "Personal"}).find("Unknown option"),
+        error_text({"CHA", "--vault", "Personal"}).find("Unknown option"),
         std::string::npos);
     EXPECT_NE(
         error_text({
-            "chaweb", "--config=" + config_.string(),
+            "CHA", "--config=" + config_.string(),
             "--test-idle-grace-ms", "0"}).find("Unknown option"),
         std::string::npos);
 }
@@ -303,7 +303,7 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
     for (const std::string& contents : invalid) {
         write_app(contents);
         EXPECT_THROW(
-            (void)load({"chaweb", "--config=" + config_.string()}),
+            (void)load({"CHA", "--config=" + config_.string()}),
             std::runtime_error)
             << contents;
     }
@@ -312,7 +312,7 @@ TEST_F(ApplicationConfigTest, RequiresAllSettingsWithValidTypes) {
 TEST_F(ApplicationConfigTest, IgnoresUnusedApplicationAndLoggingFieldsWithWarnings) {
     write_app("vault = \"Personal\"\nextra = true\n"
         "[logging]\nfile = \"x\"\nlevel = \"off\"\nobsolete = 123\n");
-    const auto command = load({"chaweb", "--config=" + config_.string()});
+    const auto command = load({"CHA", "--config=" + config_.string()});
     ASSERT_EQ(command.warnings.size(), 2u);
     EXPECT_NE(command.warnings[0].find("extra"), std::string::npos);
     EXPECT_NE(command.warnings[1].find("obsolete"), std::string::npos);
@@ -359,7 +359,7 @@ TEST_F(ApplicationConfigTest, LoadsMultipleVaultsWithCanonicalSpellingAndOrder) 
     EXPECT_TRUE(same_vault_name("Personal", "personal"));
 
     const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
+        load({"CHA", "--config", config_.string()});
     EXPECT_EQ(command.vault.name, "Personal");
     EXPECT_EQ(command.vaults.size(), 3U);
 }
@@ -453,13 +453,13 @@ TEST_F(ApplicationConfigTest, AcceptsUnicodeAndEntranceVaultNames) {
 TEST_F(ApplicationConfigTest, RejectsInvalidVaultNames) {
     write_vault("personal.toml", " Personal", "personal.sqlite3");
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("whitespace"),
         std::string::npos);
 
     write_vault("personal.toml", "Bad\nName", "personal.sqlite3");
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("control character"),
         std::string::npos);
 }
@@ -468,11 +468,11 @@ TEST_F(ApplicationConfigTest, RejectsAFileOrMissingDirectoryAsConfig) {
     const std::filesystem::path file = root_ / "cha.toml";
     std::ofstream(file) << "vault = \"Personal\"\n";
     EXPECT_NE(
-        error_text({"chaweb", "--config", file.string()})
+        error_text({"CHA", "--config", file.string()})
             .find("existing directory"),
         std::string::npos);
     EXPECT_NE(
-        error_text({"chaweb", "--config", (root_ / "missing").string()})
+        error_text({"CHA", "--config", (root_ / "missing").string()})
             .find("existing directory"),
         std::string::npos);
 }
@@ -480,26 +480,26 @@ TEST_F(ApplicationConfigTest, RejectsAFileOrMissingDirectoryAsConfig) {
 TEST_F(ApplicationConfigTest, RejectsMissingInvalidAndEmptyVaultRegistry) {
     std::filesystem::remove(config_ / "app.toml");
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("Failed to read application config"),
         std::string::npos);
 
     write_app("not toml");
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("Failed to parse application config"),
         std::string::npos);
 
     write_app();
     std::filesystem::remove(config_ / "personal.toml");
     const std::string empty =
-        error_text({"chaweb", "--config", config_.string()});
+        error_text({"CHA", "--config", config_.string()});
     EXPECT_NE(empty.find("no vault definitions"), std::string::npos) << empty;
 
     write_vault("personal.toml", "Personal", "personal.sqlite3");
     std::ofstream(config_ / "broken.toml") << "vault_name = \"Other\"\n[";
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("Failed to parse vault definition"),
         std::string::npos);
 }
@@ -508,14 +508,14 @@ TEST_F(ApplicationConfigTest, RejectsDuplicateNamesPathsAndFilenames) {
     write_vault("personal.toml", "Personal", "personal.sqlite3");
     write_vault("other.toml", "personal", "other.sqlite3");
     const std::string names =
-        error_text({"chaweb", "--config", config_.string()});
+        error_text({"CHA", "--config", config_.string()});
     EXPECT_NE(names.find("duplicates"), std::string::npos) << names;
     EXPECT_NE(names.find("personal.toml"), std::string::npos) << names;
     EXPECT_NE(names.find("other.toml"), std::string::npos) << names;
 
     write_vault("other.toml", "Projects", "personal.sqlite3");
     const std::string paths =
-        error_text({"chaweb", "--config", config_.string()});
+        error_text({"CHA", "--config", config_.string()});
     EXPECT_NE(paths.find("collides"), std::string::npos) << paths;
     EXPECT_NE(paths.find("data"), std::string::npos) << paths;
 
@@ -524,7 +524,7 @@ TEST_F(ApplicationConfigTest, RejectsDuplicateNamesPathsAndFilenames) {
         "Projects",
         root_ / "elsewhere" / "personal.sqlite3");
     const std::string filenames =
-        error_text({"chaweb", "--config", config_.string()});
+        error_text({"CHA", "--config", config_.string()});
     EXPECT_NE(filenames.find("filenames must be unique"), std::string::npos)
         << filenames;
 
@@ -532,7 +532,7 @@ TEST_F(ApplicationConfigTest, RejectsDuplicateNamesPathsAndFilenames) {
     write_vault("personal.toml", "Работа", "personal.sqlite3");
     write_vault("other.toml", "работа", "other.sqlite3");
     const std::string unicode_names =
-        error_text({"chaweb", "--config", config_.string()});
+        error_text({"CHA", "--config", config_.string()});
     EXPECT_NE(unicode_names.find("duplicates"), std::string::npos)
         << unicode_names;
 #endif
@@ -553,7 +553,7 @@ TEST_F(ApplicationConfigTest, IgnoresAndWarnsAboutUnusedVaultFields) {
         "obsolete = true\n");
 
     const ApplicationCommand command =
-        load({"chaweb", "--config", config_.string()});
+        load({"CHA", "--config", config_.string()});
     EXPECT_EQ(
         command.vault.modify,
         std::filesystem::weakly_canonical(modify_base / "Personal"));
@@ -576,7 +576,7 @@ TEST_F(ApplicationConfigTest, RejectsUnknownStartupVault) {
         "vault = \"Missing\"\n"
         "[logging]\nfile = \"logs/cha.log\"\nlevel = \"info\"\n");
     EXPECT_NE(
-        error_text({"chaweb", "--config", config_.string()})
+        error_text({"CHA", "--config", config_.string()})
             .find("does not name a discovered vault"),
         std::string::npos);
 }
@@ -599,7 +599,7 @@ TEST_F(ApplicationConfigTest, ResolvesSymlinkedConfigParents) {
         << "vault_name = \"Personal\"\ndata = \"personal.sqlite3\"\n";
 
     const ApplicationCommand command = load({
-        "chaweb", "--config", (link_parent / "config").string()});
+        "CHA", "--config", (link_parent / "config").string()});
     EXPECT_EQ(
         command.config_directory,
         std::filesystem::weakly_canonical(real_parent / "config"));

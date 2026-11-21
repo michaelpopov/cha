@@ -351,7 +351,7 @@ TEST(TextInput, AcceptsOnlyStandaloneAbsolutePathsForAttachment) {
     EXPECT_EQ(controller->view().transcript.entries.back().kind, EntryKind::human);
     EXPECT_EQ(controller->view().transcript.entries.back().text, text);
     EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
-    // ChaWeb does not attach paths.
+    // A caller can submit text with file-path attachment disabled.
     (void)handle_text_input(*controller, "operator", utf8_path(path));
     EXPECT_TRUE(SessionJournal(temporary.path).notes_prompt().empty());
     EXPECT_FALSE(controller->is_generating());

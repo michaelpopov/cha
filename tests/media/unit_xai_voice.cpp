@@ -282,32 +282,7 @@ TEST(XaiVoice, KeepsTheKeyOnTheNativeSocketAndFormatsTheRequest) {
     wait_closed(*script);
 }
 
-TEST(XaiVoice, HttpDictationExpiresWithoutAudioAndReleasesItsScope) {
-    OwnedApp owned;
-    save_xai(*owned.application, "wss://example.test/v1/stt");
-    const auto epoch = owned.application->context_epoch();
-    auto first = install_script(*owned.application);
-    push_event(*first, created_event());
-    (void)wait_reply(owned.application->start_xai_voice_input(
-        "chaweb-voice-one", 1, "one", {}, epoch, 30000ms, 50ms));
-    wait_closed(*first);
-    const auto expired = owned.application->send_xai_voice_audio(
-        "chaweb-voice-one", 2, "one", "AAE=", epoch, 30000ms);
-    const auto result = expired->peek();
-    ASSERT_TRUE(result);
-    const auto* failure = std::get_if<OperationReply::Failure>(&*result);
-    ASSERT_NE(failure, nullptr);
-    EXPECT_EQ(failure->code, ErrorCode::invalid_argument);
-    auto second = install_script(*owned.application);
-    push_event(*second, created_event());
-    // The expired HTTP session leaves no terminal slot or active connection.
-    EXPECT_NO_THROW((void)wait_reply(owned.application->start_xai_voice_input(
-        "chaweb-voice-one", 2, "one", {}, epoch, 30000ms, 50ms)));
-    owned.application->release_connection_resources("chaweb-voice-one");
-    wait_closed(*second);
-}
-
-TEST(XaiVoice, HttpDictationKeepsFailuresBetweenRequestsUntilAudioOrStopReadsThem) {
+TEST(XaiVoice, DictationKeepsFailuresBetweenRequestsUntilAudioOrStopReadsThem) {
     for (const bool provider_error : {false, true}) {
         for (const bool stop_request : {false, true}) {
             SCOPED_TRACE(provider_error ? "provider error" : "socket close");
@@ -318,9 +293,9 @@ TEST(XaiVoice, HttpDictationKeepsFailuresBetweenRequestsUntilAudioOrStopReadsThe
             auto script = install_script(*owned.application);
             push_event(*script, created_event());
             (void)wait_reply(owned.application->start_xai_voice_input(
-                "chaweb-voice-one", 1, "one", {}, epoch, 30000ms, 15s));
+                "view-1", 1, "one", {}, epoch, 30000ms));
             (void)wait_reply(owned.application->send_xai_voice_audio(
-                "chaweb-voice-one", 2, "one", "AAE=", epoch, 30000ms));
+                "view-1", 2, "one", "AAE=", epoch, 30000ms));
             if (provider_error) {
                 push_event(*script, {{"type", "error"}});
             } else {
@@ -334,9 +309,9 @@ TEST(XaiVoice, HttpDictationKeepsFailuresBetweenRequestsUntilAudioOrStopReadsThe
             wait_closed(*script);
             const auto reply = stop_request
                 ? owned.application->stop_xai_voice_input(
-                    "chaweb-voice-one", 3, "one", 20000, epoch, 30000ms)
+                    "view-1", 3, "one", 20000, epoch, 30000ms)
                 : owned.application->send_xai_voice_audio(
-                    "chaweb-voice-one", 3, "one", "AAE=", epoch, 30000ms);
+                    "view-1", 3, "one", "AAE=", epoch, 30000ms);
             try {
                 (void)wait_reply(reply);
                 ADD_FAILURE() << "The next request must receive the original failure";
@@ -347,12 +322,12 @@ TEST(XaiVoice, HttpDictationKeepsFailuresBetweenRequestsUntilAudioOrStopReadsThe
             }
             // Reading the failure consumes its terminal record.
             const auto consumed = owned.application->send_xai_voice_audio(
-                "chaweb-voice-one", 4, "one", "AAE=", epoch, 30000ms)->peek();
+                "view-1", 4, "one", "AAE=", epoch, 30000ms)->peek();
             ASSERT_TRUE(consumed);
             const auto* failure = std::get_if<OperationReply::Failure>(&*consumed);
             ASSERT_NE(failure, nullptr);
             EXPECT_EQ(failure->code, ErrorCode::invalid_argument);
-            owned.application->release_connection_resources("chaweb-voice-one");
+            owned.application->release_connection_resources("view-1");
         }
     }
 }

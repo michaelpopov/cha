@@ -41,10 +41,6 @@ public:
     using R2HttpStatusError::R2HttpStatusError;
 };
 
-// Runs after validation and before installing either downloaded file.
-using BeforeR2Install = std::function<void(
-    const std::filesystem::path& temporary_database, VaultDefinition definition)>;
-
 // Desktop replacement validates the staged database before its outbox is cleared.
 using CheckR2Candidate = std::function<void(const std::filesystem::path& temporary_database)>;
 
@@ -106,7 +102,6 @@ R2DatabaseTransfer download_database_from_r2(
     R2DatabaseLease lease = R2DatabaseLease::acquire,
     std::string_view database_password = {},
     const std::function<bool()>& cancelled = {},
-    const BeforeR2Install& before_install = {},
     const CheckR2Candidate& check_candidate = {});
 
 std::optional<std::string> get_r2_database_etag(
@@ -125,7 +120,6 @@ R2DatabaseTransfer download_new_database_from_r2(
     const std::filesystem::path& vault_definition_path,
     std::string_view database_name,
     const R2StorageKey& storage,
-    const std::function<bool()>& cancelled = {},
-    const BeforeR2Install& before_install = {});
+    const std::function<bool()>& cancelled = {});
 
 } // namespace cha

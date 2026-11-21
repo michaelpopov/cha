@@ -35,6 +35,6 @@ using MaintenanceExecutor = std::function<std::string(
     const std::atomic_bool& cancelled)>;
 
 // Host line, then the three embedded maintenance documents.
-std::string maintenance_reference(bool chaweb_host);
+std::string maintenance_reference();
 
 } // namespace cha

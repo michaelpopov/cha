@@ -40,7 +40,7 @@ protected:
     void TearDown() override { jobs.request_stop(); jobs.join(); }
     NotesService notes{*store, keys, oauth, sessions, live_sessions, jobs, settings, lifecycle, epoch, [this](std::uint64_t epoch) {
         return epoch == 1 ? denied : std::optional{ErrorCode::vault_changed};
-    }, [] { return true; }, true, [] { return std::string("Test"); }};
+    }, [] { return true; }, [] { return std::string("Test"); }};
 };
 
 nlohmann::json text_document(std::string text) {

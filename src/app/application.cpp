@@ -234,8 +234,7 @@ Application::Impl::Impl(
       settings(std::move(selected_settings)),
       current_vault_(selected_command.vault),
       store(WorkspaceConfigStore::open(
-          command.vault.data, active_password, command.chaweb_host ? "" : command.machine,
-          !command.chaweb_host)),
+          command.vault.data, active_password, command.machine, true)),
       api_keys(std::make_unique<ApiKeyStore>(
           *store,
           command.config_directory / "api-keys.json")),
@@ -357,8 +356,7 @@ Application::Impl::Impl(
     vault_maintenance.publish_vault_names();
     const auto seed = TemporarySessionSeed{
         .identity = {std::string(entrance_id), std::string(welcome_id)},
-        .label = std::string(welcome_name),
-        .per_vault = command.chaweb_host};
+        .label = std::string(welcome_name)};
     sessions = std::make_shared<SessionRepository>(
         [this] { return store->snapshot(); },
         store->database_path(),
@@ -366,7 +364,7 @@ Application::Impl::Impl(
         store->welcome_path(),
         seed,
         active_password);
-    if (!command.chaweb_host) sessions->set_sync_machine(command.machine);
+    sessions->set_sync_machine(command.machine);
     mirror = std::make_shared<SessionMirror>();
     store->on_forums_changed([mirror = mirror](const Workspace& workspace) {
         mirror->reconcile_forums(workspace);
@@ -383,7 +381,7 @@ Application::Impl::Impl(
     }
 
     maintenance_prompt = std::make_shared<const std::string>(
-        maintenance_reference(command.chaweb_host));
+        maintenance_reference());
     auto opener = [this](
                       const FullSessionId& identity,
                       std::shared_ptr<WakeNotifier> notifier,
@@ -400,11 +398,6 @@ Application::Impl::Impl(
         opened.update_audio = [this, identity](std::span<const TranscriptEntry> entries) {
             if (audio_downloads) audio_downloads->update_live(identity, entries);
         };
-        if (workspace::is_welcome_session(identity.forum_id, identity.session_id)) {
-            opened.host_command = [this, epoch](std::string_view input) {
-                return vault_maintenance.submit_welcome_command(input, epoch);
-            };
-        }
         return opened;
     };
     audio_downloads = std::make_unique<AudioDownloadManager>(
@@ -414,7 +407,7 @@ Application::Impl::Impl(
         background_jobs, settings, lifecycle_mutex, published_epoch,
         [this](std::uint64_t epoch) { return admit_locked(epoch); },
         [this] { return state.load() == ApplicationState::running && !stopping_flag; },
-        !command.chaweb_host, [this] { return current_vault_.get().name; });
+        [this] { return current_vault_.get().name; });
     assistant->bind_runtime(*live_sessions, *sessions);
     running = true;
     notified_epoch = live_sessions->context_epoch();
@@ -428,11 +421,6 @@ void Application::Impl::start_sync_worker(SyncStart mode) {
     if (mode == SyncStart::resume && sync_worker && sync_worker->stopped()) return;
     sync_worker.reset();
     if (stopping_flag) return;
-    if (command.chaweb_host) {
-        if ((mode == SyncStart::open || mode == SyncStart::recover) && api_keys->d1())
-            log_warn("D1 sync is disabled in cha-daemon for vault '" + current_vault_.get().name + "'.");
-        return;
-    }
     if (command.machine.empty()) return;
     const auto saved = api_keys->d1();
     if (!saved || !saved->usable()) return;
@@ -615,7 +603,7 @@ ApplicationBootstrap Application::bootstrap() {
     };
     result.state = read_published_state();
     result.capabilities = impl_->capabilities();
-    if (result.state != ApplicationState::running && !impl_->command.chaweb_host) {
+    if (result.state != ApplicationState::running) {
         result.context_epoch = impl_->published_epoch.load();
         auto [vault, names] = impl_->current_vault_.snapshot();
         result.presentation.vault_name = std::move(vault.name);
@@ -1672,9 +1660,6 @@ D1StorageDetail Application::save_d1_storage(
     std::uint64_t epoch) {
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (impl_->command.chaweb_host) {
-        throw ApplicationError(ErrorCode::invalid_argument, "D1 sync is disabled in cha-daemon.");
-    }
     const auto& machine = impl_->command.machine;
     if (machine.empty()) {
         throw ApplicationError(
@@ -1741,7 +1726,7 @@ void Application::disconnect_d1_storage(std::uint64_t epoch) {
     impl_->sync_worker.reset();
 
     const auto& machine = impl_->command.machine;
-    if (impl_->command.chaweb_host || machine.empty() || !old->usable()) return;
+    if (machine.empty() || !old->usable()) return;
     const auto drop_queue = [&](bool v2_table) {
         try {
             D1Client client({old->account_id, old->database_id, old->api_token},
@@ -1843,11 +1828,6 @@ std::optional<FullSessionId> Application::selected_session() const {
 
 std::uint64_t Application::context_epoch() const {
     return impl_->published_epoch.load();
-}
-
-void Application::require_chaweb_context(std::uint64_t epoch) const {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
 }
 
 std::optional<ErrorCode> Application::check_context(

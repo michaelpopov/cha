@@ -382,6 +382,9 @@ make itest
 
 On Linux, `make test` builds and runs the shared backend tests.
 
+The ChaWeb browser client and Linux server are archived at the Git tag
+`archive/chaweb-v1`.
+
 The R2 integration case overwrites the dedicated
 `cha-r2-integration-test.sqlite3` object in the configured bucket. Run only
 that live round trip with:

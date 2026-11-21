@@ -413,41 +413,6 @@ AudioDownloadStatus Application::audio_status(
     }
 }
 
-std::optional<EntryAudio> Application::cached_audio(
-    std::string_view forum_id,
-    std::string_view session_id,
-    EntryId entry_id,
-    std::string_view vault_name,
-    std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    try {
-        return impl_->audio_downloads->audio(
-            {std::string(forum_id), std::string(session_id)},
-            entry_id, std::string(vault_name));
-    } catch (const AudioDownloadError& error) {
-        throw_audio_error(error);
-    }
-}
-
-std::optional<AudioChunk> Application::audio_chunk(
-    std::string_view forum_id,
-    std::string_view session_id,
-    EntryId entry_id,
-    std::string_view vault_name,
-    std::uint64_t offset,
-    std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    try {
-        return impl_->audio_downloads->audio_chunk(
-            {std::string(forum_id), std::string(session_id)},
-            entry_id, std::string(vault_name), offset);
-    } catch (const AudioDownloadError& error) {
-        throw_audio_error(error);
-    }
-}
-
 MediaResource Application::audio_source(
     std::string_view connection_id,
     std::string_view forum_id,
@@ -617,8 +582,7 @@ std::shared_ptr<OperationReply> Application::start_xai_voice_input(
     std::string session_id,
     std::vector<std::string> languages,
     std::uint64_t epoch,
-    std::chrono::milliseconds deadline,
-    std::chrono::milliseconds idle_timeout) {
+    std::chrono::milliseconds deadline) {
     if (!valid_xai_session_id(session_id)) {
         throw ApplicationError(
             ErrorCode::invalid_argument, "The request was not valid.");
@@ -646,8 +610,7 @@ std::shared_ptr<OperationReply> Application::start_xai_voice_input(
         std::move(session_id),
         media::build_xai_stt_url(runtime->url, runtime->model, languages),
         "Authorization: Bearer " + *secret,
-        deadline,
-        idle_timeout);
+        deadline);
 }
 
 std::shared_ptr<OperationReply> Application::send_xai_voice_audio(

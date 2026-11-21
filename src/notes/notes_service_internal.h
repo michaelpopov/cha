@@ -44,7 +44,7 @@ struct NotesService::Impl {
         BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
         std::atomic_uint64_t& epoch,
         std::function<std::optional<ErrorCode>(std::uint64_t)> admit,
-        std::function<bool()> can_recover, bool native_host,
+        std::function<bool()> can_recover,
         std::function<std::string()> current_vault_name);
 
     WorkspaceConfigStore* store;
@@ -59,7 +59,6 @@ struct NotesService::Impl {
     std::function<std::optional<ErrorCode>(std::uint64_t)> admit_locked;
 
     std::function<bool()> can_recover;
-    const bool native_host;
     std::function<std::string()> current_vault_name;
 
     struct NoteAudioVoiceCache {

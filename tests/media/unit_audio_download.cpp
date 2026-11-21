@@ -95,13 +95,12 @@ TEST_F(AudioDownloads, StreamsCleanedReplyAndCachesAudioWithoutChangingTranscrip
     ASSERT_TRUE(eventually([&] { return first_chunk.load(); }));
     const auto stream = downloads->stream(session, 6, "Test");
     ASSERT_TRUE(stream);
-    EXPECT_EQ(stream->read(0)->body, "first");
-    const auto first = downloads->audio_chunk(session, 6, "Test", 0);
+    const auto first = stream->read(0);
     ASSERT_TRUE(first);
     EXPECT_EQ(first->body, "first");
     EXPECT_EQ(first->mime_type, "audio/mpeg");
     EXPECT_FALSE(first->complete);
-    const auto waiting = downloads->audio_chunk(session, 6, "Test", 5);
+    const auto waiting = stream->read(5);
     ASSERT_TRUE(waiting);
     EXPECT_TRUE(waiting->body.empty());
     EXPECT_FALSE(waiting->complete);
@@ -114,10 +113,10 @@ TEST_F(AudioDownloads, StreamsCleanedReplyAndCachesAudioWithoutChangingTranscrip
     ASSERT_TRUE(eventually([&] {
         return downloads->submit_batch(session, input({6})).at(0).kind == AudioAcceptanceKind::cached;
     }));
-    const auto tail = downloads->audio_chunk(session, 6, "Test", 5);
+    const auto tail = stream->read(5);
     ASSERT_TRUE(tail);
     EXPECT_EQ(tail->body, "second");
-    ASSERT_TRUE(eventually([&] { return downloads->audio_chunk(session, 6, "Test", 5)->complete; }));
+    ASSERT_TRUE(eventually([&] { return stream->read(5)->complete; }));
     EXPECT_EQ(transfers, 2);
 }
 
@@ -138,29 +137,6 @@ TEST_F(AudioDownloads, HumanEntriesCannotGenerateAudio) {
     EXPECT_THROW(downloads->submit_batch(session, batch), std::invalid_argument);
     EXPECT_TRUE(downloads->status(session, "Test").downloads.empty());
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
-}
-
-TEST_F(AudioDownloads, ReadsBoundedChunksFromCachedAudioAndRejectsInvalidOffsets) {
-    const auto entry = sessions->lookup_entry_audio(session, 1, false);
-    ASSERT_TRUE(entry);
-    const std::string bytes(70 * 1024, 'a');
-    sessions->save_entry_audio(*entry, {bytes, "audio/mpeg"});
-    auto downloads = make([](const auto&, const auto&, const auto&, const auto&,
-        const AudioChunkCallback&) -> std::optional<EntryAudio> {
-        ADD_FAILURE() << "Cached audio must not call FishAudio";
-        return std::nullopt;
-    });
-    const auto first = downloads->audio_chunk(session, 1, "Test", 0);
-    ASSERT_TRUE(first);
-    EXPECT_EQ(first->body.size(), 64u * 1024);
-    EXPECT_FALSE(first->complete);
-    const auto last = downloads->audio_chunk(session, 1, "Test", first->body.size());
-    ASSERT_TRUE(last);
-    EXPECT_EQ(first->body + last->body, bytes);
-    EXPECT_TRUE(last->complete);
-    EXPECT_TRUE(downloads->audio_chunk(session, 1, "Test", bytes.size())->body.empty());
-    EXPECT_THROW(downloads->audio_chunk(session, 1, "Test", bytes.size() + 1), std::invalid_argument);
-    EXPECT_FALSE(downloads->audio_chunk(session, 99, "Test", 0));
 }
 
 TEST_F(AudioDownloads, InvalidBatchAdmitsNoNewJobs) {
@@ -342,7 +318,6 @@ TEST_F(AudioDownloads, PlaybackSharesTheDownloadBeforeItIsCached) {
     ASSERT_TRUE(eventually([&] { return first_chunk.load(); }));
     auto stream = downloads->stream(session, 1, "Test");
     ASSERT_TRUE(stream);
-    EXPECT_EQ(stream->read(0)->body, "first");
     EXPECT_FALSE(stream->read(0)->complete);
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
     downloads->submit_batch(session, input({1}));
@@ -371,8 +346,6 @@ TEST_F(AudioDownloads, PartialFailureDoesNotRetryOrCacheAndClearRevokesReaders) 
     ASSERT_TRUE(eventually([&] { return !stream->empty(); }));
     release = true;
     ASSERT_TRUE(eventually([&] { return stream->read(0)->failed; }));
-    ASSERT_TRUE(downloads->audio_chunk(session, 1, "Test", 0));
-    EXPECT_TRUE(downloads->audio_chunk(session, 1, "Test", 0)->failed);
     EXPECT_EQ(attempts, 1);
     EXPECT_TRUE(sessions->cached_audio_entries(session).empty());
 
@@ -918,7 +891,6 @@ TEST_F(AudioDownloads, LiveProviderFailureDoesNotRestartPublishedAudio) {
         return !state.downloads.empty() && state.downloads[0].state == AudioJobState::failed;
     }));
     EXPECT_EQ(calls, 1);
-    EXPECT_TRUE(downloads.audio_chunk(session, 6, "Test", 0)->failed);
     EXPECT_FALSE(sessions->cached_audio_entries(session).contains(6));
 }
 

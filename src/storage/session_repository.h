@@ -39,7 +39,6 @@ struct EntryAudioLookup {
 struct TemporarySessionSeed {
     FullSessionId identity;
     std::string label;
-    bool per_vault{};
 };
 
 struct PreparedSession {
@@ -128,8 +127,7 @@ public:
     void set_sync_machine(std::string machine);
 
 private:
-    [[nodiscard]] std::filesystem::path prepare_temporary_database(
-        const std::filesystem::path& vault_database) const;
+    [[nodiscard]] std::filesystem::path prepare_temporary_database() const;
     [[nodiscard]] const std::filesystem::path& session_database_path(
         const FullSessionId& identity) const;
     void require_persistent_forum(std::string_view forum_id) const;
@@ -143,7 +141,6 @@ private:
     std::string database_password_;
     FullSessionId temporary_identity_;
     std::string temporary_label_;
-    bool temporary_session_per_vault_;
     std::filesystem::path welcome_directory_;
     std::filesystem::path temporary_database_path_;
     std::string sync_machine_;

@@ -176,7 +176,6 @@ private:
     std::vector<VoiceInputUsage> deferred_voice_input_usage_;
     std::function<std::set<EntryId>()> cached_audio_entries_;
     std::function<void(std::span<const TranscriptEntry>)> update_audio_;
-    std::function<std::optional<CommandResult>(std::string_view)> host_command_;
     std::string label_;
     std::atomic<bool> naming_{};
     std::function<void(std::string_view)> persist_default_character_;

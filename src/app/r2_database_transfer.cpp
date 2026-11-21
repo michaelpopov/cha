@@ -1123,12 +1123,12 @@ R2DatabaseTransfer upload_database_to_r2(
 
 static void cleanup_downloaded_database(
     const std::filesystem::path& temporary_path,
-    std::string_view password, bool discard_receipts) {
+    std::string_view password) {
     {
         storage::SqliteDatabase database(
             temporary_path, storage::SqliteDatabase::Mode::read_write, password);
         storage::SqliteTransaction transaction(database);
-        sync_clear_outgoing(database, discard_receipts);
+        sync_clear_outgoing(database);
         transaction.commit();
     }
     // Non-passive checkpoint uses TRUNCATE and rejects a busy checkpoint.
@@ -1143,7 +1143,6 @@ R2DatabaseTransfer download_database_from_r2(
     R2DatabaseLease lease_mode,
     std::string_view database_password,
     const std::function<bool()>& cancelled,
-    const BeforeR2Install& before_install,
     const CheckR2Candidate& check_candidate) {
     const std::filesystem::path database = normalize_database_path(database_path);
     const std::filesystem::path vault =
@@ -1163,12 +1162,6 @@ R2DatabaseTransfer download_database_from_r2(
     TemporaryPath database_temporary(unique_sibling(database, "download"));
     TemporaryPath vault_temporary(unique_sibling(vault, "download"));
     const std::string vault_object = database_name + ".toml";
-    const auto fetch_database = [&] {
-        return download_file(database_temporary.get(), database_name, storage, cancelled,
-            "R2 database object '" + database_name + "' was not found.");
-    };
-    const auto web_database = before_install
-        ? std::optional(fetch_database()) : std::nullopt;
     std::optional<R2DatabaseTransfer> vault_download;
     try {
         vault_download = download_file(
@@ -1176,10 +1169,10 @@ R2DatabaseTransfer download_database_from_r2(
             "R2 vault definition was not found. The bucket may contain a legacy "
             "database-only upload; upload with the current CHA version before downloading.");
     } catch (const R2ObjectNotFoundError&) {
-        if (before_install) throw;
+        // Older uploads only include the database.
     }
-    const R2DatabaseTransfer database_download = web_database
-        ? *web_database : download_file(database_temporary.get(), database_name, storage, cancelled);
+    const auto database_download = download_file(
+        database_temporary.get(), database_name, storage, cancelled);
     if (inspect_workspace_session_database(
             database_temporary.get(), database_password)
         != WorkspaceDatabaseState::valid_v2) {
@@ -1204,15 +1197,8 @@ R2DatabaseTransfer download_database_from_r2(
     write_toml_file(vault_temporary.get(), table);
 
     if (check_candidate) check_candidate(database_temporary.get());
-    // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
-    cleanup_downloaded_database(database_temporary.get(), database_password, !before_install);
-    // Check cancellation before validating the final installation candidate.
+    cleanup_downloaded_database(database_temporary.get(), database_password);
     if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
-    if (before_install) {
-        auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
-        definition.source = vault;
-        before_install(database_temporary.get(), std::move(definition));
-    }
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
     return {
@@ -1267,8 +1253,7 @@ R2DatabaseTransfer download_new_database_from_r2(
     const std::filesystem::path& vault_definition_path,
     std::string_view database_name,
     const R2StorageKey& storage,
-    const std::function<bool()>& cancelled,
-    const BeforeR2Install& before_install) {
+    const std::function<bool()>& cancelled) {
     constexpr std::string_view suffix = ".sqlite3";
     if (database_name.size() <= suffix.size()
         || !database_name.ends_with(suffix)
@@ -1301,13 +1286,8 @@ R2DatabaseTransfer download_new_database_from_r2(
     } catch (const R2ObjectNotFoundError&) {
         downloaded_vault = false;
     }
-    // Desktop keeps its HTTP status error for a missing database.
-    const std::string database_not_found = before_install
-        ? "R2 database object '" + std::string(database_name) + "' was not found."
-        : std::string();
-    const R2DatabaseTransfer database_download = download_file(
-        database_temporary.get(), database_name, storage, cancelled,
-        database_not_found);
+    const auto database_download = download_file(
+        database_temporary.get(), database_name, storage, cancelled);
     std::optional<VaultDefinition> downloaded_definition;
     if (downloaded_vault) {
         downloaded_definition = load_vault_definition_file(
@@ -1341,15 +1321,8 @@ R2DatabaseTransfer download_new_database_from_r2(
         != WorkspaceDatabaseState::valid_v2) {
         throw std::runtime_error("R2 download is not a valid CHA database");
     }
-    // Only ChaWeb Welcome passes before_install; it keeps its receipt behavior.
-    cleanup_downloaded_database(database_temporary.get(), {}, !before_install);
-    // Check cancellation before validating the final installation candidate.
+    cleanup_downloaded_database(database_temporary.get(), {});
     if (cancelled && cancelled()) throw std::runtime_error("R2 download cancelled");
-    if (before_install) {
-        auto definition = load_vault_definition_file(vault.parent_path(), vault_temporary.get());
-        definition.source = vault;
-        before_install(database_temporary.get(), std::move(definition));
-    }
     publish_downloads(
         database_temporary, vault_temporary, database, vault);
     return {

@@ -32,8 +32,6 @@ struct OpenedSession {
     // Optional override for tests that observe snapshot capture.
     std::function<std::set<EntryId>()> cached_audio_entries;
     std::function<void(std::span<const TranscriptEntry>)> update_audio;
-    // Host commands are handled on the owner thread before normal chat input.
-    std::function<std::optional<CommandResult>(std::string_view)> host_command;
 };
 
 } // namespace cha

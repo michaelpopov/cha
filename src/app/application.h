@@ -396,19 +396,6 @@ public:
         EntryId entry_id,
         std::string_view vault_name,
         std::uint64_t epoch);
-    [[nodiscard]] std::optional<EntryAudio> cached_audio(
-        std::string_view forum_id,
-        std::string_view session_id,
-        EntryId entry_id,
-        std::string_view vault_name,
-        std::uint64_t epoch);
-    [[nodiscard]] std::optional<AudioChunk> audio_chunk(
-        std::string_view forum_id,
-        std::string_view session_id,
-        EntryId entry_id,
-        std::string_view vault_name,
-        std::uint64_t offset,
-        std::uint64_t epoch);
     void clear_audio_cache(
         std::string_view forum_id,
         std::string_view session_id,
@@ -430,8 +417,7 @@ public:
         std::string session_id,
         std::vector<std::string> languages,
         std::uint64_t epoch,
-        std::chrono::milliseconds deadline,
-        std::chrono::milliseconds idle_timeout = {});
+        std::chrono::milliseconds deadline);
     [[nodiscard]] std::shared_ptr<OperationReply> send_xai_voice_audio(
         std::string connection_id,
         std::uint64_t request_id,
@@ -634,8 +620,6 @@ public:
 
     [[nodiscard]] std::optional<FullSessionId> selected_session() const;
     [[nodiscard]] std::uint64_t context_epoch() const;
-    // ChaWeb requests wait for vault maintenance before checking their context.
-    void require_chaweb_context(std::uint64_t epoch) const;
     // Nonblocking preflight only; it does not reserve the context. Operations
     // needing stable vault state must also check admission under their owning lock.
     [[nodiscard]] std::optional<ErrorCode> check_context(

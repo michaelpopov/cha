@@ -99,8 +99,6 @@ std::shared_ptr<OperationReply> NotesService::list_note_audio_voices(std::uint64
     auto [service, cache] = [&] {
         const std::lock_guard lock(impl_->lifecycle_mutex);
         impl_->require_admitted(epoch);
-        if (!impl_->native_host)
-            throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to load audio voices.");
         auto configured = note_audio_service_locked();
         const auto credential = sha256_digest(configured.key);
         auto& entry = impl_->note_audio_voice_cache;
@@ -154,7 +152,7 @@ nlohmann::json NotesService::start_background_note_audio(std::int64_t id, std::s
 #else
     const std::lock_guard lock(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
-    if (!impl_->note_audio_changed || !impl_->native_host)
+    if (!impl_->note_audio_changed)
         throw ApplicationError(ErrorCode::invalid_argument, "Open the native application to generate note audio.");
     const auto owner = impl_->store->get_note_audio_owner(id);
     const auto pending = impl_->store->get_note_audio_attempt_for_note(id);
@@ -245,7 +243,7 @@ void NotesService::Impl::interrupt_abandoned_audio() {
 }
 
 void NotesService::Impl::resume_note_audio_locked() {
-    if (!note_audio_changed || !native_host || !can_recover()) return;
+    if (!note_audio_changed || !can_recover()) return;
     try {
         background_jobs.launch([this, epoch = published_epoch.load()](std::atomic_bool& cancel) {
             const std::lock_guard lock(lifecycle_mutex);
@@ -256,7 +254,7 @@ void NotesService::Impl::resume_note_audio_locked() {
 
 void NotesService::Impl::recover_note_audio() {
 #if defined(__APPLE__) || defined(_WIN32)
-    if (!note_audio_changed || !native_host || !can_recover()) return;
+    if (!note_audio_changed || !can_recover()) return;
     try {
         for (const auto& attempt : store->get_note_audio_attempts()) {
             {

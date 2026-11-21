@@ -26,12 +26,12 @@ NotesService::Impl::Impl(WorkspaceConfigStore& store, ApiKeyStore& api_keys, Ope
     BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
     std::atomic_uint64_t& epoch,
     std::function<std::optional<ErrorCode>(std::uint64_t)> admit,
-    std::function<bool()> can_recover, bool native_host,
+    std::function<bool()> can_recover,
     std::function<std::string()> current_vault_name)
     : store(&store), api_keys(&api_keys), openai_auth(&oauth), sessions(&sessions),
       live_sessions(&live_sessions), background_jobs(jobs),
       settings(settings), published_epoch(epoch), lifecycle_mutex(lifecycle), admit_locked(std::move(admit)),
-      can_recover(std::move(can_recover)), native_host(native_host), current_vault_name(std::move(current_vault_name)),
+      can_recover(std::move(can_recover)), current_vault_name(std::move(current_vault_name)),
       folder_store_transport(settings.test_hooks.folder_store_transport) {}
 
 NotesService::NotesService(WorkspaceConfigStore& store, ApiKeyStore& api_keys, OpenAiOAuth& oauth,
@@ -39,10 +39,10 @@ NotesService::NotesService(WorkspaceConfigStore& store, ApiKeyStore& api_keys, O
     BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
     std::atomic_uint64_t& epoch,
     std::function<std::optional<ErrorCode>(std::uint64_t)> admit,
-    std::function<bool()> can_recover, bool native_host,
+    std::function<bool()> can_recover,
     std::function<std::string()> current_vault_name)
     : impl_(std::make_unique<Impl>(store, api_keys, oauth, sessions, live_sessions, jobs,
-        settings, lifecycle, epoch, std::move(admit), std::move(can_recover), native_host,
+        settings, lifecycle, epoch, std::move(admit), std::move(can_recover),
         std::move(current_vault_name))) {}
 
 NotesService::~NotesService() = default;
