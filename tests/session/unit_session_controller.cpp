@@ -9,6 +9,7 @@
 #include "support/test_notifier.h"
 #include "support/test_session_database.h"
 #include "support/test_transcript.h"
+#include "util/logging.h"
 #include "util/path_name.h"
 #include "workspace/builtins.h"
 #include "workspace/workspace.h"
@@ -770,6 +771,106 @@ TEST(SessionController, OwnsACompleteIdentifiedTypedTurn) {
     EXPECT_EQ(response.output_tokens, 300U);
     EXPECT_EQ(captured_history->entries, (std::vector<TranscriptEntry>{earlier}));
     EXPECT_EQ(load_transcript_entries(temporary.path), entries);
+}
+
+TEST(SessionController, LogsOnlyAcceptedStreamedReplyCosts) {
+    TemporaryJournal temporary;
+    auto log_path = temporary.path;
+    log_path.replace_extension(".log");
+    initialize_diagnostic_logging(log_path, "info");
+    struct LogCleanup {
+        std::filesystem::path path;
+        ~LogCleanup() {
+            shutdown_diagnostic_logging();
+            std::error_code ignored;
+            std::filesystem::remove(path, ignored);
+        }
+    } cleanup{log_path};
+    const auto cost_records = [&] {
+        std::vector<nlohmann::json> records;
+        constexpr std::string_view prefix = " [info] Text reply cost: ";
+        std::ifstream stream(log_path);
+        for (std::string line; std::getline(stream, line);) {
+            const auto start = line.find(prefix);
+            if (start != std::string::npos)
+                records.push_back(nlohmann::json::parse(line.substr(start + prefix.size())));
+        }
+        return records;
+    };
+
+    auto cancelling_request_started = std::make_shared<std::promise<void>>();
+    auto started = cancelling_request_started->get_future();
+    const auto calls = std::make_shared<std::atomic_int>(0);
+    const ModelBackendConfig config{
+        .host = "api.openai.com", .port = 443, .mode = Mode::net,
+        .model = "gpt-5-mini", .https = true, .api = ProviderApi::chat_completions,
+    };
+    test::TestController controller({
+        {.character = {.id = "guide-id", .display_name = "Guide"}, .provider = {.config = config}},
+        {.character = {.id = "other-id", .display_name = "Other"}, .provider = {.config = config}},
+    }, test::operator_roster(), "guide-id", temporary.path,
+        std::shared_ptr<WakeNotifier>(&notifier(), [](WakeNotifier*) {}), {},
+        [calls, cancelling_request_started](SharedCharacterDefinition definition) {
+            const bool missing_usage = definition->character.id == "other-id";
+            return std::make_unique<ProviderClient>(std::move(definition), nullptr,
+                [calls, cancelling_request_started, missing_usage](
+                    const ProviderHttpRequest&, const std::atomic_bool& cancelled) {
+                    if (++*calls == 2) {
+                        cancelling_request_started->set_value();
+                        while (!cancelled.load()) std::this_thread::yield();
+                    }
+                    const std::string content =
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
+                        "data: {\"choices\":[{\"delta\":{\"content\":\" there\"},\"finish_reason\":\"stop\"}]}\n\n";
+                    const std::string usage =
+                        "data: {\"model\":\"gpt-5-mini\",\"service_tier\":\"default\",\"choices\":[],"
+                        "\"usage\":{\"prompt_tokens\":1200,\"prompt_tokens_details\":{\"cached_tokens\":200}"
+                        + std::string(missing_usage ? "" : ",\"completion_tokens\":300") + "}}\n\n";
+                    return ProviderHttpResponse{200, "text/event-stream", content + usage + "data: [DONE]\n\n"};
+                });
+        });
+
+    ASSERT_TRUE(controller->submit_prompt("operator", "Question").input_consumed);
+    receive_until_idle(*controller);
+    const auto& reply = controller->view().transcript.entries.back();
+    ASSERT_EQ(reply.text, "Hello there");
+    ASSERT_EQ(reply.status, EntryStatus::complete);
+    const auto records = cost_records();
+    ASSERT_EQ(records.size(), 1u);
+    const auto& record = records.front();
+    EXPECT_EQ(record["forum_id"], "test-forum");
+    EXPECT_EQ(record["session_id"], "controller-test");
+    EXPECT_EQ(record["request_id"], 1u);
+    EXPECT_EQ(record["reply_id"], reply.id);
+    EXPECT_EQ(record["character_id"], "guide-id");
+    EXPECT_EQ(record["provider"], "test-provider-0");
+    EXPECT_EQ(record["model"], "gpt-5-mini");
+    EXPECT_EQ(record["model_calls"], 1u);
+    EXPECT_EQ(record["input_tokens"], 1'200u);
+    EXPECT_EQ(record["output_tokens"], 300u);
+    EXPECT_EQ(record["cache_read_tokens"], 200u);
+    EXPECT_TRUE(record["cache_write_tokens"].is_null());
+    EXPECT_DOUBLE_EQ(record["estimated_usd"].get<double>(), 0.000855);
+
+    ASSERT_TRUE(controller->submit_prompt("operator", "Cancel this reply").input_consumed);
+    ASSERT_EQ(started.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+    (void)controller->handle_generation_event(GenerationCompleted{1});
+    EXPECT_EQ(controller->request_stop().notice, "Stopping generation...");
+    EXPECT_EQ(receive_until_idle(*controller).notice, "Generation stopped");
+    EXPECT_EQ(cost_records(), records);
+
+    ASSERT_TRUE(controller->start_multicast("operator", "Ask both", {"Guide", "Other"}).input_consumed);
+    receive_until_idle(*controller);
+    const auto multicast_records = cost_records();
+    ASSERT_EQ(multicast_records.size(), 3u);
+    EXPECT_EQ(multicast_records[1]["character_id"], "guide-id");
+    EXPECT_DOUBLE_EQ(multicast_records[1]["estimated_usd"].get<double>(), 0.000855);
+    EXPECT_EQ(multicast_records[2]["character_id"], "other-id");
+    EXPECT_EQ(multicast_records[2]["provider"], "test-provider-1");
+    EXPECT_EQ(multicast_records[2]["input_tokens"], 1'200u);
+    EXPECT_TRUE(multicast_records[2]["output_tokens"].is_null());
+    EXPECT_TRUE(multicast_records[2]["estimated_usd"].is_null());
+    EXPECT_NE(multicast_records[1]["request_id"], multicast_records[2]["request_id"]);
 }
 
 TEST(SessionController, ResolvesAndStampsTheAuthorForEveryBatchRun) {

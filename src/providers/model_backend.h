@@ -60,6 +60,11 @@ struct GenerationResult {
     std::string model;
     // Set for requests that did not reach inference, including quota rejections.
     bool request_not_processed{};
+    std::optional<double> reported_model_cost_usd;
+    std::optional<std::uint64_t> cache_write_1h_tokens;
+    bool usage_is_partial{};
+    // Sum of the answering model's rounds. Empty if any round was unpriceable.
+    std::optional<double> estimated_usd;
 };
 
 // How one streaming response ended. Failures the stream itself does not explain

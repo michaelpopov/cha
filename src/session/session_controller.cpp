@@ -11,6 +11,8 @@
 #include "util/text.h"
 #include "workspace/workspace.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -1648,6 +1650,30 @@ void SessionController::apply(const GenerationCompleted& event, ControllerUpdate
             journal_.complete_turn(event.request_id, response);
         });
     finish_response_entry(EntryStatus::complete);
+    try {
+        using Json = nlohmann::json;
+        const auto value_or_null = [](const auto& value) {
+            return value ? Json(*value) : Json(nullptr);
+        };
+        const Json details{
+            {"forum_id", identity_.forum_id},
+            {"session_id", identity_.session_id},
+            {"request_id", event.request_id},
+            {"reply_id", response.id},
+            {"character_id", active_->character_id},
+            {"provider", event.provider},
+            {"model", event.model},
+            {"model_calls", event.model_calls},
+            {"input_tokens", value_or_null(event.input_tokens)},
+            {"output_tokens", value_or_null(event.output_tokens)},
+            {"cache_read_tokens", value_or_null(event.cache_read_tokens)},
+            {"cache_write_tokens", value_or_null(event.cache_write_tokens)},
+            {"estimated_usd", value_or_null(event.estimated_usd)},
+        };
+        log_info("Text reply cost: " + details.dump(-1, ' ', false, Json::error_handler_t::replace));
+    } catch (...) {
+        // Cost logging must not interfere with reply completion.
+    }
     active_.reset();
     require_snapshot(update);
     update.notice = "";

@@ -24,10 +24,12 @@ struct ModelRates {
     bool short_context_only{};
 };
 
-// USD per million tokens, checked 2026-11-15.
+// USD per million tokens, checked 2026-11-21.
 // https://developers.openai.com/api/docs/pricing
-// Notes use the provider's default 30-minute cache write lifetime.
+// CHA uses the provider's 30-minute cache write rate.
 constexpr ModelRates prices[]{
+    {"gpt-6.2-astra", "standard", {8.00, 0.40, 10.00, 40.00}, {16.00, 0.80, 20.00, 60.00}},
+    {"gpt-6.2-sol", "standard", {2.00, 0.10, 2.50, 10.00}, {4.00, 0.20, 5.00, 15.00}},
     {"gpt-6-astra", "standard", {10.00, 1.00, 12.50, 50.00}, {20.00, 2.00, 25.00, 75.00}},
     {"gpt-6.1-sol", "standard", {2.00, 0.10, 2.50, 10.00}, {4.00, 0.20, 5.00, 15.00}},
     {"gpt-6.1-terra", "standard", {1.00, 0.05, 1.25, 5.00}, {2.00, 0.10, 2.50, 7.50}},
@@ -75,6 +77,8 @@ constexpr ModelRates prices[]{
     {"gpt-5-mini", "flex", {0.125, 0.0125, 0, 1.00}, {}},
     {"gpt-5-nano", "flex", {0.025, 0.0025, 0, 0.20}, {}},
     {"o3", "flex", {1.00, 0.25, 0, 4.00}, {}},
+    {"gpt-6.2-astra", "priority", {16.00, 0.80, 20.00, 80.00}, {32.00, 1.60, 40.00, 120.00}},
+    {"gpt-6.2-sol", "priority", {4.00, 0.20, 5.00, 20.00}, {8.00, 0.40, 10.00, 30.00}},
     {"gpt-6-astra", "priority", {20.00, 2.00, 25.00, 100.00}, {40.00, 4.00, 50.00, 150.00}},
     {"gpt-6.1-sol", "priority", {4.00, 0.20, 5.00, 20.00}, {8.00, 0.40, 10.00, 30.00}},
     {"gpt-6.1-terra", "priority", {2.00, 0.10, 2.50, 10.00}, {4.00, 0.20, 5.00, 15.00}},

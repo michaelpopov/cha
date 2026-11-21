@@ -11,6 +11,7 @@
 #include "providers/web_search.h"
 #include "providers/maintenance.h"
 #include "providers/tool_calls.h"
+#include "providers/text_reply_cost.h"
 #include "util/curl.h"
 #include "util/logging.h"
 #include "util/text.h"
@@ -582,6 +583,7 @@ GenerationResult ProviderClient::perform(
     std::size_t maintenance_result_bytes = 0;
     int round = 0;
     GenerationTokenUsage total;
+    std::optional<double> estimated_usd{0.0};
     const auto add = [](auto& sum, const auto& count) {
         if (count) sum = sum.value_or(0) + *count;
     };
@@ -619,6 +621,12 @@ GenerationResult ProviderClient::perform(
         if (result.outcome == GenerationOutcome::cancelled) ++statistics.model.cancelled;
         else if (result.outcome != GenerationOutcome::completed) ++statistics.model.failed;
         statistics.tool_calls_requested += result.tool_calls.size();
+        if (estimated_usd) {
+            const auto cost = estimate_text_model_cost(definition_->provider.config, result);
+            if (cost) *estimated_usd += *cost;
+            else estimated_usd.reset();
+        }
+        result.estimated_usd = estimated_usd;
         add(total.input_tokens, result.usage.input_tokens);
         add(total.output_tokens, result.usage.output_tokens);
         add(total.cache_read_tokens, result.usage.cache_read_tokens);
@@ -966,7 +974,7 @@ GenerationResult ProviderClient::perform_once(
         case ProviderApi::chat_completions:
             decoder = std::make_unique<ChatCompletionsStreamDecoder>(
                 config.reasoning_format, on_delta, collect_tool_calls,
-                argument_limit, maintenance);
+                argument_limit, maintenance, &config);
             break;
         case ProviderApi::anthropic:
             decoder = std::make_unique<AnthropicStreamDecoder>(
@@ -978,7 +986,7 @@ GenerationResult ProviderClient::perform_once(
             break;
         case ProviderApi::responses:
             decoder = std::make_unique<ResponsesStreamDecoder>(
-                on_delta, collect_tool_calls, argument_limit, maintenance);
+                on_delta, collect_tool_calls, argument_limit, maintenance, &config);
             break;
         default:
             throw std::logic_error("Unknown provider API");
@@ -1191,7 +1199,8 @@ GenerationResult ProviderClient::perform_once(
             on_delta,
             collect_tool_calls,
             argument_limit,
-            maintenance);
+            maintenance,
+            &config);
         break;
     case ProviderApi::anthropic:
         result = decode_anthropic_response(
@@ -1203,7 +1212,7 @@ GenerationResult ProviderClient::perform_once(
         break;
     case ProviderApi::responses:
         result = decode_responses_response(
-            response.body, on_delta, collect_tool_calls, argument_limit, maintenance);
+            response.body, on_delta, collect_tool_calls, argument_limit, maintenance, &config);
         break;
     default:
         throw std::logic_error("Unknown provider API");

@@ -180,6 +180,7 @@ bool GoogleStreamDecoder::process_json(std::string_view data) {
             if (const auto tier = usage->find("serviceTier"); tier != usage->end() && tier->is_string())
                 service_tier_ = fold_ascii(tier->get_ref<const std::string&>());
             update_count(*usage, "promptTokenCount", usage_.input_tokens);
+            update_count(*usage, "toolUsePromptTokenCount", tool_prompt_tokens_);
             update_count(*usage, "candidatesTokenCount", candidate_tokens_);
             update_count(*usage, "thoughtsTokenCount", thought_tokens_);
             update_count(*usage, "cachedContentTokenCount", usage_.cache_read_tokens);
@@ -244,16 +245,18 @@ bool GoogleStreamDecoder::process_json(std::string_view data) {
 
 StreamDecodeResult GoogleStreamDecoder::finish() {
     framer_.finish([this](std::string_view data) { return process_json(data); });
-    if (candidate_tokens_) usage_.output_tokens = *candidate_tokens_ + thought_tokens_.value_or(0);
+    auto usage = usage_;
+    if (usage.input_tokens) *usage.input_tokens += tool_prompt_tokens_.value_or(0);
+    if (candidate_tokens_) usage.output_tokens = *candidate_tokens_ + thought_tokens_.value_or(0);
     GenerationResult result;
     if (!protocol_error_.empty()) {
-        result = {GenerationOutcome::protocol_error, protocol_error_, usage_};
+        result = {GenerationOutcome::protocol_error, protocol_error_, usage};
     } else if (prompt_blocked_) {
-        result = {GenerationOutcome::protocol_error, "Google blocked the prompt", usage_};
+        result = {GenerationOutcome::protocol_error, "Google blocked the prompt", usage};
     } else if (finish_reason_.empty()) {
-        result = {GenerationOutcome::protocol_error, "Google response ended before a terminal status", usage_};
+        result = {GenerationOutcome::protocol_error, "Google response ended before a terminal status", usage};
     } else {
-        result = tool_call_result(content_, ProviderApi::google, received_answer_, usage_,
+        result = tool_call_result(content_, ProviderApi::google, received_answer_, usage,
             collect_tool_calls_, "Response completed without answer content", finish_reason_,
             argument_limit_, maintenance_);
     }

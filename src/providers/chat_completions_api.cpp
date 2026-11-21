@@ -1,5 +1,6 @@
 #include "providers/chat_completions_api.h"
 
+#include "providers/text_reply_cost.h"
 #include "util/json_serialization.h"
 #include "util/logging.h"
 #include "util/text.h"
@@ -233,12 +234,14 @@ ChatCompletionsStreamDecoder::ChatCompletionsStreamDecoder(
     const GenerationDeltaSink& on_delta,
     bool collect_tool_calls,
     std::size_t argument_limit,
-    bool maintenance)
+    bool maintenance,
+    const ModelBackendConfig* config)
     : format_(format),
       on_delta_(&on_delta),
       collect_tool_calls_(collect_tool_calls),
       argument_limit_(argument_limit),
-      maintenance_(maintenance) {
+      maintenance_(maintenance),
+      config_(config) {
 }
 
 void ChatCompletionsStreamDecoder::consume(std::string_view bytes) {
@@ -272,6 +275,7 @@ StreamDecodeResult ChatCompletionsStreamDecoder::finish() {
     result.refused = refused_;
     result.service_tier = std::move(service_tier_);
     result.model = std::move(model_);
+    result.reported_model_cost_usd = reported_model_cost_usd_;
     return {std::move(result), false};
 }
 
@@ -344,8 +348,10 @@ bool ChatCompletionsStreamDecoder::handle_event_data(std::string_view data) {
     const Json::json_pointer delta_pointer("/choices/0/delta");
     try {
         value = Json::parse(data);
-        if (const auto usage = value.find("usage"); usage != value.end() && usage->is_object())
+        if (const auto usage = value.find("usage"); usage != value.end() && usage->is_object()) {
             usage_ = chat_token_usage(value);
+            reported_model_cost_usd_ = reported_text_model_cost(config_, *usage);
+        }
         if (const auto tier = value.find("service_tier"); tier != value.end() && tier->is_string())
             service_tier_ = tier->get<std::string>();
         if (const auto model = value.find("model"); model != value.end() && model->is_string())
@@ -391,7 +397,8 @@ GenerationResult decode_chat_completions_response(
     const GenerationDeltaSink& on_delta,
     bool collect_tool_calls,
     std::size_t argument_limit,
-    bool maintenance) {
+    bool maintenance,
+    const ModelBackendConfig* config) {
     Json value;
     try {
         value = Json::parse(body);
@@ -445,6 +452,8 @@ GenerationResult decode_chat_completions_response(
     result.refused = has_refusal(value.at(message_pointer));
     result.service_tier = string_field("service_tier");
     result.model = string_field("model");
+    if (const auto reported_usage = value.find("usage"); reported_usage != value.end())
+        result.reported_model_cost_usd = reported_text_model_cost(config, *reported_usage);
     return result;
 }
 

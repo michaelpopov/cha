@@ -37,10 +37,12 @@ public:
         const GenerationDeltaSink& on_delta,
         bool collect_tool_calls = false,
         std::size_t argument_limit = ordinary_tool_argument_limit,
-        bool maintenance = false);
+        bool maintenance = false,
+        const ModelBackendConfig* config = nullptr);
     ChatCompletionsStreamDecoder(
         ReasoningFormat, GenerationDeltaSink&&, bool = false,
-        std::size_t = ordinary_tool_argument_limit, bool = false) = delete;
+        std::size_t = ordinary_tool_argument_limit, bool = false,
+        const ModelBackendConfig* = nullptr) = delete;
 
     ChatCompletionsStreamDecoder(const ChatCompletionsStreamDecoder&) = delete;
     ChatCompletionsStreamDecoder& operator=(
@@ -69,6 +71,7 @@ private:
     bool collect_tool_calls_;
     std::size_t argument_limit_;
     bool maintenance_;
+    const ModelBackendConfig* config_;
     SseFramer framer_;
     std::string protocol_error_;
     bool done_{};
@@ -76,6 +79,7 @@ private:
     bool received_answer_{};
     bool refused_{};
     GenerationTokenUsage usage_;
+    std::optional<double> reported_model_cost_usd_;
     std::string service_tier_;
     std::string model_;
     nlohmann::json message_{{"role", "assistant"}};
@@ -90,6 +94,7 @@ GenerationResult decode_chat_completions_response(
     const GenerationDeltaSink& on_delta,
     bool collect_tool_calls = false,
     std::size_t argument_limit = ordinary_tool_argument_limit,
-    bool maintenance = false);
+    bool maintenance = false,
+    const ModelBackendConfig* config = nullptr);
 
 } // namespace cha

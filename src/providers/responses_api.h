@@ -31,10 +31,12 @@ public:
     explicit ResponsesStreamDecoder(const GenerationDeltaSink& on_delta,
         bool collect_tool_calls = false,
         std::size_t argument_limit = ordinary_tool_argument_limit,
-        bool maintenance = false);
+        bool maintenance = false,
+        const ModelBackendConfig* config = nullptr);
     ResponsesStreamDecoder(
         GenerationDeltaSink&&, bool = false,
-        std::size_t = ordinary_tool_argument_limit, bool = false) = delete;
+        std::size_t = ordinary_tool_argument_limit, bool = false,
+        const ModelBackendConfig* = nullptr) = delete;
 
     ResponsesStreamDecoder(const ResponsesStreamDecoder&) = delete;
     ResponsesStreamDecoder& operator=(const ResponsesStreamDecoder&) = delete;
@@ -50,6 +52,7 @@ private:
     bool collect_tool_calls_;
     std::size_t argument_limit_;
     bool maintenance_;
+    const ModelBackendConfig* config_;
     bool saw_function_call_{};
     bool arguments_oversized_{};
     std::map<int, std::size_t> argument_bytes_by_index_{};
@@ -61,6 +64,7 @@ private:
     bool refused_{};
     bool describe_response_{true};
     GenerationTokenUsage usage_;
+    std::optional<double> reported_model_cost_usd_;
     std::string service_tier_;
     std::string model_;
     std::map<int, nlohmann::json> output_items_;
@@ -73,6 +77,7 @@ GenerationResult decode_responses_response(
     const GenerationDeltaSink& on_delta,
     bool collect_tool_calls = false,
     std::size_t argument_limit = ordinary_tool_argument_limit,
-    bool maintenance = false);
+    bool maintenance = false,
+    const ModelBackendConfig* config = nullptr);
 
 } // namespace cha

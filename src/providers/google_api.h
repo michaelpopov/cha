@@ -50,6 +50,7 @@ private:
     bool refused_{};
     bool prompt_blocked_{};
     GenerationTokenUsage usage_;
+    std::optional<std::uint64_t> tool_prompt_tokens_;
     std::optional<std::uint64_t> candidate_tokens_;
     std::optional<std::uint64_t> thought_tokens_;
     nlohmann::json content_{{"role", "model"}, {"parts", nlohmann::json::array()}};

@@ -136,14 +136,31 @@ AnthropicStreamDecoder::AnthropicStreamDecoder(const GenerationDeltaSink& on_del
     : on_delta_(&on_delta), collect_tool_calls_(collect_tool_calls),
       argument_limit_(argument_limit), maintenance_(maintenance) {}
 
-void AnthropicStreamDecoder::update_usage(const Json& usage) {
+void AnthropicStreamDecoder::update_usage(const Json& usage, bool terminal) {
     if (!usage.is_object()) throw std::invalid_argument("Invalid Anthropic usage");
     update_count(usage, "input_tokens", uncached_input_);
-    update_count(usage, "output_tokens", usage_.output_tokens);
+    std::optional<std::uint64_t> output;
+    update_count(usage, "output_tokens", output);
+    if (output) {
+        usage_.output_tokens = output;
+        final_output_usage_ |= terminal;
+    }
     update_count(usage, "cache_read_input_tokens", usage_.cache_read_tokens);
     update_count(usage, "cache_creation_input_tokens", usage_.cache_write_tokens);
+    if (const auto creation = usage.find("cache_creation"); creation != usage.end()) {
+        const auto hours = creation->find("ephemeral_1h_input_tokens");
+        if (hours != creation->end() && hours->is_number_unsigned())
+            cache_write_1h_tokens_ = hours->get<std::uint64_t>();
+    }
+    if (const auto tier = usage.find("service_tier"); tier != usage.end() && tier->is_string())
+        service_tier_ = tier->get<std::string>();
     if (uncached_input_) usage_.input_tokens = *uncached_input_
         + usage_.cache_read_tokens.value_or(0) + usage_.cache_write_tokens.value_or(0);
+}
+
+void AnthropicStreamDecoder::update_model(const Json& message) {
+    if (const auto model = message.find("model"); model != message.end() && model->is_string())
+        model_ = model->get<std::string>();
 }
 
 void AnthropicStreamDecoder::emit_block(const Json& block) {
@@ -175,6 +192,7 @@ bool AnthropicStreamDecoder::process_json(std::string_view data) {
                 throw std::invalid_argument("Invalid Anthropic message_start");
             }
             started_ = true;
+            update_model(message);
             if (message.contains("usage")) update_usage(message.at("usage"));
         } else if (type == "content_block_start" || type == "content_block_delta" || type == "content_block_stop") {
             if (!started_ || stopped_ || !stop_reason_.empty()) throw std::invalid_argument("Unexpected Anthropic content event");
@@ -229,7 +247,7 @@ bool AnthropicStreamDecoder::process_json(std::string_view data) {
             if (delta.contains("stop_reason") && !delta.at("stop_reason").is_null()) {
                 stop_reason_ = delta.at("stop_reason").get<std::string>();
             }
-            if (value.contains("usage")) update_usage(value.at("usage"));
+            if (value.contains("usage")) update_usage(value.at("usage"), true);
         } else if (type == "message_stop") {
             if (!started_ || stopped_) throw std::invalid_argument("Unexpected Anthropic message_stop");
             stopped_ = true;
@@ -274,6 +292,10 @@ GenerationResult AnthropicStreamDecoder::completed_result() {
     }
     result.finish_reason = reason;
     result.refused = refused;
+    result.model = std::move(model_);
+    result.service_tier = std::move(service_tier_);
+    result.cache_write_1h_tokens = cache_write_1h_tokens_;
+    result.usage_is_partial = !final_output_usage_;
     return result;
 }
 
@@ -296,7 +318,8 @@ GenerationResult decode_anthropic_response(std::string_view body,
                 || !message.at("content").is_array()) throw std::invalid_argument("Invalid Anthropic message");
             decoder.stop_reason_ = message.at("stop_reason").get<std::string>();
             decoder.started_ = decoder.stopped_ = true;
-            if (message.contains("usage")) decoder.update_usage(message.at("usage"));
+            decoder.update_model(message);
+            if (message.contains("usage")) decoder.update_usage(message.at("usage"), true);
             decoder.message_["content"] = message.at("content");
             for (const auto& block : decoder.message_.at("content")) {
                 // Defer invalid tool input until the terminal length status is handled.

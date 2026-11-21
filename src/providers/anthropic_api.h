@@ -35,7 +35,8 @@ private:
     friend GenerationResult decode_anthropic_response(std::string_view,
         const GenerationDeltaSink&, bool, std::size_t, bool);
     bool process_json(std::string_view data);
-    void update_usage(const nlohmann::json& usage);
+    void update_usage(const nlohmann::json& usage, bool terminal = false);
+    void update_model(const nlohmann::json& message);
     void emit_block(const nlohmann::json& block);
     GenerationResult completed_result();
 
@@ -47,6 +48,10 @@ private:
     nlohmann::json message_{{"role", "assistant"}, {"content", nlohmann::json::array()}};
     GenerationTokenUsage usage_;
     std::optional<std::uint64_t> uncached_input_;
+    std::optional<std::uint64_t> cache_write_1h_tokens_;
+    std::string model_;
+    std::string service_tier_;
+    bool final_output_usage_{};
     std::string protocol_error_;
     std::string stop_reason_;
     std::optional<std::size_t> active_block_;

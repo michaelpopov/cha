@@ -320,9 +320,15 @@ void ProviderRequest::execute(
             log_info("Provider request completed: " + fields
                 + token_usage_fields(result.usage));
             close_with(GenerationCompleted{
-                request_id,
-                result.usage.input_tokens,
-                result.usage.output_tokens,
+                .request_id = request_id,
+                .input_tokens = result.usage.input_tokens,
+                .output_tokens = result.usage.output_tokens,
+                .cache_read_tokens = result.usage.cache_read_tokens,
+                .cache_write_tokens = result.usage.cache_write_tokens,
+                .estimated_usd = result.estimated_usd,
+                .model_calls = statistics.model.calls,
+                .provider = input_.character->provider.id,
+                .model = result.model.empty() ? input_.character->provider.config.model : result.model,
             });
         } else if (result.outcome == GenerationOutcome::cancelled) {
             outcome = "cancelled";

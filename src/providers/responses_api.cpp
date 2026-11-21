@@ -1,5 +1,6 @@
 #include "providers/responses_api.h"
 
+#include "providers/text_reply_cost.h"
 #include "util/json_serialization.h"
 #include "util/logging.h"
 #include "providers/tool_calls.h"
@@ -234,11 +235,13 @@ std::string build_responses_request_body(
 }
 
 ResponsesStreamDecoder::ResponsesStreamDecoder(const GenerationDeltaSink& on_delta,
-    bool collect_tool_calls, std::size_t argument_limit, bool maintenance)
+    bool collect_tool_calls, std::size_t argument_limit, bool maintenance,
+    const ModelBackendConfig* config)
     : on_delta_(&on_delta),
       collect_tool_calls_(collect_tool_calls),
       argument_limit_(argument_limit),
-      maintenance_(maintenance) {
+      maintenance_(maintenance),
+      config_(config) {
 }
 
 void ResponsesStreamDecoder::consume(std::string_view bytes) {
@@ -275,6 +278,7 @@ StreamDecodeResult ResponsesStreamDecoder::finish() {
     result.refused = refused_;
     result.service_tier = std::move(service_tier_);
     result.model = std::move(model_);
+    result.reported_model_cost_usd = reported_model_cost_usd_;
     return {std::move(result), false};
 }
 
@@ -357,6 +361,8 @@ bool ResponsesStreamDecoder::handle_event_json(std::string_view data) {
     if ((type == "response.completed" || type == "response.failed" || type == "response.incomplete")
         && response != value.end() && response->is_object()) {
         usage_ = responses_token_usage(*response);
+        if (const auto usage = response->find("usage"); usage != response->end())
+            reported_model_cost_usd_ = reported_text_model_cost(config_, *usage);
         service_tier_ = first_string_field(*response, "service_tier");
         model_ = first_string_field(*response, "model");
     }
@@ -473,7 +479,8 @@ GenerationResult decode_responses_response(
     const GenerationDeltaSink& on_delta,
     bool collect_tool_calls,
     std::size_t argument_limit,
-    bool maintenance) {
+    bool maintenance,
+    const ModelBackendConfig* config) {
     Json value;
     try {
         value = Json::parse(body);
@@ -617,6 +624,8 @@ GenerationResult decode_responses_response(
     result.refused = has_refusal(*output);
     result.service_tier = first_string_field(value, "service_tier");
     result.model = first_string_field(value, "model");
+    if (const auto reported_usage = value.find("usage"); reported_usage != value.end())
+        result.reported_model_cost_usd = reported_text_model_cost(config, *reported_usage);
     return result;
 }
 

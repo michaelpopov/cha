@@ -33,6 +33,12 @@ struct GenerationCompleted {
     RequestId request_id{};
     std::optional<std::uint64_t> input_tokens;
     std::optional<std::uint64_t> output_tokens;
+    std::optional<std::uint64_t> cache_read_tokens;
+    std::optional<std::uint64_t> cache_write_tokens;
+    std::optional<double> estimated_usd;
+    std::size_t model_calls{};
+    std::string provider;
+    std::string model;
 };
 
 struct GenerationCancelled {

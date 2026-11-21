@@ -1,4 +1,5 @@
 #include "providers/provider_client.h"
+#include "providers/openai_token_cost.h"
 #include "providers/maintenance.h"
 #include "providers/tool_calls.h"
 #include "support/test_workspace.h"
@@ -15,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -1848,6 +1850,144 @@ TEST(ProviderClientTools, SearchesAndContinuesBothProtocolsWithStreamingAndToken
     }
 }
 
+TEST(ProviderClientTools, PricesEveryRoundBeforeAccumulatingUsage) {
+    for (const bool missing_tool_output_usage : {false, true}) {
+        SCOPED_TRACE(missing_tool_output_usage);
+        auto definition = network_definition(443, false);
+        auto& config = definition.provider.config;
+        config.host = "api.openai.com";
+        config.model = "gpt-5";
+        std::size_t requests = 0;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+                const bool tool_round = ++requests == 1;
+                auto reply = tool_reply(config.api, false,
+                    tool_round ? Json::array({search_call(config.api, "search")}) : Json::array(),
+                    tool_round ? "" : "The release is ready.");
+                auto body = Json::parse(reply.body);
+                body["model"] = "gpt-5.5-2026-04-23";
+                body["service_tier"] = tool_round ? "default" : "flex";
+                body["usage"] = {
+                    {"prompt_tokens", 140'000},
+                    {"prompt_tokens_details", {{"cached_tokens", tool_round ? 1'000 : 2'000}}},
+                };
+                if (!tool_round || !missing_tool_output_usage)
+                    body["usage"]["completion_tokens"] = tool_round ? 50 : 100;
+                reply.body = body.dump();
+                return reply;
+            });
+        Transcript transcript;
+        auto input = client_request(transcript, 1, "What is current?");
+        input.web_search_tool = [](std::string_view, const std::atomic_bool&) {
+            return R"({"sources":[{"url":"https://example.test/release","title":"Release"}]})";
+        };
+        GenerationStatistics statistics;
+        auto payload = client.prepare(input);
+        payload.statistics = &statistics;
+        const auto result = client.perform(std::move(payload), [](auto) {}, std::atomic_bool{false});
+        ASSERT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(statistics.model.calls, 2u);
+        EXPECT_EQ(statistics.web_search.calls, 1u);
+        EXPECT_EQ(result.usage.input_tokens, 280'000u);
+        EXPECT_EQ(result.usage.cache_read_tokens, 3'000u);
+        EXPECT_EQ(result.usage.output_tokens, missing_tool_output_usage ? 100u : 150u);
+        if (missing_tool_output_usage) {
+            EXPECT_FALSE(result.estimated_usd);
+        } else {
+            ASSERT_TRUE(result.estimated_usd);
+            EXPECT_DOUBLE_EQ(*result.estimated_usd, 1.044);
+            const auto cumulative_price = estimate_openai_token_cost(config, result);
+            ASSERT_TRUE(cumulative_price);
+            EXPECT_DOUBLE_EQ(*cumulative_price, 1.389875);
+        }
+    }
+}
+
+TEST(ProviderClient, PricesGeminiByReportedServiceTier) {
+    for (const auto& [tier, expected] : std::array{
+             std::pair{"", 0.001355}, std::pair{"flex", 0.0006775},
+             std::pair{"priority", 0.002439}}) {
+        SCOPED_TRACE(tier);
+        auto definition = network_definition(443, false);
+        definition.provider.config.host = "generativelanguage.googleapis.com";
+        definition.provider.config.api = ProviderApi::google;
+        definition.provider.config.model = "gemini-3.1-flash-lite";
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+                const Json body{
+                    {"modelVersion", "gemini-3.1-flash-lite"},
+                    {"candidates", Json::array({{
+                        {"content", {{"parts", Json::array({{{"text", "Answer"}}})}}},
+                        {"finishReason", "STOP"},
+                    }})},
+                    {"usageMetadata", {
+                        {"serviceTier", tier},
+                        {"promptTokenCount", 1'000},
+                        {"toolUsePromptTokenCount", 100},
+                        {"cachedContentTokenCount", 200},
+                        {"candidatesTokenCount", 300},
+                        {"thoughtsTokenCount", 450},
+                    }},
+                };
+                return ProviderHttpResponse{200, "application/json", body.dump()};
+            });
+        Transcript transcript;
+        const auto input = client_request(transcript, 1, "Question");
+        const auto result = complete(client, input, transcript, [](auto) {}, std::atomic_bool{false});
+        ASSERT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(result.usage.input_tokens, 1'100u);
+        EXPECT_EQ(result.usage.output_tokens, 750u);
+        ASSERT_TRUE(result.estimated_usd);
+        EXPECT_DOUBLE_EQ(*result.estimated_usd, expected);
+    }
+}
+
+TEST(ProviderClient, UsesReportedModelCostWithoutIncludingHostedToolFees) {
+    struct Example {
+        std::string_view host;
+        ProviderApi api;
+        Json usage;
+        std::optional<double> cost;
+    };
+    const Example examples[]{
+        {"openrouter.ai", ProviderApi::chat_completions,
+            {{"cost", 0.00035}, {"is_byok", false}}, 0.00035},
+        {"openrouter.ai", ProviderApi::responses,
+            {{"cost", 0.025}, {"server_tool_use", {{"web_search_requests", 1}}},
+             {"cost_details", {{"upstream_inference_input_cost", 0.001}, {"upstream_inference_output_cost", 0.002}}}},
+            0.003},
+        {"openrouter.ai", ProviderApi::responses,
+            {{"cost", 0.025}, {"server_tool_use", {{"web_search_requests", 1}}}}, std::nullopt},
+        {"api.x.ai", ProviderApi::chat_completions,
+            {{"cost_in_usd_ticks", 127'501}, {"num_server_side_tools_used", 0}}, 0.0000127501},
+        {"api.x.ai", ProviderApi::responses,
+            {{"cost_in_usd_ticks", 127'501}, {"num_server_side_tools_used", 1}}, std::nullopt},
+        {"example.test", ProviderApi::chat_completions,
+            {{"cost", 0.025}, {"cost_in_usd_ticks", 127'501}}, std::nullopt},
+    };
+    for (const auto& example : examples) {
+        SCOPED_TRACE(example.host);
+        auto definition = network_definition(443, false);
+        definition.provider.config.host = example.host;
+        definition.provider.config.api = example.api;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+                auto reply = tool_reply(example.api, false, Json::array(), "Answer");
+                auto body = Json::parse(reply.body);
+                body["usage"].update(example.usage);
+                reply.body = body.dump();
+                return reply;
+            });
+        Transcript transcript;
+        const auto input = client_request(transcript, 1, "Question");
+        const auto result = complete(client, input, transcript, [](auto) {}, std::atomic_bool{false});
+        ASSERT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(result.usage.input_tokens, 10u);
+        ASSERT_EQ(result.estimated_usd.has_value(), example.cost.has_value());
+        if (example.cost) EXPECT_DOUBLE_EQ(*result.estimated_usd, *example.cost);
+    }
+}
+
 TEST(ProviderClientTools, SeparatesAnswerTextAcrossToolRounds) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses}) {
         for (bool stream : {false, true}) {
@@ -3009,18 +3149,69 @@ Json anthropic_response(Json content, std::string reason = "end_turn") {
     return {{"type", "message"}, {"role", "assistant"}, {"content", content}, {"stop_reason", reason},
         {"usage", {{"input_tokens", 3}, {"output_tokens", 2}, {"cache_read_input_tokens", 1}}}};
 }
-std::string anthropic_stream(const Json& message) {
+std::string anthropic_stream(const Json& message, bool include_final_usage = true) {
     const auto event = [](Json value) { return "data: " + value.dump() + "\n\n"; };
     auto start = message;
-    start["content"] = Json::array(); start["stop_reason"] = nullptr;
+    start["content"] = Json::array();
+    start["stop_reason"] = nullptr;
+    start["usage"]["output_tokens"] = 1;
     auto stream = event({{"type", "message_start"}, {"message", start}});
     int index = 0;
     for (const auto& block : message["content"]) {
         stream += event({{"type", "content_block_start"}, {"index", index}, {"content_block", block}});
         stream += event({{"type", "content_block_stop"}, {"index", index++}});
     }
-    return stream + event({{"type", "message_delta"}, {"delta", {{"stop_reason", message["stop_reason"]}}}})
-        + event({{"type", "message_stop"}});
+    Json delta{{"type", "message_delta"}, {"delta", {{"stop_reason", message["stop_reason"]}}}};
+    if (include_final_usage) delta["usage"] = {{"output_tokens", message.at("usage").at("output_tokens")}};
+    return stream + event(delta) + event({{"type", "message_stop"}});
+}
+
+TEST(ProviderClient, PricesAnthropicCacheWritesAndRequiresFinalStreamUsage) {
+    auto message = anthropic_response(Json::array({{{"type", "text"}, {"text", "Answer"}}}), "end_turn");
+    message["model"] = "claude-haiku-5-5";
+    message["usage"] = {
+        {"input_tokens", 100'000},
+        {"output_tokens", 10},
+        {"cache_read_input_tokens", 100},
+        {"cache_creation_input_tokens", 40},
+        {"cache_creation", {{"ephemeral_1h_input_tokens", 10}, {"ephemeral_5m_input_tokens", 30}}},
+        {"service_tier", "standard"},
+    };
+    struct Example {
+        std::string_view name;
+        bool stream;
+        bool include_final_usage;
+    };
+    const Example examples[]{
+        {"buffered", false, true},
+        {"stream with final usage", true, true},
+        {"stream with initial usage only", true, false},
+    };
+    for (const auto& example : examples) {
+        SCOPED_TRACE(example.name);
+        auto definition = network_definition(443, example.stream);
+        auto& config = definition.provider.config;
+        config.host = "api.anthropic.com";
+        config.api = ProviderApi::anthropic;
+        ProviderClient client(shared_definition(definition), nullptr,
+            [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+                return example.stream
+                    ? ProviderHttpResponse{200, "text/event-stream", anthropic_stream(message, example.include_final_usage)}
+                    : ProviderHttpResponse{200, "application/json", message.dump()};
+            });
+        Transcript transcript;
+        const auto input = client_request(transcript, 1, "Question");
+        const auto result = complete(client, input, transcript, [](auto) {}, std::atomic_bool{false});
+        ASSERT_EQ(result.outcome, GenerationOutcome::completed) << result.message;
+        EXPECT_EQ(result.usage.input_tokens, 100'140u);
+        EXPECT_EQ(result.usage.output_tokens, example.include_final_usage ? 10u : 1u);
+        if (!example.include_final_usage) {
+            EXPECT_FALSE(result.estimated_usd);
+        } else {
+            ASSERT_TRUE(result.estimated_usd);
+            EXPECT_DOUBLE_EQ(*result.estimated_usd, 0.05005875);
+        }
+    }
 }
 
 TEST(ProviderClient, RefusalWithoutAnswerTextReportsTheRefusal) {
