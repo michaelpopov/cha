@@ -37,8 +37,6 @@
 namespace cha {
 
 std::string_view embedded_assistant_maintenance();
-std::string_view embedded_maintainer_guide();
-std::string_view embedded_linux_packaging_readme();
 
 namespace {
 
@@ -1119,10 +1117,6 @@ std::string maintenance_reference(bool chaweb_host) {
         ? "Host: cha-daemon (ChaWeb)\n\n"
         : "Host: desktop application\n\n";
     text.append(embedded_assistant_maintenance());
-    text.push_back('\n');
-    text.append(embedded_maintainer_guide());
-    text.push_back('\n');
-    text.append(embedded_linux_packaging_readme());
     return text;
 }
 

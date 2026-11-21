@@ -46,10 +46,6 @@ std::string reference_from_sources(bool chaweb_host) {
         ? "Host: cha-daemon (ChaWeb)\n\n"
         : "Host: desktop application\n\n";
     text += file_text(root / "resources" / "assistant-maintenance.md");
-    text.push_back('\n');
-    text += file_text(root / "docs" / "MaintainerGuide.md");
-    text.push_back('\n');
-    text += file_text(root / "packaging" / "linux" / "README.md");
     for (std::size_t position = 0; (position = text.find("\r\n", position)) != std::string::npos;) {
         text.erase(position, 1);
     }
@@ -696,7 +692,7 @@ TEST(AssistantService, HostWritesCheckAdmissionAndCancellation) {
     EXPECT_EQ(file_text(file), original);
 }
 
-TEST(AssistantReference, ConcatenatesBothHostLinesAndTheThreeDocuments) {
+TEST(AssistantReference, EmbedsMaintenanceInstructionsAfterHostLine) {
     const std::filesystem::path root{CHA_SOURCE_DIRECTORY};
     const std::string desktop = maintenance_reference(false);
     const std::string chaweb = maintenance_reference(true);
@@ -712,8 +708,6 @@ TEST(AssistantReference, ConcatenatesBothHostLinesAndTheThreeDocuments) {
     EXPECT_EQ(desktop.find(
         "Host: cha-daemon (ChaWeb)\n\n# Operating instructions for Assistant"),
         std::string::npos);
-    EXPECT_NE(desktop.find("# CHA workspace maintainer guide"), std::string::npos);
-    EXPECT_NE(desktop.find("# CHA daemon on Linux"), std::string::npos);
     EXPECT_NE(desktop.find("## Four recipes"), std::string::npos);
     const std::string guide = file_text(root / "resources" / "application-guide.md");
     EXPECT_EQ(guide.compare(0, std::string("# CHA application guide").size(),

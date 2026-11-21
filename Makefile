@@ -1,8 +1,4 @@
-.PHONY: build package package-linux package-macos package-windows web-check web-stage start stop test test-daemon test-ui itest itest-local itest-daemon run-native-dev clean-san
-
-ifeq ($(package),linux)
-.DEFAULT_GOAL := package-linux
-endif
+.PHONY: build package package-macos package-windows web-check web-stage test test-ui itest itest-local run-native-dev clean-san
 
 build:
 ifeq ($(OS),Windows_NT)
@@ -17,10 +13,6 @@ package:
 	./packaging/macos/release.sh check
 	$(MAKE) package-macos VERSION="$(VERSION)"
 	./packaging/macos/release.sh upload "$(VERSION)" "packages/CHA-macos-$(VERSION).tar.gz"
-
-package-linux:
-	$(if $(strip $(VERSION)),,$(error usage: make package-linux VERSION=<version>))
-	./packaging/linux/package.sh "$(VERSION)"
 
 ifeq ($(OS),Windows_NT)
 package-macos:
@@ -46,34 +38,25 @@ web-check:
 web-stage:
 	npm --prefix webapp run stage
 
-# Use the local HTTPS setup created for this Mac.
-start:
-	./build/chaweb-local/start.sh
-
-stop:
-	./build/chaweb-local/stop.sh
-
 ifneq ($(OS),Windows_NT)
 CHA_TEST_PLATFORM := $(shell uname -s)
 endif
 
 ifeq ($(CHA_TEST_PLATFORM),Linux)
-test: test-daemon
+test:
+	cmake --preset ninja
+	cmake --build --preset ninja --target cha_tests cha_app_tests
+	ctest --test-dir build/ninja -L backend --output-on-failure
 else
 test: build
 	ctest --test-dir build/ninja --output-on-failure
 endif
 
-test-daemon:
-	cmake --preset ninja
-	cmake --build --preset ninja --target cha_tests cha_app_tests cha_daemon_tests
-	ctest --test-dir build/ninja -L daemon --output-on-failure
-
 test-ui:
 	./tests/native/macos/test-ui.sh
 
 ifeq ($(OS),Windows_NT)
-itest itest-local itest-daemon:
+itest itest-local:
 	$(error $@ is not supported on Windows)
 
 run-native-dev:
@@ -84,12 +67,6 @@ itest: build
 
 itest-local: build
 	./build/ninja/itest --gtest_filter='-Integration.*:R2Integration.*'
-
-itest-daemon:
-	cmake --preset ninja
-	cmake --build --preset ninja --target cha-daemon cha_prepare_test_vault
-	npm --prefix webapp run build:chaweb
-	python3 tests/integration/daemon_integration_test.py --build-dir build/ninja
 
 run-native-dev: build
 	$(if $(strip $(CONFIG)),,$(error usage: make run-native-dev CONFIG=/path/to/cha-config))

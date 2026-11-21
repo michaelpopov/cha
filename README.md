@@ -235,7 +235,7 @@ both on-demand tools for a character.
 
 Save the search or reading service key in API Keys, then select it in Search API.
 Search results, page content, and tool calls stay outside transcript history;
-replies show a web-source indicator. See the [maintainer guide](docs/MaintainerGuide.md#recipient-detection-and-search-api)
+replies show a web-source indicator. See the [administrator manual](docs/AdminManual.md#recipient-detection)
 for exported settings and failure behavior.
 
 Provider secrets are managed on the Settings > API Keys screen and stored in
@@ -349,7 +349,7 @@ The seed and example configuration live under `packaging/shared/`. Existing
 schema-v1 and legacy per-session databases need a separately planned migration;
 the desktop executable accepts only `--config`, not old `--import`, `--export`,
 or `--vault` maintenance flags. Use the running application's vault actions for
-current configuration changes. See the [maintainer guide](docs/MaintainerGuide.md)
+current configuration changes. See the [administrator manual](docs/AdminManual.md)
 for path layout, import validation, and legacy migration constraints.
 
 `CHA` loads discovery — the roster, descriptions, and Markdown shown in
@@ -380,10 +380,7 @@ make itest-local
 make itest
 ```
 
-On Linux, `make test` runs `make test-daemon`: shared backend and daemon tests,
-excluding the native bridge and host tests. Run this subset directly with
-`ctest --test-dir build/ninja -L daemon --output-on-failure` after building it.
-The unfiltered `ctest` command above still runs the full suite.
+On Linux, `make test` builds and runs the shared backend tests.
 
 The R2 integration case overwrites the dedicated
 `cha-r2-integration-test.sqlite3` object in the configured bucket. Run only
@@ -396,11 +393,7 @@ build/ninja/itest --gtest_filter=R2Integration.*
 Browser development is documented in
 [webapp/README.md](webapp/README.md). Build a validated release with
 `make package-macos VERSION=<version>` on macOS or
-`make package-windows VERSION=<version>` on Windows. On Linux,
-`make package-linux VERSION=<version>` (or `make package=linux VERSION=<version>`)
-creates `packages/cha-linux-<version>.tar.gz` with `cha-daemon`, the ChaWeb
-browser files, an example vault, and deployment scripts for nginx and systemd
-(see [packaging/linux/README.md](packaging/linux/README.md)). The macOS command writes
+`make package-windows VERSION=<version>` on Windows. The macOS command writes
 `packages/CHA.app` and `packages/CHA-macos-<version>.tar.gz`. The macOS archive
 contains only `CHA.app`; the app creates its configuration and database on first
 launch. Packaging requires

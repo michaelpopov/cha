@@ -137,7 +137,7 @@ try {
         throw "Private data leaked into the application: $($privateArtifacts[0].FullName)"
     }
     $runtimeArtifacts = Get-ChildItem -LiteralPath $application -Recurse -Force | Where-Object {
-        $_.Name -in @('node_modules', 'node.exe', 'npm.cmd', 'npx.cmd', 'chaweb.exe', 'CHATest.exe')
+        $_.Name -in @('node_modules', 'node.exe', 'npm.cmd', 'npx.cmd', 'CHATest.exe')
     }
     if ($runtimeArtifacts) {
         throw "A development runtime leaked into the application: $($runtimeArtifacts[0].FullName)"

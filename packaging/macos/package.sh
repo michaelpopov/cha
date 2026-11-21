@@ -183,11 +183,6 @@ for executable in "$contents/MacOS/CHA" "$contents/Frameworks/libChaRuntime.dyli
     fi
 done
 
-if find "$application" -name chaweb -print -quit | grep -q .; then
-    echo "package check: chaweb leaked into CHA.app" >&2
-    exit 1
-fi
-
 echo "==> Testing the embedded native runtime from the assembled bundle"
 bundle_test="$temporary/bundle-test"
 bundle_config="$bundle_test/config"

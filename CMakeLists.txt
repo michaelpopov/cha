@@ -288,8 +288,6 @@ add_library(cha_lib STATIC
     ${CMAKE_CURRENT_BINARY_DIR}/generated/character_voice.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/new_character_template.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/generated/assistant_maintenance.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp
-    ${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp
     src/util/base64.cpp
     src/util/crypto.cpp
     src/util/curl.cpp
@@ -481,20 +479,6 @@ add_custom_command(
     DEPENDS resources/assistant-maintenance.md cmake/embed_text.cmake
     VERBATIM)
 
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/docs/MaintainerGuide.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/maintainer_guide.cpp -DSYMBOL=embedded_maintainer_guide -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS docs/MaintainerGuide.md cmake/embed_text.cmake
-    VERBATIM)
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/generated
-    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/README.md -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/generated/linux_packaging_readme.cpp -DSYMBOL=embedded_linux_packaging_readme -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text.cmake
-    DEPENDS packaging/linux/README.md cmake/embed_text.cmake
-    VERBATIM)
-
 target_compile_features(cha_lib PUBLIC cxx_std_20)
 target_include_directories(cha_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 if(WIN32)
@@ -525,26 +509,6 @@ cha_enable_warnings(cha_lib)
 
 target_compile_definitions(
     cha_lib PRIVATE CHA_PACKAGE_VERSION="${CHA_PACKAGE_VERSION}")
-
-if(NOT WIN32)
-    add_executable(
-        cha-daemon
-        src/daemon/main.cpp
-        src/daemon/scgi.cpp
-        src/daemon/chaweb_adapter.cpp)
-    target_compile_features(cha-daemon PUBLIC cxx_std_20)
-    target_link_libraries(cha-daemon PRIVATE cha_lib)
-    cha_enable_warnings(cha-daemon)
-    install(TARGETS cha-daemon RUNTIME DESTINATION bin)
-endif()
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_executable(
-        cha_prepare_linux_config EXCLUDE_FROM_ALL
-        packaging/linux/prepare_config.cpp)
-    target_link_libraries(cha_prepare_linux_config PRIVATE cha_lib)
-    cha_enable_warnings(cha_prepare_linux_config)
-endif()
 
 # The instrumented Windows host uses this helper for its actual WebView2
 # workflow even in packaging builds, where the full GoogleTest suite is off.
@@ -815,30 +779,6 @@ if(BUILD_TESTING)
             CHA_INTERRUPTED_APP_HELPER="$<TARGET_FILE:cha_interrupted_app_helper>")
         add_dependencies(itest cha_interrupted_app_helper)
         cha_enable_warnings(itest)
-
-        add_executable(
-            cha_daemon_tests
-            tests/daemon/unit_scgi.cpp
-            tests/daemon/unit_chaweb_adapter.cpp
-            tests/daemon/unit_daemon_process.cpp
-            tests/support/test_workspace.cpp
-            tests/support/xai_fake_server.cpp
-            src/daemon/scgi.cpp
-            src/daemon/chaweb_adapter.cpp)
-        target_link_libraries(
-            cha_daemon_tests
-            PRIVATE
-                cha_lib
-                cha_sqlite3
-                GTest::gtest_main)
-        target_include_directories(
-            cha_daemon_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-        target_compile_definitions(
-            cha_daemon_tests
-            PRIVATE
-                CHA_DAEMON_EXECUTABLE="$<TARGET_FILE:cha-daemon>")
-        add_dependencies(cha_daemon_tests cha-daemon)
-        cha_enable_warnings(cha_daemon_tests)
     endif()
 
     # Every test binary carries the sanitizer suppression list. The file is
@@ -850,8 +790,7 @@ if(BUILD_TESTING)
             cha_app_tests
             cha_bridge_tests
             cha_native_runtime_tests
-            itest
-            cha_daemon_tests)
+            itest)
         if(TARGET ${cha_test_target})
             target_sources(
                 ${cha_test_target}
@@ -860,14 +799,10 @@ if(BUILD_TESTING)
     endforeach()
 
     include(GoogleTest)
-    # The daemon uses the shared backend, but not the native bridge or host.
-    gtest_discover_tests(cha_tests PROPERTIES LABELS daemon)
-    gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60 LABELS daemon)
+    gtest_discover_tests(cha_tests PROPERTIES LABELS backend)
+    gtest_discover_tests(cha_app_tests PROPERTIES TIMEOUT 60 LABELS backend)
     gtest_discover_tests(cha_bridge_tests PROPERTIES LABELS native)
     gtest_discover_tests(cha_native_runtime_tests PROPERTIES LABELS native)
-    if(TARGET cha_daemon_tests)
-        gtest_discover_tests(cha_daemon_tests PROPERTIES TIMEOUT 60 LABELS daemon)
-    endif()
 endif()
 
 if(APPLE)

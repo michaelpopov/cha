@@ -38,8 +38,7 @@ and complete clips otherwise. Keys stay in native code.
 ## Browser tests
 
 `npm run check` runs schema generation checks, TypeScript, and Vitest. Native
-host automation lives under `tests/native/`. The old HTTP Playwright suite
-that launched `chaweb` has been removed.
+host automation lives under `tests/native/`.
 
 Presentation tests use a fake `ChaClient` or fake native bridge. They do not
 start an application listener. Component tests verify that Stop and draft
