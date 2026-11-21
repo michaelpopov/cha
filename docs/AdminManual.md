@@ -709,11 +709,9 @@ adds `.md`. A text file has an effect only in these cases:
 
 - The profile or the instructions include it.
 - It is the nicknames file.
-- Its name has the form `_<number>_<number>.md`, for example `_1_2.md`. Such
-  a file is a variant. For each session, CHA selects some of the variant
-  files of the character and adds their text to the profile. The first number
-  is a group. CHA uses a maximum of one file of each group in one session.
-  Do not give this form of name to other files.
+
+Numbered files such as `_1_2.md` are ordinary Markdown files. To use one in a
+character prompt, include it explicitly, for example with `$$(_1_2.md)`.
 
 On the screen of a file you can rename it, edit it, replace its content from a
 file, and delete it.
@@ -2986,7 +2984,6 @@ characters/
     PROFILE.md                    the profile
     *.md, *.txt                   more text files
     nicknames.txt                 nicknames
-    _<number>_<number>.md         variant files
     <picture files>
 forums/
   forum-definition.md             optional text for all forums
@@ -3312,11 +3309,6 @@ that file does not exist.
 
 If you put the directory of a character into a subdirectory, the first line
 does not find the shared file. Use `$${CHARACTER_VOICE}` in place of it.
-
-A file of a character with a name of the form `_<number>_<number>.md` is a
-variant file. See [Files](#files). CHA adds the text of the selected variant
-files to the profile as it is. Includes and variables do not work in these
-files.
 
 ### Include a file
 

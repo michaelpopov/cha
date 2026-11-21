@@ -1381,6 +1381,7 @@ TEST(Application, CharacterFileListsOnlyIncludeDirectTextFiles) {
     std::filesystem::create_directory(group / "guide/notes");
     std::ofstream(group / "guide/notes/CHILD.md") << "Nested note";
     std::ofstream(group / "guide/NOTES.md") << "Direct note";
+    std::ofstream(group / "guide/_1_2.md") << "Numbered note";
     const auto database = test::import_test_database(workspace.root());
     {
         storage::SqliteDatabase handle(database, storage::SqliteDatabase::Mode::read_write);
@@ -1392,12 +1393,15 @@ TEST(Application, CharacterFileListsOnlyIncludeDirectTextFiles) {
     ASSERT_TRUE(application->running());
     const auto epoch = application->context_epoch();
     EXPECT_EQ(application->get_character("guide", epoch).markdown_files,
-        (std::vector<std::string>{"CHARACTER.md", "NOTES.md"}));
+        (std::vector<std::string>{"CHARACTER.md", "NOTES.md", "_1_2.md"}));
     EXPECT_EQ(application->get_character(assistant_id, epoch).markdown_files,
         (std::vector<std::string>{"CHARACTER.md"}));
     EXPECT_THROW((void)application->get_character_file("guide", "PICTURE.png", epoch), ApplicationError);
     EXPECT_THROW(application->delete_character_file("guide", "PICTURE.png", epoch), ApplicationError);
     EXPECT_EQ(application->get_character_file("guide", "NOTES.md", epoch).content, "Direct note");
+    EXPECT_EQ(application->get_character_file("guide", "_1_2.md", epoch).content, "Numbered note");
+    (void)application->update_character_file("guide", "_1_2.md", "Updated note", epoch);
+    EXPECT_EQ(application->get_character_file("guide", "_1_2.md", epoch).content, "Updated note");
 }
 
 TEST(Application, StartsWithoutAListenerAndBootstraps) {
@@ -2006,8 +2010,7 @@ TEST(Application, SystemPromptPreviewIsStableWithoutCreatingASession) {
     const auto epoch = application->context_epoch();
     ASSERT_TRUE(application->list_sessions("lobby", epoch).empty());
     const auto prompt = application->get_forum_system_prompt("lobby", "guide", epoch);
-    EXPECT_EQ(prompt, workspace.character_definition(
-        FullSessionId{"lobby", "prompt-preview"}, "guide").system_prompt);
+    EXPECT_EQ(prompt, workspace.character_definition("lobby", "guide").system_prompt);
     EXPECT_EQ(application->get_forum_system_prompt("lobby", "guide", epoch), prompt);
     EXPECT_TRUE(application->list_sessions("lobby", epoch).empty());
     const auto created = application->create_session("lobby", "Actual session", epoch);

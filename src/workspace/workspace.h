@@ -311,7 +311,6 @@ public:
     [[nodiscard]] CharacterDefinition character_definition(
         std::string_view forum_id,
         std::string_view character_id,
-        std::string_view variants = {},
         const SessionCharacterSettings* overrides = nullptr) const;
     [[nodiscard]] std::optional<std::filesystem::path> character_directory(
         std::string_view id) const;

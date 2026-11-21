@@ -43,7 +43,7 @@ This report catalogs the features, subsystems, duplicate integrations, and dead 
 | **6.1** | **Hardcoded USD Token & Voice Cost Estimators** | Providers / Logs | **Prime Cut** | Zero UI (log-only); ~85 hardcoded model rates + hardcoded Dec 2026 / Jan 2027 promo expiry dates; pollutes wire DTOs. |
 | **6.2** | **Built-in Latin-to-Russian Transliteration (`A→Я`)** | UI | **Prime Cut** | Custom IME wrapper across inputs (`shh → щ`, `+` escapes) duplicating native macOS/Windows phonetic keyboards. |
 | **6.3** | **Custom Typography Styles (`Settings → Styles`)** | UI / Config | **High** | Full CRUD entity, TOML files, and reference-count checks just to toggle 5 CSS font/color classes. |
-| **6.4** | **Character Random Trait Variants (`_<n>_<m>.md`)** | Workspace | **Prime Cut** | Undiscoverable filename convention injecting SHA-256-seeded random prompt snippets with no UI visibility. |
+| **6.4** | **Random character variants** | Workspace | **Removed** | Numbered files are ordinary Markdown. |
 | **6.5** | **Editable System Task Prompts (`Settings → Prompts`)** | Settings | **High** | Exposes 9 internal prompts with no "Reset to default" button and fragile heading rules that break callers if edited. |
 | **6.6** | **Character Picture Side Panel (`View → Pictures`)** | UI / Storage | **Medium** | Base64-encodes up to 8 MB avatars inside SQLite `config` rows (copied in RAM on config edits) to cycle portraits. |
 | **6.7** | **Transient `/cover` & Background `Events` Screen** | Chat / Settings | **Medium** | `Cover` silently resets when switching chats; `Events` table exists only to compensate for headless background jobs. |
@@ -233,10 +233,10 @@ Even for capabilities worth keeping, CHA often maintains two or three distinct i
 - **Why remove:**
   - Dedicates an entire top-level Settings screen, workspace entity type, TOML directory (`system/styles/`), bridge CRUD methods, and deletion reference-counting (`Used by`) just to bundle 5 basic CSS options (`font`, `slant`, `weight`, `size`, `text_color`). Clean default message typography (or a simple inline choice on a character if ever needed) removes a whole entity class.
 
-### 6.4 Character Random Session Trait Variants (`_<category>_<variant>.md`)
-- **Code & docs:** `variant_category()` & `character_variants()` in [src/workspace/workspace.cpp](../src/workspace/workspace.cpp#L1004-L1060), [AdminManual.md §10](AdminManual.md#files).
-- **Why remove:**
-  - Magic filename convention (`_1_2.md`) that hashes `forum_id/session_id/character_id` with SHA-256 to seed `std::mt19937` and silently inject a random subset of `<session_traits>` into a character's prompt per session. Invisible in the UI unless inspecting files, surprising when debugging character behavior, and unnecessary for a straightforward personal chat app.
+### 6.4 Random character variants
+
+CHA removed automatic per-session selection. Existing files such as `_1_2.md`
+can be edited and included like any other Markdown file. [Character files](AdminManual.md#files)
 
 ### 6.5 Editable System Task Prompts (`Settings → Prompts`)
 - **Code & docs:** [src/workspace/prompt_catalog.cpp](../src/workspace/prompt_catalog.cpp), [webapp/src/components/PromptSettings.tsx](../webapp/src/components/PromptSettings.tsx), `system/prompts/*.md`, [AdminManual.md §15](AdminManual.md#prompts).
@@ -268,6 +268,6 @@ Even for capabilities worth keeping, CHA often maintains two or three distinct i
 If you execute the high-value cuts above, **60%–70%+ of the codebase and test suite can be deleted** while keeping every core strength of CHA intact:
 
 1. **Keep the Core:** Native macOS desktop app, multi-character Forums, Characters & Personas (plain Markdown profiles edited in Settings), `SessionController` (`@Name`, `/mcast`, `@-`, `/clear`, per-session Model/Effort overrides, automatic session naming, manual session Markdown **Download**), the 4 model API protocols (Responses, Chat Completions, Anthropic, Gemini) with standard API keys, 1 STT provider + 1 HTTP TTS provider, 1 web search/page-read tool, and a clean single-version Notes tree with direct chat attachment (`##RefID` + an **Attach open note** button + local text file drop).
-2. **Wave 1 — Pure Cuts (Zero Core Impact):** Remove EPUB export/import (`fflate`), Note Batch Audio + OS codecs, L1/L2/L3/Summary/Flex summarization, YouTube/page LLM reformatting, log-only USD cost tables, Russian `A→Я` transliteration, `_1_2.md` random variants, `Settings → Styles`, `Settings → Prompts`, `Copy JSON`, `libuv`, and legacy migration shims.
+2. **Wave 1 — Pure Cuts (Zero Core Impact):** Remove EPUB export/import (`fflate`), Note Batch Audio + OS codecs, L1/L2/L3/Summary/Flex summarization, YouTube/page LLM reformatting, log-only USD cost tables, Russian `A→Я` transliteration, `Settings → Styles`, `Settings → Prompts`, `Copy JSON`, `libuv`, and legacy migration shims.
 3. **Wave 2 — Subsystem Unloading:** Remove D1 Sync (and optionally R2 Storage), Cloud Library Vector Stores, Jev external classifier, Cross-Session Summaries (`Forums/` managed note folders), Continuous Session Mirror, Welcome Assistant maintenance agent (and the ephemeral Entrance/Welcome DB), and Filesystem Config Export/Import + the `$$(...)` template DSL.
 4. **Wave 3 — Platform & Vendor Consolidation:** Remove ChaWeb/`cha-daemon`/Linux packaging (already on hold), drop Windows host support if unused, drop duplicate xAI WebSocket STT / streaming TTS WebSocket / Codex OAuth / `web_reader`, and optionally simplify multi-vaults/SQLCipher to a single local SQLite database.

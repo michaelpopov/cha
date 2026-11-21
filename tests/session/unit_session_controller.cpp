@@ -26,7 +26,6 @@
 #include <future>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -584,97 +583,29 @@ TEST(SessionController, ValidatesTextFilesAndRollsBackAnAttachmentWhoseNoticeCan
     ASSERT_TRUE(controller->add_text_file("limit.txt", std::string(256 * 1024, 'x')).input_consumed);
 }
 
-TEST(SessionController, SelectsRandomNumberOfCharacterVariantCategoriesForEachSession) {
+TEST(SessionController, NumberedCharacterFilesDoNotChangeChatPrompts) {
     test::TestWorkspace fixture;
     const auto directory = fixture.root() / "characters" / "guide";
     std::ofstream(directory / "CHARACTER.md")
         << "Base $${character.display_name} in $${forum.display_name}.";
-    const std::vector<std::pair<std::string, std::string>> files{
-        {"_1_1.md", "CATEGORY_ONE_A"}, {"_1_2.md", "CATEGORY_ONE_B"},
-        {"_2_1.md", "CATEGORY_TWO_A"}, {"_2_2.md", "CATEGORY_TWO_B"},
-        {"_2_3.md", "CATEGORY_TWO_C"}, {"_10_7.md", " \nCATEGORY_TEN\n\n"},
-        {"_20_1.md", "CATEGORY_TWENTY"},
-        {"NOTES.md", "IGNORED"}, {"1_1.md", "IGNORED"},
-        {"_1_x.md", "IGNORED"}, {"_x_1.md", "IGNORED"},
-        {"_1_2_extra.md", "IGNORED"}, {"_1_.md", "IGNORED"},
-        {"__1.md", "IGNORED"}, {"_99999999999999999999_1.md", "IGNORED"},
-    };
-    for (const auto& [filename, text] : files) std::ofstream(directory / filename) << text;
-    std::filesystem::create_directory(directory / "nested");
-    std::ofstream(directory / "nested" / "_3_1.md") << "IGNORED";
+    std::ofstream(directory / "_1_1.md") << "First numbered file.";
+    std::ofstream(directory / "_2_1.md") << "Second numbered file.";
+    std::ofstream(directory / "_3_1.md") << "Third numbered file.";
     const auto store = WorkspaceConfigStore::open(test::import_test_database(fixture.root()));
     const auto workspace = store->snapshot();
-    std::set<std::string> selected_variants;
-    std::set<std::string> selected_category_combinations;
-    std::set<std::size_t> selected_counts;
-    const std::vector<std::vector<std::string>> categories{
-        {"CATEGORY_ONE_A", "CATEGORY_ONE_B"},
-        {"CATEGORY_TWO_A", "CATEGORY_TWO_B", "CATEGORY_TWO_C"},
-        {"CATEGORY_TEN"}, {"CATEGORY_TWENTY"},
-    };
-    for (int session = 0; session < 64; ++session) {
-        const auto session_id = "variants-" + std::to_string(session);
+    const std::string expected_profile = "Base Guide in The Lobby.";
+    const auto preview = store->forum_system_prompt("lobby", "guide");
+    EXPECT_NE(preview.find("<character_instructions>\n" + expected_profile
+        + "\n</character_instructions>"), std::string::npos);
+    for (const auto* session_id : {"chat-one", "chat-two", "chat-three", "chat-four"}) {
+        SCOPED_TRACE(session_id);
         const auto definitions = capture_session_definitions(workspace, session_id);
         ASSERT_EQ(definitions.size(), 2U);
-        const auto& definition = *definitions.front();
-        EXPECT_EQ(store->forum_system_prompt({"lobby", session_id}, "guide"),
-            definition.system_prompt);
-        const std::string suffix = definition.character_description.substr(
-            std::string("Base Guide in The Lobby.").size());
-        std::string expected_suffix;
-        std::string category_combination;
-        std::size_t count = 0;
-        for (const auto& category : categories) {
-            std::size_t category_count = 0;
-            for (const auto& variant : category) {
-                if (suffix.find(variant) == std::string::npos) continue;
-                ++category_count;
-                ++count;
-                expected_suffix += "\n\n" + variant;
-                selected_variants.insert(variant);
-            }
-            EXPECT_LE(category_count, 1U);
-            category_combination += category_count == 0 ? '0' : '1';
+        for (const auto& definition : definitions) {
+            EXPECT_EQ(definition->character_prompt, expected_profile);
+            EXPECT_EQ(definition->character_description, expected_profile);
+            EXPECT_EQ(definition->system_prompt, preview);
         }
-        EXPECT_EQ(suffix, expected_suffix);
-        selected_counts.insert(count);
-        std::string expected = "Base Guide in The Lobby.";
-        if (!suffix.empty()) {
-            expected += "\n\n<session_traits>\n" + suffix.substr(2) + "\n</session_traits>";
-        }
-        EXPECT_EQ(definition.character_prompt, expected);
-        EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
-        EXPECT_NE(definition.system_prompt.find(
-            "<character_instructions>\n" + expected
-            + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
-            std::string::npos);
-        EXPECT_EQ(definition.system_prompt.find("IGNORED"), std::string::npos);
-        EXPECT_EQ(definitions[1]->system_prompt, definition.system_prompt);
-        const auto reopened = capture_session_definitions(workspace, session_id);
-        ASSERT_EQ(reopened.size(), 2U);
-        EXPECT_EQ(reopened.front()->system_prompt, definition.system_prompt);
-        selected_category_combinations.insert(category_combination);
-    }
-    EXPECT_EQ(selected_counts, (std::set<std::size_t>{0, 1, 2, 3, 4}));
-    EXPECT_EQ(selected_variants.size(), 7U);
-    EXPECT_GT(selected_category_combinations.size(), 5U);
-    EXPECT_EQ(workspace->find_character("guide")->markdown, "Base Guide in .");
-    EXPECT_EQ(workspace->find_forum_member("lobby", "guide")->character_prompt,
-        "Base Guide in The Lobby.");
-}
-
-TEST(SessionController, PreservesCharacterPromptsWithoutVariantFiles) {
-    test::TestWorkspace fixture;
-    std::ofstream(fixture.root() / "characters" / "guide" / "NOTES.md") << "Unused notes";
-    const auto workspace = std::make_shared<const Workspace>(Workspace::load(fixture.root()));
-    const auto expected = workspace->character_definition("lobby", "guide");
-    EXPECT_EQ(expected.system_prompt.find("<session_traits>"), std::string::npos);
-    const auto definitions = capture_session_definitions(workspace, "no-variants");
-    ASSERT_EQ(definitions.size(), 2U);
-    for (const auto& definition : definitions) {
-        EXPECT_EQ(definition->character_prompt, expected.character_prompt);
-        EXPECT_EQ(definition->character_description, expected.character_description);
-        EXPECT_EQ(definition->system_prompt, expected.system_prompt);
     }
 }
 

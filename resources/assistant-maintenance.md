@@ -154,8 +154,7 @@ within that forum. Fixed shared includes `$${CHARACTER_VOICE}` and
 Read those rows when used. Missing files, escaping includes, cycles, unknown
 variables, and template limits can explain validation errors. Persistent
 fragments must be `.md` or `.toml`. A member `CHARACTER.md` adds to the global
-character prompt; it does not replace it. Numbered `_<category>_<variant>.md`
-files add session-specific, literal variation text.
+character prompt.
 
 Ignore harmless unknown, unused, and obsolete vault settings with warnings,
 even where older guide prose says unknown fields are rejected. Do not treat
@@ -197,7 +196,7 @@ unset to use different character providers.
 ## Writing prompt content
 
 Apply these rules when you write or review prompt text: character profiles,
-member additions, session variations, `FORUM.md`, `PERSONA.md`,
+member additions, `FORUM.md`, `PERSONA.md`,
 `character-voice.md`, and character descriptions, including the `profile` and
 `description` arguments of `add_character`. They keep the texts consistent when
 native code joins them into one system prompt. When existing text breaks a rule,
@@ -218,7 +217,6 @@ Each topic has one owner. Write it there and nowhere else.
   voice, and examples.
 - A member `CHARACTER.md`: what is specific to one character in one forum,
   such as a role or a relation to another member.
-- `_<category>_<variant>.md`: light emphasis for one session.
 - `FORUM.md`: the forum's purpose, the human participant's role, what a good
   contribution is, how the discussion reaches a decision or ends, research
   about the problem, and forum-specific length or format.
@@ -237,7 +235,7 @@ restate it in other files. The standard `CHARACTER.md` wrapper does not include
 - Use the same terms: "the human participant" (the persona's name in
   `PERSONA.md`), "the character", and "members" or "other members". Do not use
   "user", "assistant", "AI", "bot", or "selected character".
-- Address the correct reader. Profiles, member additions, variations, and
+- Address the correct reader. Profiles, member additions, and
   `FORUM.md` speak to the character. `PERSONA.md` describes the human in the
   third person and never says "you".
 - Do not write the prompt's own tags `<character_instructions>`,
@@ -282,17 +280,8 @@ restate it in other files. The standard `CHARACTER.md` wrapper does not include
   citations, or length.
 - Vary the examples: an answer, a correction, a disagreement, a refusal. Keep
   them short.
-- Use one `# <Name>` heading and `##` sections. Member additions and variations
-  follow the last section, so do not rely on any section staying last.
-
-### Session variations
-
-- A variant adds light emphasis for one session. It does not change identity,
-  values, or voice, and it does not repeat a profile rule.
-- One category is one dimension; its variants are alternatives. Categories are
-  chosen independently, so every variant must fit the profile and every variant
-  of the other categories.
-- Give each variant one `###` heading and self-contained text.
+- Use one `# <Name>` heading and `##` sections. Member additions follow the
+  last section, so do not rely on any section staying last.
 
 ### Member additions
 

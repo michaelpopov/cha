@@ -2446,9 +2446,8 @@ WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_file(
 }
 
 std::string WorkspaceConfigStore::forum_system_prompt(
-    const FullSessionId& identity,
+    std::string_view forum_id,
     std::string_view character_id) const {
-    const auto& forum_id = identity.forum_id;
     const std::lock_guard lock(impl_->mutex);
     const auto workspace = impl_->snapshot();
     const auto* forum = workspace->find_forum(forum_id);
@@ -2458,7 +2457,7 @@ std::string WorkspaceConfigStore::forum_system_prompt(
         throw std::invalid_argument("Select a provider for this character in Settings.");
     }
     if (workspace->find_forum_member(forum_id, character_id)) {
-        return workspace->character_definition(identity, character_id).system_prompt;
+        return workspace->character_definition(forum_id, character_id).system_prompt;
     }
 
     // Use the normal member editor and loader on a disposable copy. No edits
@@ -2470,7 +2469,7 @@ std::string WorkspaceConfigStore::forum_system_prompt(
     WorkspaceConfigEditor editor(*workspace, files);
     editor.write_forum_members(forum_id, members);
     return Workspace::load(workspace->root(), files)
-        .character_definition(identity, character_id).system_prompt;
+        .character_definition(forum_id, character_id).system_prompt;
 }
 
 WorkspaceConfigEditResult WorkspaceConfigStore::apply_forum_members_and_persona(

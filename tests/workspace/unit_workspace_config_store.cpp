@@ -3931,28 +3931,26 @@ TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingCo
         "display_name = \"Mentor\"\nprovider = \"test\"\n[prompt]\nvoice = \"Base voice\"\n");
     write_bytes(fixture.root() / "characters/mentor/CHARACTER.md", "$${voice}\n$${forum.display_name}");
     write_bytes(fixture.root() / "forums/lobby/members/guide/CHARACTER.md", "Member instructions.");
-    write_bytes(fixture.root() / "characters/guide/_1_1.md", "Guide variant.");
     const auto database = test::import_test_database(fixture.root());
     auto store = WorkspaceConfigStore::open(database);
-    const FullSessionId identity{"lobby", "preview-session"};
     const auto before = store->snapshot();
     const auto revision = store->config_revision();
-    const auto member_prompt = store->forum_system_prompt(identity, "guide");
-    EXPECT_EQ(member_prompt, before->character_definition(identity, "guide").system_prompt);
+    const auto member_prompt = store->forum_system_prompt("lobby", "guide");
+    EXPECT_EQ(member_prompt, before->character_definition("lobby", "guide").system_prompt);
     EXPECT_NE(member_prompt.find("Member instructions."), std::string::npos);
-    const auto preview = store->forum_system_prompt(identity, "mentor");
+    const auto preview = store->forum_system_prompt("lobby", "mentor");
     EXPECT_NE(preview.find("Saved persona instructions."), std::string::npos);
     EXPECT_NE(preview.find("Forum default voice"), std::string::npos);
     EXPECT_NE(preview.find("The Lobby"), std::string::npos);
     EXPECT_EQ(store->snapshot(), before);
     EXPECT_EQ(store->config_revision(), revision);
     EXPECT_EQ(before->find_forum_member("lobby", "mentor"), nullptr);
-    EXPECT_THROW((void)store->forum_system_prompt({"missing", identity.session_id}, "guide"), std::out_of_range);
-    EXPECT_THROW((void)store->forum_system_prompt(identity, "missing"), std::out_of_range);
+    EXPECT_THROW((void)store->forum_system_prompt("missing", "guide"), std::out_of_range);
+    EXPECT_THROW((void)store->forum_system_prompt("lobby", "missing"), std::out_of_range);
 
     (void)store->apply_forum_members_and_persona(
         "lobby", std::vector<std::string>{"guide", "mentor"}, "writer");
-    EXPECT_EQ(preview, store->snapshot()->character_definition(identity, "mentor").system_prompt);
+    EXPECT_EQ(preview, store->snapshot()->character_definition("lobby", "mentor").system_prompt);
 }
 
 TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
@@ -4047,19 +4045,20 @@ TEST_F(WorkspaceConfigStoreTest, ImportPreservesBuiltinAssistantMembershipAndOnl
 }
 
 TEST_F(WorkspaceConfigStoreTest, CharacterFileRenamePreservesBytesAndPromptIncludes) {
-    write_bytes(source() / "characters/guide/CHARACTER.md", "$$(NOTES.md) $$( ./NOTES.md )");
-    write_bytes(source() / "characters/guide/NOTES.md", "Original notes\r\n");
-    write_bytes(source() / "characters/guide/EXAMPLE.md", "$$$(NOTES.md) $$(NOTES.md)");
+    write_bytes(source() / "characters/guide/CHARACTER.md", "$$(_1_2.md) $$( ./_1_2.md )");
+    write_bytes(source() / "characters/guide/_1_2.md", "Original notes\r\n");
+    write_bytes(source() / "characters/guide/EXAMPLE.md", "$$$(_1_2.md) $$(_1_2.md)");
     import_from_source();
     auto store = WorkspaceConfigStore::open(database());
     const auto before = config_contents(database());
     const auto prompt = store->snapshot()->find_character("guide")->markdown;
-    store->rename_character_file("guide", "NOTES.md", "MEMORIES.txt");
+    EXPECT_NE(prompt.find("Original notes"), std::string::npos);
+    store->rename_character_file("guide", "_1_2.md", "MEMORIES.txt");
     auto after = config_contents(database());
-    EXPECT_FALSE(after.contains("characters/guide/NOTES.md"));
-    EXPECT_EQ(after.at("characters/guide/MEMORIES.txt"), before.at("characters/guide/NOTES.md"));
+    EXPECT_FALSE(after.contains("characters/guide/_1_2.md"));
+    EXPECT_EQ(after.at("characters/guide/MEMORIES.txt"), before.at("characters/guide/_1_2.md"));
     EXPECT_EQ(after.at("characters/guide/CHARACTER.md"), "$$(MEMORIES.txt) $$(./MEMORIES.txt)");
-    EXPECT_EQ(after.at("characters/guide/EXAMPLE.md"), "$$$(NOTES.md) $$(MEMORIES.txt)");
+    EXPECT_EQ(after.at("characters/guide/EXAMPLE.md"), "$$$(_1_2.md) $$(MEMORIES.txt)");
     EXPECT_EQ(store->snapshot()->find_character("guide")->markdown, prompt);
     store.reset();
     export_workspace_configuration(database(), export_);

@@ -1172,9 +1172,7 @@ std::string Application::get_forum_system_prompt(
     const std::lock_guard lifecycle(impl_->lifecycle_mutex);
     impl_->require_admitted(epoch);
     try {
-        // The settings preview needs a stable selection, without a stored session.
-        return impl_->store->forum_system_prompt(
-            {std::string(forum_id), "prompt-preview"}, character_id);
+        return impl_->store->forum_system_prompt(forum_id, character_id);
     } catch (const std::out_of_range&) {
         throw ApplicationError(ErrorCode::not_found, "That forum or character was not found.");
     } catch (const std::invalid_argument& error) {

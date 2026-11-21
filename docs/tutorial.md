@@ -313,9 +313,7 @@ The other utilities support important boundaries:
   substitutions with containment and cycle/resource limits. Persona prompts
   use `persona.id`, `persona.display_name`, and their own `[prompt]` variables;
   editors retain unexpanded source. Character member prompts add to the global
-  profile, and numbered `_<category>_<variant>.md` files supply a stable random
-  set of categories per session, with one file from each selected category. See
-  the maintainer guide for composition boundaries and examples.
+  profile. See the maintainer guide for composition boundaries and examples.
 - `logging.*` owns the process logging lifetime.
 
 Checkpoint: locate one caller of each utility and state whether it is a domain
@@ -537,12 +535,8 @@ protocol, then wraps character and forum instructions separately in
 Assistant line comes before the character instructions and
 `<workspace_inventory>` comes between the two blocks. The expanded persona
 follows in `<participant_profile>`. A member's `CHARACTER.md` adds to the
-global profile; it does not replace it. For each session,
-`Workspace::character_variants()` selects a stable random subset of the
-numbered variant categories, one file from each, and inserts them as a
-`<session_traits>` block in the character profile;
-`SessionController::definition_for()` only delegates. The catalog profile
-remains unchanged.
+global profile. Chat generation and the forum preview use the same workspace
+prompt assembly.
 
 Request encoding appends `<tool_availability>` based on the actual attached
 tools: web search and page reading, saved-summary search and reading, and

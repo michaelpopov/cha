@@ -7,7 +7,6 @@
 #include "providers/voice_output_config.h"
 #include "providers/folder_store_client.h"
 #include "util/curl.h"
-#include "util/crypto.h"
 #include "util/path_name.h"
 #include "util/logging.h"
 #include "util/public_name.h"
@@ -26,8 +25,6 @@
 #include <iterator>
 #include <limits>
 #include <mutex>
-#include <ranges>
-#include <random>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -999,64 +996,6 @@ void overlay(
     for (const auto& [name, value] : source) {
         destination.insert_or_assign(name, value);
     }
-}
-
-std::optional<int> variant_category(std::string_view filename) {
-    if (!filename.starts_with('_') || !filename.ends_with(".md")) return {};
-    filename.remove_prefix(1);
-    filename.remove_suffix(3);
-    const auto separator = filename.find('_');
-    if (separator == std::string_view::npos) return {};
-    const auto category_text = filename.substr(0, separator);
-    const auto variant_text = filename.substr(separator + 1);
-    int category{}, variant{};
-    const auto category_result = std::from_chars(
-        category_text.data(), category_text.data() + category_text.size(), category);
-    const auto variant_result = std::from_chars(
-        variant_text.data(), variant_text.data() + variant_text.size(), variant);
-    if (category_result.ec != std::errc{}
-        || category_result.ptr != category_text.data() + category_text.size()
-        || variant_result.ec != std::errc{}
-        || variant_result.ptr != variant_text.data() + variant_text.size()) return {};
-    return category;
-}
-
-std::string character_variants(
-    const WorkspaceCharacter& character,
-    const FullSessionId& identity) {
-    std::map<int, std::vector<std::string_view>> categories;
-    for (const auto& [filename, text] : character.markdown_files) {
-        if (const auto category = variant_category(filename)) {
-            categories[*category].push_back(text);
-        }
-    }
-    // Keep the selection stable when reopening a session.
-    const std::string key = identity.forum_id + "/" + identity.session_id + "/"
-        + character.character.id;
-    const auto digest = sha256_digest(key);
-    std::seed_seq seed(digest.begin(), digest.end());
-    std::mt19937 random(seed);
-    std::vector<int> selected;
-    std::ranges::sample(std::views::keys(categories), std::back_inserter(selected),
-        std::uniform_int_distribution<std::ptrdiff_t>(0, std::ssize(categories))(random),
-        random);
-    std::string result;
-    for (const int category : selected) {
-        // Seed each category separately so that changes to one category do not
-        // change the variants chosen in other categories.
-        const auto category_digest = sha256_digest(key + "/" + std::to_string(category));
-        std::seed_seq category_seed(category_digest.begin(), category_digest.end());
-        std::mt19937 category_random(category_seed);
-        const auto& variants = categories.at(category);
-        const auto index = std::uniform_int_distribution<std::size_t>(
-            0, variants.size() - 1)(category_random);
-        const auto text = trim_view(variants[index]);
-        if (!text.empty()) {
-            if (!result.empty()) result += "\n\n";
-            result += text;
-        }
-    }
-    return result;
 }
 
 std::string character_description(std::string_view prompt) {
@@ -2522,8 +2461,7 @@ CharacterDefinition Workspace::character_definition(
     const FullSessionId& identity,
     std::string_view character_id,
     const SessionCharacterSettings* overrides) const {
-    const auto* character = find_character(character_id);
-    if (!character) throw std::invalid_argument("Unknown character");
+    if (!find_character(character_id)) throw std::invalid_argument("Unknown character");
     const auto* forum = find_forum(identity.forum_id);
     if (forum && forum->library && forum->library->provider_id
         && !forum_default_provider(identity.forum_id)) {
@@ -2533,8 +2471,7 @@ CharacterDefinition Workspace::character_definition(
             + " provider=" + *library.provider_id + " key=" + library.api_key_id
             + ": Provider is unavailable or cannot use an available Library key.");
     }
-    return character_definition(identity.forum_id, character_id,
-        character_variants(*character, identity), overrides);
+    return character_definition(identity.forum_id, character_id, overrides);
 }
 
 bool provider_uses_key_stores(
@@ -2610,7 +2547,6 @@ ProviderSelection Workspace::resolve_character_settings(
 CharacterDefinition Workspace::character_definition(
     std::string_view forum_id,
     std::string_view character_id,
-    std::string_view variants,
     const SessionCharacterSettings* overrides) const {
     ProviderSelection provider = resolve_character_settings(forum_id, character_id, overrides);
     const auto* character = find_character(character_id);
@@ -2622,14 +2558,7 @@ CharacterDefinition Workspace::character_definition(
         && !provider_supports_web_search(provider.config)) {
         log_warn("Ignoring character web_search for selected provider '" + provider.id + "'");
     }
-    std::string character_prompt = member->character_prompt;
-    std::string description = character_description(character_prompt);
-    variants = trim_view(variants);
-    if (!variants.empty()) {
-        add_to_character_profile(character_prompt,
-            "<session_traits>\n" + std::string(variants) + "\n</session_traits>");
-    }
-    add_to_character_profile(description, variants);
+    const std::string& character_prompt = member->character_prompt;
 
     const WorkspaceForum& forum = *find_forum(forum_id);
     std::string system_prompt = forum_context(*member, *character, forum, *this)
@@ -2651,8 +2580,8 @@ CharacterDefinition Workspace::character_definition(
     return {
         .character = character->character,
         .provider = std::move(provider),
-        .character_prompt = std::move(character_prompt),
-        .character_description = std::move(description),
+        .character_prompt = character_prompt,
+        .character_description = character_description(character_prompt),
         .system_prompt = std::move(system_prompt),
     };
 }

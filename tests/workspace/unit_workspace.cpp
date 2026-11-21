@@ -115,10 +115,6 @@ TEST(Workspace, CharacterProfileAdditionsNormalizeBoundaryWhitespace) {
         add_to_character_profile(prompt, entry.addition);
         EXPECT_EQ(prompt, entry.expected);
     }
-    std::string prompt = "<character_profile>Base.\n</character_profile>";
-    add_to_character_profile(prompt, "\nForum.\n");
-    add_to_character_profile(prompt, "\nVariant.\n");
-    EXPECT_EQ(prompt, "<character_profile>Base.\n\nForum.\n\nVariant.\n</character_profile>");
 }
 
 TEST(Workspace, EagerlyLoadsOwnedResolvedData) {
@@ -1118,104 +1114,34 @@ TEST(Workspace, LoadsNicknamesAndDescribesThemInSystemPrompt) {
         std::string::npos);
 }
 
-TEST(Workspace, BuildsCharacterDefinitionWithVariantsBeforeSystemPromptAssembly) {
-    test::TestWorkspace fixture;
-    std::ofstream(fixture.root() / "characters" / "guide" / "CHARACTER.md", std::ios::binary)
-        << "Voice.\n<character_profile>Base.</character_profile>\nTail.";
-    std::ofstream(fixture.root() / "forums" / "lobby" / "members" / "guide"
-        / "CHARACTER.md", std::ios::binary) << "Forum trait.";
-    const Workspace workspace = Workspace::load(fixture.root());
-    const auto original = workspace.character_definition("lobby", "guide");
-    const auto definition = workspace.character_definition("lobby", "guide", "\nVariant.\n");
-    const std::string expected = "Voice.\n<character_profile>Base.\n\nForum trait.\n\n"
-        "<session_traits>\nVariant.\n</session_traits>\n</character_profile>\nTail.";
-
-    EXPECT_EQ(definition.character_prompt, expected);
-    EXPECT_EQ(definition.character_description, "Base.\n\nForum trait.\n\nVariant.");
-    EXPECT_NE(definition.system_prompt.find("<character_instructions>\n" + expected
-        + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
-        std::string::npos);
-    EXPECT_EQ(workspace.find_forum_member("lobby", "guide")->character_prompt,
-        original.character_prompt);
-    EXPECT_EQ(workspace.character_definition("lobby", "guide").system_prompt,
-        original.system_prompt);
-    EXPECT_EQ(original.system_prompt.find("<session_traits>"), std::string::npos);
-    EXPECT_EQ(workspace.character_definition("lobby", "guide", " \n\t ").system_prompt,
-        original.system_prompt);
-}
-
-TEST(Workspace, BuildsEntranceCharacterDefinitionWithVariants) {
+TEST(Workspace, BuildsEntranceCharacterDefinitionWithInventory) {
     test::TestWorkspace fixture;
     const Workspace workspace = Workspace::load(fixture.root());
-    const auto original = workspace.character_definition(
-        workspace_entrance_id, workspace_assistant_id);
     const auto definition = workspace.character_definition(
-        workspace_entrance_id, workspace_assistant_id, "Assistant variant.");
-    std::string expected = original.character_prompt;
-    add_to_character_profile(expected,
-        "<session_traits>\nAssistant variant.\n</session_traits>");
+        workspace_entrance_id, workspace_assistant_id);
 
-    EXPECT_FALSE(original.character_prompt.empty());
-    EXPECT_EQ(definition.character_prompt, expected);
-    EXPECT_NE(definition.character_description.find("Assistant variant."), std::string::npos);
-    EXPECT_NE(definition.system_prompt.find("<character_instructions>\n" + expected
+    EXPECT_FALSE(definition.character_prompt.empty());
+    EXPECT_NE(definition.system_prompt.find("<character_instructions>\n" + definition.character_prompt
         + "\n</character_instructions>\n\n<workspace_inventory>\n"), std::string::npos);
     EXPECT_NE(definition.system_prompt.find("\"name\":\"The Lobby\""), std::string::npos);
     EXPECT_EQ(definition.system_prompt.find("\"name\":\"Entrance\""), std::string::npos);
 }
 
-TEST(Workspace, InsertsCharacterVariantsBeforeLastProfileClosingTag) {
-    test::TestWorkspace fixture;
-    const auto directory = fixture.root() / "characters" / "guide";
-    std::ofstream(directory.parent_path() / "character-voice.md", std::ios::binary) << "Character voice.";
-    std::ofstream(directory / "PROFILE.md", std::ios::binary) << "Base profile.";
-    const std::vector<std::pair<std::string, std::string>> cases{
-        {
-            "$$(../character-voice.md)\n\n<character_profile>\n"
-            "$$(PROFILE.md)\n</character_profile>\nAfter profile.",
-            "Character voice.\n\n<character_profile>\nBase profile.\n\n"
-            "<session_traits>\nVariant trait.\n</session_traits>\n"
-            "</character_profile>\nAfter profile.",
-        },
-        {
-            "<character_profile>Earlier profile.</character_profile>\n"
-            "<character_profile>$$(PROFILE.md)</character_profile>",
-            "<character_profile>Earlier profile.</character_profile>\n"
-            "<character_profile>Base profile.\n\n<session_traits>\nVariant trait.\n"
-            "</session_traits>\n</character_profile>",
-        },
-    };
-    for (const auto& [prompt, expected] : cases) {
-        std::ofstream(directory / "CHARACTER.md", std::ios::binary) << prompt;
-        const Workspace workspace = Workspace::load(fixture.root());
-        const auto definition = workspace.character_definition("lobby", "guide", "Variant trait.");
-        EXPECT_EQ(definition.character_prompt, expected);
-        EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
-        EXPECT_NE(definition.system_prompt.find(
-            "<character_instructions>\n" + expected
-            + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
-            std::string::npos);
-        EXPECT_EQ(definition.character_description,
-            workspace.find_character("guide")->markdown + "\n\nVariant trait.");
-    }
-}
-
-TEST(Workspace, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
+TEST(Workspace, CombinesBaseAndForumDescriptionsInsideProfile) {
     test::TestWorkspace fixture;
     const auto character = fixture.root() / "characters" / "guide";
     const auto member = fixture.root() / "forums" / "lobby" / "members" / "guide";
     std::ofstream(character / "CHARACTER.md", std::ios::binary)
-        << "Character voice.\n<character_profile>$$(PROFILE.md)</character_profile>\n";
+        << "Character voice.\n<character_profile>$$(PROFILE.md)</character_profile>\nAfter profile.";
     std::ofstream(character / "PROFILE.md", std::ios::binary) << "Base profile.\n\n";
     std::ofstream(member / "CHARACTER.md", std::ios::binary)
         << "<character_profile>$$(PROFILE.md)</character_profile>";
     std::ofstream(member / "PROFILE.md", std::ios::binary) << "\nForum trait for $${forum.display_name}.\n\n";
     const Workspace workspace = Workspace::load(fixture.root());
-    const auto definition = workspace.character_definition("lobby", "guide", "\n\nVariant trait.\n\n");
+    const auto definition = workspace.character_definition("lobby", "guide");
     const std::string expected =
         "Character voice.\n<character_profile>Base profile.\n\n"
-        "Forum trait for The Lobby.\n\n<session_traits>\nVariant trait.\n"
-        "</session_traits>\n</character_profile>\n";
+        "Forum trait for The Lobby.\n</character_profile>\nAfter profile.";
     EXPECT_EQ(definition.character_prompt, expected);
     EXPECT_TRUE(definition.system_prompt.starts_with("# Conversation protocol\n"));
     EXPECT_NE(definition.system_prompt.find(
@@ -1223,7 +1149,7 @@ TEST(Workspace, CombinesBaseForumAndVariantDescriptionsInsideProfile) {
         + "\n</character_instructions>\n\n<forum_instructions>\nForum instructions\n"),
         std::string::npos);
     EXPECT_EQ(definition.character_description,
-        "Base profile.\n\nForum trait for The Lobby.\n\nVariant trait.");
+        "Base profile.\n\nForum trait for The Lobby.");
     EXPECT_EQ(workspace.find_character("guide")->markdown, "Base profile.");
 }
 
@@ -2556,7 +2482,7 @@ TEST(Workspace, SessionModelAndEffortUseConfiguredPrecedenceAndGuardSearch) {
     EXPECT_EQ(defaults.config.reasoning_effort, "high");
     EXPECT_EQ(defaults.config.web_search, WebSearchMode::automatic);
     SessionCharacterSettings settings{.provider_id = "other"};
-    auto selected = workspace.character_definition("lobby", "guide", {}, &settings).provider;
+    auto selected = workspace.character_definition("lobby", "guide", &settings).provider;
     EXPECT_EQ(selected.id, "other");
     EXPECT_EQ(selected.config.model, "other-model");
     EXPECT_EQ(selected.config.reasoning_effort, "high");
@@ -2575,7 +2501,7 @@ TEST(Workspace, SessionModelAndEffortUseConfiguredPrecedenceAndGuardSearch) {
             + api + "\"\n" + (api == "responses" ? "auth = \"openai_subscription\"\nbase_path = \"/backend-api/codex\"\ncache_retention = \"off\"\n" : ""));
         workspace = Workspace::load(fixture.root());
         settings.provider_id = "other";
-        selected = workspace.character_definition("lobby", "guide", {}, &settings).provider;
+        selected = workspace.character_definition("lobby", "guide", &settings).provider;
         EXPECT_EQ(selected.config.web_search, api == "responses"
             ? WebSearchMode::automatic : WebSearchMode::off) << api;
         EXPECT_EQ(selected.config.reasoning_effort, "xhigh") << api;

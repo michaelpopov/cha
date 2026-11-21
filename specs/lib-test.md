@@ -288,7 +288,7 @@ character, Forum, and persona text, and the prompts) before the trial. After
 the trial, audit the logged request body of every round of each positive or
 negative trial, and verify that its target answer is absent from:
 
-- System/character/Forum/persona text and session traits.
+- System, character, Forum, and persona text.
 - User prompts, filenames, titles, resource names, and tool descriptions.
 - Earlier transcript entries, attached notes/files, summary catalogues,
   summaries, tool responses from web search, and application notices.
