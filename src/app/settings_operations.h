@@ -2,7 +2,6 @@
 
 #include "providers/credentials.h"
 #include "storage/folder_store_storage.h"
-#include "providers/openai_oauth.h"
 #include "runtime/protocol.h"
 #include "workspace/workspace.h"
 
@@ -17,7 +16,6 @@
 
 namespace cha {
 class ApiKeyStore;
-class OpenAiOAuth;
 class WorkspaceConfigStore;
 class LiveSessionManager;
 }
@@ -44,8 +42,6 @@ namespace cha::app::settings {
     const Workspace& workspace);
 [[nodiscard]] R2StorageDetail r2_storage_detail(
     const R2StorageInfo& key);
-[[nodiscard]] OpenAiAuth openai_auth_from(
-    const OpenAiOAuthSnapshot& snapshot);
 
 [[nodiscard]] std::vector<ProviderSummary> list_providers(
     const Workspace& workspace, std::optional<std::string> api_key_id = std::nullopt);
@@ -69,7 +65,6 @@ void delete_provider(WorkspaceConfigStore& store, LiveSessionManager& live_sessi
     const Workspace& workspace,
     std::string_view id,
     const nlohmann::json& body,
-    OpenAiOAuth& openai_auth,
     ApiKeyStore& api_keys);
 
 [[nodiscard]] std::vector<PromptSummary> list_prompts(const Workspace& workspace);
@@ -173,14 +168,5 @@ void delete_r2_storage(ApiKeyStore& api_keys);
     ApiKeyStore& api_keys,
     const SaveD1StorageRequest& request);
 void delete_d1_storage(ApiKeyStore& api_keys);
-
-[[nodiscard]] OpenAiAuth openai_auth_status(const OpenAiOAuth& owner);
-[[nodiscard]] OpenAiAuth start_openai_auth(
-    OpenAiOAuth& owner,
-    const std::atomic_bool& cancelled);
-[[nodiscard]] OpenAiAuth poll_openai_auth(
-    OpenAiOAuth& owner,
-    const std::atomic_bool& cancelled);
-[[nodiscard]] OpenAiAuth disconnect_openai_auth(OpenAiOAuth& owner);
 
 } // namespace cha::app::settings

@@ -181,7 +181,7 @@ TEST_F(ApplicationConfigTest, BootstrapsAnEmptyConfigurationDirectory) {
         EXPECT_EQ(configuration[0].name, "system/assistant/character.toml");
         EXPECT_EQ(
             configuration.back().name,
-            "system/providers/chatgpt/config.toml");
+            "system/providers/openai/config.toml");
         for (const auto& row : default_prompt_config_files()) {
             EXPECT_NE(std::ranges::find(configuration, row), configuration.end()) << row.name;
         }

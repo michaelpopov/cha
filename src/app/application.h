@@ -475,15 +475,6 @@ public:
         std::uint64_t epoch);
     void disconnect_d1_storage(std::uint64_t epoch);
 
-    [[nodiscard]] OpenAiAuth openai_auth_status(
-        std::uint64_t epoch);
-    [[nodiscard]] std::shared_ptr<OperationReply> start_openai_auth(
-        std::uint64_t epoch);
-    [[nodiscard]] std::shared_ptr<OperationReply> poll_openai_auth(
-        std::uint64_t epoch);
-    [[nodiscard]] OpenAiAuth disconnect_openai_auth(
-        std::uint64_t epoch);
-
     [[nodiscard]] VaultRegistrySnapshot vault_snapshot() const;
     [[nodiscard]] VaultDefinition create_vault(
         VaultCreate create,

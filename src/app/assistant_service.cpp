@@ -4,7 +4,6 @@
 #include "app/settings_operations.h"
 #include "app/workspace_operations.h"
 #include "providers/credentials.h"
-#include "providers/openai_oauth.h"
 #include "runtime/live_session_manager.h"
 #include "storage/not_found_error.h"
 #include "storage/session_repository.h"
@@ -174,7 +173,7 @@ bool welcome_request(const MaintenanceContext& context) {
 // Returns a tool error when the captured epoch is no longer admitted.
 using AdmissionCheck = std::function<std::optional<std::string>()>;
 
-// Removes saved key values, OAuth tokens, and private roots from tool text.
+// Removes saved secrets and private roots from tool text.
 class Redactor {
 public:
     explicit Redactor(const AssistantService::Links& links) {
@@ -192,11 +191,6 @@ public:
                 }
             }
         } catch (const std::exception&) {
-        }
-        if (links.oauth) {
-            for (std::string& secret : links.oauth->redaction_secrets()) {
-                if (!secret.empty()) secrets_.push_back(std::move(secret));
-            }
         }
         try {
             roots_.push_back(utf8_path(links.store->private_root()));
@@ -576,10 +570,7 @@ Json inspect_details(std::string_view topic, const Workspace& workspace) {
 
 Json inspect_services(
     const Workspace& workspace,
-    const ApiKeyStore& api_keys,
-    const OpenAiOAuth& oauth) {
-    // The device code and verification URL stay in the login tool.
-    const auto auth = app::settings::openai_auth_status(oauth);
+    const ApiKeyStore& api_keys) {
     return Json{
         {"jev", optional_json(app::settings::get_jev_settings(workspace))},
         {"session_naming", app::settings::get_session_naming_settings(workspace)},
@@ -588,11 +579,6 @@ Json inspect_services(
         {"voice_input", optional_json(app::settings::get_voice_input_settings(workspace))},
         {"voice_output", optional_json(app::settings::get_voice_output_settings(workspace))},
         {"r2_storage", optional_json(app::settings::get_r2_storage(api_keys))},
-        {"openai_auth", {
-            {"status", auth.status},
-            {"attempt_expires_at", optional_json(auth.attempt_expires_at)},
-            {"error", optional_json(auth.error)},
-        }},
     };
 }
 
@@ -693,10 +679,10 @@ std::string inspect_tool(
     } else if (topic == "characters" || topic == "personas" || topic == "forums") {
         items = inspect_details(topic, *workspace);
     } else if (topic == "services") {
-        if (!links.api_keys || !links.oauth) {
+        if (!links.api_keys) {
             return tool_error("unavailable", "Service metadata is unavailable.");
         }
-        items.push_back(inspect_services(*workspace, *links.api_keys, *links.oauth));
+        items.push_back(inspect_services(*workspace, *links.api_keys));
     } else if (topic == "keys") {
         if (!links.api_keys) return tool_error("unavailable", "Key metadata is unavailable.");
         items = app::settings::list_api_keys(*workspace, *links.api_keys);
@@ -1182,28 +1168,6 @@ std::string AssistantService::execute(
     // Collect redaction values once per call.
     const Redactor redact(links_);
     try {
-        if (name == "assistant_openai_login") {
-            if (parsed.size() != 1 || !parsed.contains("action") || !parsed["action"].is_string()
-                || (parsed["action"] != "start" && parsed["action"] != "complete")) {
-                return tool_error("invalid_argument", "assistant_openai_login requires action start or complete.");
-            }
-            if (!links_.oauth) return tool_error("unavailable", "OpenAI login is not available.");
-            // The OAuth owner survives vault switches. Do not hold the lifecycle
-            // lock during network calls or while waiting for browser approval.
-            lifecycle.unlock();
-            auto snapshot = links_.oauth->status();
-            if (snapshot.state != OpenAiOAuthState::connected) {
-                if (parsed["action"] == "start") {
-                    snapshot = links_.oauth->start(cancel_check);
-                } else if (snapshot.state == OpenAiOAuthState::waiting) {
-                    snapshot = links_.oauth->poll_when_due(cancel_check);
-                } else if (!snapshot.error) {
-                    return tool_error("invalid_argument", "Start OpenAI login before completing it.");
-                }
-            }
-            if (cancel_check()) return tool_error("cancelled", "OpenAI login was cancelled.");
-            return Json(app::settings::openai_auth_from(snapshot)).dump();
-        }
         if (name == "host_config_list" || name == "host_config_read" || name == "host_config_write") {
             return host_config_tool(name, parsed, links_, context, lifecycle,
                 admission_error, cancel_check, redact);

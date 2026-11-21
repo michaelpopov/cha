@@ -5,7 +5,6 @@
 #include "workspace/workspace_config_store.h"
 #include "chat/transcript.h"
 #include "providers/api_key_store.h"
-#include "providers/openai_oauth.h"
 #include "providers/web_search.h"
 #include "support/mock_http_server.h"
 #include "support/test_transcript.h"
@@ -491,7 +490,7 @@ TEST(ProviderClient, DebugLogsSuccessfulRequestsAndResponsesButRedactsTheActiveA
         auto definition = network_definition(mock.port(), stream);
         definition.system_prompt = "debug system instructions";
         definition.provider.config.api_key_id = key.id;
-        ProviderClient client(shared_definition(definition), nullptr, &keys);
+        ProviderClient client(shared_definition(definition), &keys);
         Transcript transcript;
         const auto result = complete(client, client_request(transcript, 77, "debug user prompt secret-model-key"),
             transcript, [](GenerationDelta) {}, std::atomic_bool{false});
@@ -565,7 +564,7 @@ TEST(ProviderClient, DebugLogsFullHttpErrorsButRedactsTheActiveApiKey) {
     DiagnosticLogFile log("debug");
     auto definition = network_definition(mock.port(), true);
     definition.provider.config.api_key_id = key.id;
-    ProviderClient client(shared_definition(definition), nullptr, &keys);
+    ProviderClient client(shared_definition(definition), &keys);
     Transcript transcript;
     const auto result = complete(client, client_request(transcript, 78, "Test failure"),
         transcript, [](GenerationDelta) {}, std::atomic_bool{false});
@@ -604,7 +603,7 @@ TEST(ProviderClient, RequestsFastModeForOpenAiAndOpenRouterEndpoints) {
                 definition.provider.config.api = api;
                 definition.provider.config.cache_retention = CacheRetention::off;
                 definition.provider.config.api_key_id = key.id;
-                ProviderClient client(shared_definition(definition), nullptr, &keys);
+                ProviderClient client(shared_definition(definition), &keys);
                 const Json body = Json::parse(client.prepare(request).bytes);
                 if (item.priority) {
                     EXPECT_EQ(body.at("service_tier"), "priority");
@@ -614,7 +613,7 @@ TEST(ProviderClient, RequestsFastModeForOpenAiAndOpenRouterEndpoints) {
                 auto& config = definition.provider.config;
                 config.flex_processing = eligible_for_flex_processing(config);
                 EXPECT_EQ(config.flex_processing, item.flex);
-                ProviderClient summary_client(shared_definition(std::move(definition)), nullptr, &keys);
+                ProviderClient summary_client(shared_definition(std::move(definition)), &keys);
                 auto summary = Json::parse(summary_client.prepare(request).bytes);
                 auto expected = body;
                 if (item.flex) expected["service_tier"] = "flex";
@@ -629,9 +628,6 @@ TEST(ProviderClient, FlexRequiresNetworkModeAndApiKeyAuthentication) {
     EXPECT_FALSE(eligible_for_flex_processing(config));
     config.api_key_id = "api_key_1";
     EXPECT_TRUE(eligible_for_flex_processing(config));
-    config.auth = ProviderAuth::openai_subscription;
-    EXPECT_FALSE(eligible_for_flex_processing(config));
-    config.auth = ProviderAuth::none;
     config.mode = Mode::test;
     EXPECT_FALSE(eligible_for_flex_processing(config));
     config.mode = Mode::net;
@@ -1246,192 +1242,6 @@ TEST(ProviderClient, HandlesNonStreamingResponsesApiResponse) {
     EXPECT_FALSE(body.contains("tool_choice"));
 }
 
-std::string base64url_encode(std::string_view input) {
-    static constexpr char table[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    std::string encoded;
-    int value = 0;
-    int bits = -6;
-    for (const unsigned char character : input) {
-        value = (value << 8) + character;
-        bits += 8;
-        while (bits >= 0) {
-            encoded.push_back(table[(value >> bits) & 0x3f]);
-            bits -= 6;
-        }
-    }
-    if (bits > -6) {
-        encoded.push_back(table[((value << 8) >> (bits + 8)) & 0x3f]);
-    }
-    return encoded;
-}
-
-std::string jwt_for_account(std::string_view account_id) {
-    const Json header = {{"alg", "none"}, {"typ", "JWT"}};
-    const Json payload = {
-        {"https://api.openai.com/auth",
-         {{"chatgpt_account_id", std::string(account_id)}}}};
-    return base64url_encode(header.dump()) + "."
-        + base64url_encode(payload.dump()) + ".sig";
-}
-
-std::string file_bytes(const std::filesystem::path& path) {
-    std::ifstream file(path);
-    return {
-        std::istreambuf_iterator<char>(file),
-        std::istreambuf_iterator<char>()};
-}
-
-CharacterDefinition subscription_definition() {
-    CharacterDefinition definition = test_definition();
-    definition.provider.config.host = "chatgpt.com";
-    definition.provider.config.port = 443;
-    definition.provider.config.base_path = "/backend-api/codex";
-    definition.provider.config.mode = Mode::net;
-    definition.provider.config.https = true;
-    definition.provider.config.api = ProviderApi::responses;
-    definition.provider.config.auth = ProviderAuth::openai_subscription;
-    definition.provider.config.model = "gpt-5.6-terra";
-    definition.provider.config.stream = true;
-    definition.provider.config.web_search = WebSearchMode::off;
-    definition.provider.config.cache_retention = CacheRetention::off;
-    return definition;
-}
-
-const std::string kCompletedStream =
-    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"
-    "data: {\"type\":\"response.output_text.delta\",\"delta\":\" world\"}\n\n"
-    "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\","
-    "\"usage\":{\"input_tokens\":11,\"output_tokens\":4}}}\n\n";
-
-class SubscriptionOwner {
-public:
-    SubscriptionOwner() {
-        directory_ = std::filesystem::temp_directory_path()
-            / ("cha_subscription_oauth_"
-               + std::to_string(
-                   std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directories(directory_);
-        path_ = directory_ / "cha.sqlite3.openai-auth.json";
-    }
-
-    ~SubscriptionOwner() {
-        std::error_code error;
-        std::filesystem::remove_all(directory_, error);
-    }
-
-    void write_bundle(
-        std::string_view access_token,
-        std::string_view refresh_token,
-        std::int64_t expires_at,
-        std::string_view account_id) {
-        Json object;
-        object["access_token"] = access_token;
-        object["refresh_token"] = refresh_token;
-        object["expires_at"] = expires_at;
-        object["account_id"] = account_id;
-        create_private_file(path_, object.dump());
-    }
-
-    OpenAiOAuth make_connected(
-        std::string_view account_id = "acct_test",
-        std::string_view refresh_token = "fixture-refresh") {
-        const std::string access = jwt_for_account(account_id);
-        write_bundle(access, refresh_token, 1'800'000'000, account_id);
-        return OpenAiOAuth{path_, transport(), clock()};
-    }
-
-    OpenAiOAuth make_near_expiry(std::string_view account_id = "acct_test") {
-        const std::string access = jwt_for_account(account_id);
-        write_bundle(access, "old-refresh", unix_now() + 60, account_id);
-        return OpenAiOAuth{path_, transport(), clock()};
-    }
-
-    OpenAiOAuthTransport transport() {
-        return [this](const OpenAiOAuthHttpRequest& request) {
-            if (on_auth_request) on_auth_request(request);
-            std::lock_guard lock(mutex_);
-            auth_requests.push_back(request);
-            if (next >= responses.size()) {
-                throw std::runtime_error("unexpected OpenAI auth request");
-            }
-            return responses[next++];
-        };
-    }
-
-    OpenAiOAuthClock clock() {
-        return [this] {
-            std::lock_guard lock(mutex_);
-            return now_;
-        };
-    }
-
-    std::int64_t unix_now() {
-        std::lock_guard lock(mutex_);
-        return std::chrono::duration_cast<std::chrono::seconds>(
-                   now_.time_since_epoch())
-            .count();
-    }
-
-    void advance(std::chrono::seconds delay) {
-        std::lock_guard lock(mutex_);
-        now_ += delay;
-    }
-
-    void push_refresh(std::string_view refresh, std::string_view account_id) {
-        std::lock_guard lock(mutex_);
-        responses.push_back({
-            200,
-            Json{
-                {"access_token", jwt_for_account(account_id)},
-                {"refresh_token", refresh},
-                {"expires_in", 3600},
-            }.dump(),
-        });
-    }
-
-    void push_login_success(std::string_view refresh, std::string_view account_id) {
-        std::lock_guard lock(mutex_);
-        responses.push_back({
-            200,
-            Json{
-                {"device_auth_id", "fixture-device"},
-                {"user_code", "TEST-ONLY"},
-                {"interval", 1},
-            }.dump(),
-        });
-        responses.push_back({
-            200,
-            Json{
-                {"authorization_code", "fixture-code"},
-                {"code_verifier", "fixture-verifier"},
-            }.dump(),
-        });
-        responses.push_back({
-            200,
-            Json{
-                {"access_token", jwt_for_account(account_id)},
-                {"refresh_token", refresh},
-                {"expires_in", 3600},
-            }.dump(),
-        });
-    }
-
-    Json stored() const { return Json::parse(file_bytes(path_)); }
-
-    std::function<void(const OpenAiOAuthHttpRequest&)> on_auth_request;
-    std::vector<OpenAiOAuthHttpRequest> auth_requests;
-
-private:
-    std::filesystem::path directory_;
-    std::filesystem::path path_;
-    std::mutex mutex_;
-    std::chrono::system_clock::time_point now_{
-        std::chrono::system_clock::time_point{std::chrono::seconds{1'700'000'000}}};
-    std::vector<OpenAiOAuthHttpResponse> responses;
-    std::size_t next{};
-};
-
 TEST(ProviderClient, MissingSavedApiKeyFailsWhenTheProviderIsUsed) {
     const std::filesystem::path directory = std::filesystem::temp_directory_path()
         / ("cha_provider_missing_key_" + std::to_string(
@@ -1456,7 +1266,7 @@ TEST(ProviderClient, MissingSavedApiKeyFailsWhenTheProviderIsUsed) {
         }
         try {
             (void)ProviderClient(
-                shared_definition(std::move(definition)), nullptr, &keys);
+                shared_definition(std::move(definition)), &keys);
             ADD_FAILURE() << "expected missing API key rejection";
         } catch (const std::runtime_error& error) {
             if (!legacy_name) {
@@ -1494,7 +1304,6 @@ TEST(ProviderClient, UsesASavedApiKey) {
         std::vector<ProviderHttpRequest> requests;
         ProviderClient client(
             shared_definition(std::move(definition)),
-            nullptr,
             &keys,
             [&requests](
                 const ProviderHttpRequest& request,
@@ -1528,7 +1337,6 @@ TEST(ProviderClient, UnauthenticatedProviderOmitsAuthorization) {
     ProviderClient client(
         shared_definition(std::move(definition)),
         nullptr,
-        nullptr,
         [&requests](
             const ProviderHttpRequest& request,
             const std::atomic_bool&) {
@@ -1554,339 +1362,6 @@ TEST(ProviderClient, UnauthenticatedProviderOmitsAuthorization) {
                 return header.starts_with("Authorization:");
             }),
         requests.front().headers.end());
-}
-
-TEST(ProviderClient, SubscriptionWithoutOwnerFailsClearly) {
-    try {
-        (void)ProviderClient(shared_definition(subscription_definition()));
-        FAIL() << "expected missing owner rejection";
-    } catch (const std::runtime_error& error) {
-        EXPECT_NE(
-            std::string(error.what()).find("authentication owner"),
-            std::string::npos);
-    }
-}
-
-TEST(ProviderClient, StreamsSubscriptionRequestWithChaIdentity) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected();
-    std::vector<ProviderHttpRequest> captured;
-    ProviderHttpTransport transport =
-        [&captured](const ProviderHttpRequest& request, const std::atomic_bool&) {
-            captured.push_back(request);
-            return ProviderHttpResponse{
-                200, "text/event-stream", kCompletedStream};
-        };
-    const SharedCharacterDefinition shared =
-        shared_definition(subscription_definition());
-    ProviderClient client(shared, &oauth, transport);
-    std::atomic_bool cancellation{false};
-    Transcript transcript;
-    const GenerationRequest request = client_request(
-        transcript, 40, "Question", {
-            test::human_entry(
-                1, {"human", "You"}, {"assistant", "Assistant"},
-                "Earlier question", 6),
-            make_character_entry(
-                2, "assistant", "Assistant", "Earlier answer",
-                EntryStatus::complete, 6),
-        });
-    std::vector<std::string> deltas;
-
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&deltas](GenerationDelta delta) {
-            deltas.push_back(std::move(delta.text));
-        },
-        cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    EXPECT_EQ(deltas, (std::vector<std::string>{"Hello", " world"}));
-    ASSERT_TRUE(result.usage.input_tokens);
-    ASSERT_TRUE(result.usage.output_tokens);
-    EXPECT_EQ(*result.usage.input_tokens, 11U);
-    EXPECT_EQ(*result.usage.output_tokens, 4U);
-    ASSERT_EQ(captured.size(), 1U);
-    EXPECT_EQ(captured.front().url, "https://chatgpt.com/backend-api/codex/responses");
-    EXPECT_EQ(
-        provider_endpoint(shared->provider.config),
-        "https://chatgpt.com/backend-api/codex/responses");
-    const auto has_header = [&captured](std::string_view header) {
-        return std::ranges::find(captured.front().headers, header)
-            != captured.front().headers.end();
-    };
-    const std::string access = jwt_for_account("acct_test");
-    EXPECT_TRUE(has_header("Authorization: Bearer " + access));
-    EXPECT_TRUE(has_header("chatgpt-account-id: acct_test"));
-    EXPECT_TRUE(has_header("Content-Type: application/json"));
-    EXPECT_TRUE(has_header("Accept: text/event-stream"));
-    EXPECT_TRUE(has_header("OpenAI-Beta: responses=experimental"));
-    EXPECT_TRUE(has_header("originator: cha"));
-    EXPECT_TRUE(has_header("User-Agent: cha"));
-    const Json body = Json::parse(captured.front().body);
-    EXPECT_EQ(body["model"], "gpt-5.6-terra");
-    EXPECT_EQ(body["service_tier"], "priority");
-    EXPECT_TRUE(body["stream"]);
-    EXPECT_FALSE(body["store"]);
-    EXPECT_TRUE(body["instructions"].get<std::string>().starts_with("You are a helpful assistant.\n\n"));
-    EXPECT_FALSE(body.contains("temperature"));
-    EXPECT_FALSE(body.contains("max_output_tokens"));
-    EXPECT_FALSE(body.contains("tools"));
-    EXPECT_FALSE(body.contains("prompt_cache_key"));
-    EXPECT_EQ(body["input"], Json::array({
-        {{"role", "user"}, {"content", "from You:\nEarlier question"}},
-        {{"role", "assistant"}, {"content", "Earlier answer"}},
-        {{"role", "user"}, {"content", "from You:\nQuestion"}},
-    }));
-}
-
-TEST(ProviderClient, CancelledSubscriptionRequestSendsNothingBeforeAuth) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected();
-    int model_calls = 0;
-    int auth_calls = 0;
-    owner.on_auth_request = [&auth_calls](const OpenAiOAuthHttpRequest&) {
-        ++auth_calls;
-    };
-    ProviderHttpTransport transport =
-        [&model_calls](const ProviderHttpRequest&, const std::atomic_bool&) {
-            ++model_calls;
-            return ProviderHttpResponse{200, "text/event-stream", kCompletedStream};
-        };
-    ProviderClient client(
-        shared_definition(subscription_definition()), &oauth, transport);
-    std::atomic_bool cancellation{true};
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 41, "skip");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-    EXPECT_EQ(model_calls, 0);
-    EXPECT_EQ(auth_calls, 0);
-}
-
-TEST(ProviderClient, CancellationDuringRefreshSavesCredentialsAndSkipsModel) {
-    SubscriptionOwner owner;
-    std::mutex mutex;
-    std::condition_variable ready;
-    bool refresh_started = false;
-    bool finish_refresh = false;
-    owner.on_auth_request = [&](const OpenAiOAuthHttpRequest&) {
-        {
-            std::lock_guard lock(mutex);
-            refresh_started = true;
-        }
-        ready.notify_all();
-        std::unique_lock lock(mutex);
-        ready.wait(lock, [&] { return finish_refresh; });
-    };
-    owner.push_refresh("new-refresh", "acct_test");
-    OpenAiOAuth oauth = owner.make_near_expiry();
-    int model_calls = 0;
-    ProviderHttpTransport transport =
-        [&model_calls](const ProviderHttpRequest&, const std::atomic_bool&) {
-            ++model_calls;
-            return ProviderHttpResponse{200, "text/event-stream", kCompletedStream};
-        };
-    ProviderClient client(
-        shared_definition(subscription_definition()), &oauth, transport);
-    std::atomic_bool cancellation{false};
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 42, "refresh");
-    GenerationResult result{};
-    std::thread worker([&] {
-        result = complete(
-            client, request, transcript, [](GenerationDelta) {}, cancellation);
-    });
-    {
-        std::unique_lock lock(mutex);
-        ASSERT_TRUE(ready.wait_for(lock, std::chrono::seconds{2}, [&] {
-            return refresh_started;
-        }));
-    }
-    cancellation.store(true, std::memory_order_release);
-    {
-        std::lock_guard lock(mutex);
-        finish_refresh = true;
-    }
-    ready.notify_all();
-    worker.join();
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-    EXPECT_EQ(model_calls, 0);
-    EXPECT_EQ(owner.stored().at("refresh_token"), "new-refresh");
-    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
-}
-
-TEST(ProviderClient, CancellationDuringFailedRefreshCleansUpAndSkipsModel) {
-    SubscriptionOwner owner;
-    std::atomic_bool cancellation{false};
-    int auth_calls = 0;
-    owner.on_auth_request = [&](const OpenAiOAuthHttpRequest&) {
-        ++auth_calls;
-        cancellation.store(true, std::memory_order_release);
-        throw std::runtime_error("synthetic refresh failure");
-    };
-    OpenAiOAuth oauth = owner.make_near_expiry();
-    int model_calls = 0;
-    ProviderHttpTransport transport =
-        [&](const ProviderHttpRequest&, const std::atomic_bool&) {
-            ++model_calls;
-            return ProviderHttpResponse{200, "text/event-stream", kCompletedStream};
-        };
-    ProviderClient client(
-        shared_definition(subscription_definition()), &oauth, transport);
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 43, "refresh");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::cancelled);
-    EXPECT_TRUE(result.message.empty());
-    EXPECT_EQ(auth_calls, 1);
-    EXPECT_EQ(model_calls, 0);
-    // A network failure is not proof that the saved login is invalid.
-    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
-}
-
-TEST(ProviderClient, SubscriptionUnauthorizedDoesNotRetryOrMutateCredentials) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected("acct_old", "keep-refresh");
-    std::vector<ProviderHttpRequest> captured;
-    ProviderHttpTransport transport =
-        [&captured](const ProviderHttpRequest& request, const std::atomic_bool&) {
-            captured.push_back(request);
-            return ProviderHttpResponse{401, "application/json", R"({"error":"no"})"};
-        };
-    ProviderClient client(
-        shared_definition(subscription_definition()), &oauth, transport);
-    std::atomic_bool cancellation{false};
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 43, "expired");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_EQ(
-        result.message,
-        "ChatGPT rejected this request. Reconnect before using this provider.");
-    ASSERT_EQ(captured.size(), 1U);
-    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
-    EXPECT_EQ(owner.stored().at("refresh_token"), "keep-refresh");
-    EXPECT_EQ(oauth.credentials().account_id, "acct_old");
-}
-
-TEST(ProviderClient, OlderSubscriptionUnauthorizedLeavesLaterLoginIntact) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected("acct_old", "old-refresh");
-    owner.push_login_success("new-refresh", "acct_new");
-    std::vector<ProviderHttpRequest> captured;
-    ProviderHttpTransport transport =
-        [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
-            captured.push_back(request);
-            (void)oauth.disconnect();
-            (void)oauth.start();
-            owner.advance(std::chrono::seconds{1});
-            (void)oauth.poll();
-            return ProviderHttpResponse{401, "application/json", "{}"};
-        };
-    ProviderClient client(
-        shared_definition(subscription_definition()), &oauth, transport);
-    std::atomic_bool cancellation{false};
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 44, "stale");
-
-    const GenerationResult result = complete(
-        client, request, transcript, [](GenerationDelta) {}, cancellation);
-
-    EXPECT_EQ(result.outcome, GenerationOutcome::protocol_error);
-    EXPECT_EQ(
-        result.message,
-        "ChatGPT rejected this request. Reconnect before using this provider.");
-    ASSERT_EQ(captured.size(), 1U);
-    EXPECT_EQ(oauth.status().state, OpenAiOAuthState::connected);
-    EXPECT_EQ(oauth.credentials().account_id, "acct_new");
-    EXPECT_EQ(owner.stored().at("refresh_token"), "new-refresh");
-}
-
-TEST(ProviderClientLive, SubscriptionStreamedRequest) {
-    if (std::getenv("CHA_OPENAI_OAUTH_LIVE") == nullptr) {
-        GTEST_SKIP() << "set CHA_OPENAI_OAUTH_LIVE=1 to run the live request";
-    }
-
-    const std::filesystem::path directory =
-        std::filesystem::temp_directory_path()
-        / ("cha_subscription_live_"
-           + std::to_string(
-               std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directories(directory);
-    const std::filesystem::path path =
-        directory / "cha.sqlite3.openai-auth.json";
-    struct Cleanup {
-        std::filesystem::path directory;
-        std::filesystem::path path;
-        ~Cleanup() {
-            std::error_code error;
-            std::filesystem::remove(path, error);
-            std::filesystem::remove_all(directory, error);
-        }
-    } cleanup{directory, path};
-
-    OpenAiOAuth oauth{path};
-    const OpenAiOAuthSnapshot started = oauth.start();
-    ASSERT_EQ(started.state, OpenAiOAuthState::waiting);
-    ASSERT_TRUE(started.user_code);
-    ASSERT_TRUE(started.verification_url);
-    std::cerr
-        << "\nApprove this CHA login in a browser:\n"
-        << "  URL:  " << *started.verification_url << "\n"
-        << "  Code: " << *started.user_code << "\n"
-        << std::flush;
-
-    OpenAiOAuthSnapshot snapshot = started;
-    while (snapshot.state == OpenAiOAuthState::waiting) {
-        const auto delay = snapshot.next_poll_delay_ms.value_or(1000);
-        std::this_thread::sleep_for(std::chrono::milliseconds{delay});
-        snapshot = oauth.poll();
-        if (snapshot.error) {
-            FAIL() << "live login failed with a sanitized error";
-        }
-    }
-    ASSERT_EQ(snapshot.state, OpenAiOAuthState::connected);
-
-    CharacterDefinition definition = subscription_definition();
-    definition.system_prompt = "Reply with exactly: pong";
-    ProviderClient client(shared_definition(std::move(definition)), &oauth);
-    std::atomic_bool cancellation{false};
-    Transcript transcript;
-    const GenerationRequest request = client_request(transcript, 45, "ping");
-    std::string answer;
-    const GenerationResult result = complete(
-        client, request, transcript,
-        [&answer](GenerationDelta delta) {
-            if (delta.kind == GenerationDeltaKind::answer) answer += delta.text;
-        },
-        cancellation);
-
-    std::cerr
-        << "Live subscription request outcome="
-        << static_cast<int>(result.outcome)
-        << " answer_bytes=" << answer.size()
-        << " input_tokens="
-        << (result.usage.input_tokens ? std::to_string(*result.usage.input_tokens)
-                                      : "unreported")
-        << " output_tokens="
-        << (result.usage.output_tokens ? std::to_string(*result.usage.output_tokens)
-                                       : "unreported")
-        << "\n"
-        << std::flush;
-    EXPECT_EQ(result.outcome, GenerationOutcome::completed);
-    EXPECT_FALSE(answer.empty());
-    (void)oauth.disconnect();
 }
 
 // Exercise the full model -> tool -> model exchange through the HTTP seam.
@@ -2987,8 +2462,7 @@ void expect_maintenance_tools(const Json& body) {
     EXPECT_EQ(names, (std::vector<std::string>{
         "assistant_inspect", "vault_config_list", "vault_config_read", "vault_config_apply", "add_character",
         "assistant_logs", "assistant_events", "assistant_logging",
-        "host_config_list", "host_config_read", "host_config_write",
-        "assistant_openai_login"}));
+        "host_config_list", "host_config_read", "host_config_write"}));
 }
 
 ProviderHttpResponse limited_tool_reply(ProviderApi api, bool stream, Json calls) {
@@ -3030,7 +2504,8 @@ TEST(ProviderClientTools, MaintenanceTruncationIsNotExecuted) {
                 auto definition = network_definition(80, stream);
                 definition.provider.config.api = api;
                 return definition;
-            }()), nullptr, [&](const ProviderHttpRequest&, const std::atomic_bool&) {
+            }()), nullptr, [&](const ProviderHttpRequest& request, const std::atomic_bool&) {
+                expect_maintenance_tools(Json::parse(request.body));
                 return limited_tool_reply(api, stream, Json::array({
                     search_call(api, "cut", "{oops", "vault_config_list")}));
             });
@@ -3314,22 +2789,6 @@ TEST(ProviderClientTools, MaintenanceAnswerBudgetStopsCallsInLaterRounds) {
     }
 }
 
-TEST(ProviderClientTools, SubscriptionMaintenanceDoesNotAddAnOutputTokenCap) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected();
-    CharacterDefinition definition = subscription_definition();
-    definition.provider.config.max_tokens = 32;
-    definition.provider.config.web_search = WebSearchMode::automatic;
-    ProviderClient client(shared_definition(std::move(definition)), &oauth);
-    Transcript transcript;
-    auto input = client_request(transcript, 5, "Repair");
-    input.maintenance_tool = [](auto, auto, const auto&) { return "{}"; };
-    const Json body = Json::parse(client.prepare(input).bytes);
-    EXPECT_FALSE(body.contains("max_output_tokens"));
-    EXPECT_FALSE(body.contains("max_tokens"));
-    expect_maintenance_tools(body);
-}
-
 
 Json google_response(Json parts, std::string reason = "STOP") {
     return {{"candidates", Json::array({{
@@ -3352,7 +2811,7 @@ TEST(ProviderClient, GoogleUsesNativeUrlsAndOptionalSavedKeyHeaders) {
             if (credential == 1) provider.api_key_id = key.id;
             if (credential == 2) provider.api_key_env = "Google";
             int calls = 0;
-            ProviderClient client(shared_definition(definition), nullptr, &keys,
+            ProviderClient client(shared_definition(definition), &keys,
                 [&](const ProviderHttpRequest& request, const auto&) {
                     ++calls;
                     EXPECT_EQ(request.url, std::string("http://127.0.0.1:443/v1beta/models/gemini-test")
@@ -3377,7 +2836,7 @@ TEST(ProviderClient, GoogleUsesNativeUrlsAndOptionalSavedKeyHeaders) {
     auto definition = network_definition(443);
     definition.provider.config.api = ProviderApi::google;
     definition.provider.config.api_key_id = "missing";
-    EXPECT_THROW((ProviderClient(shared_definition(definition), nullptr, &keys)), std::exception);
+    EXPECT_THROW((ProviderClient(shared_definition(definition), &keys)), std::exception);
 }
 
 TEST(ProviderClient, GoogleKeepsParallelAndSequentialToolPartsInOrderThroughLimit) {
@@ -3608,7 +3067,7 @@ TEST(ProviderClient, AnthropicUsesNativeEndpointVersionAndOptionalSavedBearerKey
             provider.base_path = "/proxy";
             if (credential == 1) provider.api_key_id = key.id;
             if (credential == 2) provider.api_key_env = "Anthropic";
-            ProviderClient client(shared_definition(definition), nullptr, &keys,
+            ProviderClient client(shared_definition(definition), &keys,
                 [&](const ProviderHttpRequest& request, const auto&) {
                     EXPECT_EQ(request.url, "http://127.0.0.1:8080/proxy/v1/messages");
                     EXPECT_EQ(std::ranges::count(request.headers, "Authorization: Bearer anthropic-test-secret"), credential ? 1 : 0);
@@ -3631,7 +3090,7 @@ TEST(ProviderClient, AnthropicUsesNativeEndpointVersionAndOptionalSavedBearerKey
     auto definition = network_definition(8080);
     definition.provider.config.api = ProviderApi::anthropic;
     definition.provider.config.api_key_id = "missing";
-    EXPECT_THROW((ProviderClient(shared_definition(definition), nullptr, &keys)), std::exception);
+    EXPECT_THROW((ProviderClient(shared_definition(definition), &keys)), std::exception);
 }
 
 TEST(ProviderClient, AnthropicPreservesSignedPrefixAndParallelResultOrderThroughToolLimit) {
@@ -3751,7 +3210,7 @@ TEST(ProviderClient, AnthropicRedactsSavedKeyFromHttpAndSseErrors) {
         auto definition = network_definition(8080, stream);
         definition.provider.config.api = ProviderApi::anthropic;
         definition.provider.config.api_key_id = key.id;
-        ProviderClient client(shared_definition(definition), nullptr, &keys, [&](const auto&, const auto&) {
+        ProviderClient client(shared_definition(definition), &keys, [&](const auto&, const auto&) {
             const auto body = Json{{"type", "error"}, {"error", {{"message", "Rejected anthropic-secret"}}}}.dump();
             return ProviderHttpResponse{stream ? 200 : 400, stream ? "text/event-stream" : "application/json", stream ? "data: " + body + "\n\n" : body};
         });
@@ -4249,24 +3708,6 @@ TEST(ProviderClientSummary, GoogleFileSearchCompatibilityAndRequestsWithoutSumma
 }
 
 
-TEST(ProviderClientSummary, SubscriptionHostedSearchRetainsSummaryFunctions) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected();
-    for (const auto mode : {WebSearchMode::off, WebSearchMode::automatic}) {
-        SCOPED_TRACE(to_string(mode));
-        auto definition = subscription_definition();
-        definition.provider.config.web_search = mode;
-        ProviderClient client(shared_definition(definition), &oauth);
-        Transcript transcript;
-        auto input = client_request(transcript, 1, "Recall");
-        input.summary_tool = [](auto, auto, const auto&) { return "{}"; };
-        const auto payload = client.prepare(input);
-        EXPECT_TRUE(payload.summary_tool);
-        EXPECT_NE(payload.bytes.find("summary_search"), std::string::npos);
-        EXPECT_EQ(payload.bytes.find("\"type\":\"web_search\"") != std::string::npos, mode != WebSearchMode::off);
-    }
-}
-
 
 TEST(ProviderClientLibrary, LibraryOnlyRoundTripAcrossAllProtocolsAndStreamingModes) {
     for (auto api : {ProviderApi::chat_completions, ProviderApi::responses, ProviderApi::anthropic, ProviderApi::google}) {
@@ -4410,24 +3851,22 @@ TEST(ProviderClientLibrary, LibraryUsesOverallBudgetAndPreservesBatchCallIdsAtFi
 }
 
 TEST(ProviderClientLibrary, AutomaticHostedWebCoexistsWithLibraryAndSummariesOnEachConnection) {
-    SubscriptionOwner owner;
-    OpenAiOAuth oauth = owner.make_connected();
-    for (int connection = 0; connection < 4; ++connection) {
+    for (int connection = 0; connection < 3; ++connection) {
         for (bool stream : {false, true}) {
             SCOPED_TRACE(std::to_string(connection) + (stream ? " streaming" : " buffered"));
-            auto definition = connection == 1 ? subscription_definition() : network_definition(443, false);
-            const auto api = connection == 3 ? ProviderApi::chat_completions : ProviderApi::responses;
+            auto definition = network_definition(443, false);
+            const auto api = connection == 2 ? ProviderApi::chat_completions : ProviderApi::responses;
             definition.provider.config.api = api;
             definition.provider.config.stream = stream;
-            definition.provider.config.host = connection == 0 ? "api.openai.com" : connection == 1 ? "chatgpt.com" : "openrouter.ai";
+            definition.provider.config.host = connection == 0 ? "api.openai.com" : "openrouter.ai";
             definition.provider.config.web_search = WebSearchMode::automatic;
             int rounds = 0;
-            ProviderClient client(shared_definition(definition), connection == 1 ? &oauth : nullptr, [&](const auto& request, const auto&) {
+            ProviderClient client(shared_definition(definition), nullptr, [&](const auto& request, const auto&) {
                 const auto body = Json::parse(request.body);
                 EXPECT_EQ(body["tool_choice"], "auto");
                 EXPECT_TRUE(function_tool_available(body, api, "library_search"));
                 EXPECT_TRUE(function_tool_available(body, api, "summary_search"));
-                EXPECT_EQ(body["tools"][0]["type"], connection >= 2 ? "openrouter:web_search" : "web_search");
+                EXPECT_EQ(body["tools"][0]["type"], connection != 0 ? "openrouter:web_search" : "web_search");
                 if (++rounds == 1) {
                     Json calls = Json::array();
                     if (api == ProviderApi::responses) calls.push_back({{"type", "web_search_call"},

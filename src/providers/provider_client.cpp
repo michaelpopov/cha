@@ -5,7 +5,6 @@
 #include "characters/character.h"
 #include "characters/character_config.h"
 #include "providers/chat_completions_api.h"
-#include "providers/openai_oauth.h"
 #include "providers/responses_api.h"
 #include "providers/google_api.h"
 #include "providers/anthropic_api.h"
@@ -458,27 +457,11 @@ GenerationResult classify_success_response_error(
 
 } // namespace
 
-ProviderClient::ProviderClient(SharedCharacterDefinition definition)
-    : ProviderClient(std::move(definition), nullptr, {}) {}
-
 ProviderClient::ProviderClient(
     SharedCharacterDefinition definition,
-    OpenAiOAuth* oauth)
-    : ProviderClient(std::move(definition), oauth, {}) {}
-
-ProviderClient::ProviderClient(
-    SharedCharacterDefinition definition,
-    OpenAiOAuth* oauth,
-    ProviderHttpTransport transport)
-    : ProviderClient(std::move(definition), oauth, nullptr, std::move(transport)) {}
-
-ProviderClient::ProviderClient(
-    SharedCharacterDefinition definition,
-    OpenAiOAuth* oauth,
     ApiKeyStore* api_keys,
     ProviderHttpTransport transport)
     : definition_(std::move(definition)),
-      oauth_(oauth),
       transport_(std::move(transport)) {
     if (!definition_) {
         throw std::invalid_argument("Provider client requires a character definition");
@@ -491,10 +474,6 @@ ProviderClient::ProviderClient(
     }
     if (config.model.empty()) {
         throw std::runtime_error("Provider client requires a non-empty configured model");
-    }
-    if (config.auth == ProviderAuth::openai_subscription && oauth_ == nullptr) {
-        throw std::runtime_error(
-            "OpenAI subscription provider requires an authentication owner");
     }
     if (!config.api_key_id.empty()) {
         if (api_keys == nullptr) {
@@ -976,33 +955,6 @@ GenerationResult ProviderClient::perform_once(
         return {GenerationOutcome::completed, {}};
     }
 
-    std::optional<OpenAiOAuthRequestCredentials> subscription_credentials;
-    if (config.auth == ProviderAuth::openai_subscription) {
-        if (cancellation.load(std::memory_order_acquire)) {
-            log_info("HTTP generation skipped before authentication");
-            return {GenerationOutcome::cancelled, {}};
-        }
-        if (oauth_ == nullptr) {
-            return {
-                GenerationOutcome::protocol_error,
-                "OpenAI subscription provider requires an authentication owner",
-            };
-        }
-        try {
-            subscription_credentials = oauth_->credentials();
-        } catch (const std::exception& error) {
-            if (cancellation.load(std::memory_order_acquire)) {
-                log_info("HTTP generation skipped after authentication");
-                return {GenerationOutcome::cancelled, {}};
-            }
-            return {GenerationOutcome::protocol_error, error.what()};
-        }
-        if (cancellation.load(std::memory_order_acquire)) {
-            log_info("HTTP generation skipped after authentication");
-            return {GenerationOutcome::cancelled, {}};
-        }
-    }
-
     const std::string& request_body = payload.bytes;
     const bool maintenance = static_cast<bool>(payload.maintenance_tool);
     const bool collect_tool_calls = maintenance || payload.web_search_tool || payload.web_read_tool || payload.summary_tool || payload.library_search_tool;
@@ -1042,25 +994,23 @@ GenerationResult ProviderClient::perform_once(
     };
 
     const std::string url = provider_endpoint(config);
-    const std::string_view credential = subscription_credentials
-        ? std::string_view(subscription_credentials->access_token) : std::string_view(api_key_);
     const auto started_at = std::chrono::steady_clock::now();
     log_debug(
         "HTTP request started: endpoint=" + url
         + " request_bytes=" + std::to_string(request_body.size()));
-    log_debug_payload("HTTP model request body", request_body, credential);
-    const auto complete = [&response, &url, &request_body, started_at, credential](
+    log_debug_payload("HTTP model request body", request_body, api_key_);
+    const auto complete = [this, &response, &url, &request_body, started_at](
                               GenerationResult result,
                               long status,
                               std::string_view content_type) {
-        if (!credential.empty()) {
+        if (!api_key_.empty()) {
             std::size_t offset = 0;
-            while ((offset = result.message.find(credential, offset)) != std::string::npos) {
-                result.message.replace(offset, credential.size(), "[REDACTED]");
+            while ((offset = result.message.find(api_key_, offset)) != std::string::npos) {
+                result.message.replace(offset, api_key_.size(), "[REDACTED]");
                 offset += 10;
             }
         }
-        log_debug_payload("HTTP model result diagnostic", result.message, credential);
+        log_debug_payload("HTTP model result diagnostic", result.message, api_key_);
         const std::string message = http_event(
             result.outcome == GenerationOutcome::completed
                 ? "request completed"
@@ -1089,15 +1039,7 @@ GenerationResult ProviderClient::perform_once(
         "Content-Type: application/json",
         config.stream ? "Accept: text/event-stream" : "Accept: application/json",
     };
-    if (subscription_credentials) {
-        header_lines.push_back(
-            "Authorization: Bearer " + subscription_credentials->access_token);
-        header_lines.push_back(
-            "chatgpt-account-id: " + subscription_credentials->account_id);
-        header_lines.push_back("OpenAI-Beta: responses=experimental");
-        header_lines.push_back("originator: cha");
-        header_lines.push_back("User-Agent: cha");
-    } else if (!api_key_.empty()) {
+    if (!api_key_.empty()) {
         header_lines.push_back((config.api == ProviderApi::google
             ? "x-goog-api-key: " : "Authorization: Bearer ") + api_key_);
     }
@@ -1116,7 +1058,7 @@ GenerationResult ProviderClient::perform_once(
             http = transport_(
                 ProviderHttpRequest{url, header_lines, request_body},
                 cancellation);
-            log_debug_payload("HTTP model raw response", http.body, credential);
+            log_debug_payload("HTTP model raw response", http.body, api_key_);
         } catch (const std::exception& error) {
             return complete({
                 GenerationOutcome::transport_error,
@@ -1155,9 +1097,6 @@ GenerationResult ProviderClient::perform_once(
             "Failed to configure generation timeout");
         curl_->set(CURLOPT_NOSIGNAL, 1L, "Failed to configure libcurl signals");
         curl_->set(CURLOPT_TCP_KEEPALIVE, 1L, "Failed to configure TCP keepalive");
-        if (subscription_credentials) {
-            curl_->set(CURLOPT_FOLLOWLOCATION, 0L, "Failed to disable HTTP redirects");
-        }
         // The progress callback owns both cancellation and the idle timeout, so
         // cancellation keeps precedence and idleness means "no bytes at all"
         // rather than libcurl's averaged low-speed window.
@@ -1172,7 +1111,7 @@ GenerationResult ProviderClient::perform_once(
         curl_->set(CURLOPT_HTTPHEADER, headers.get(), "Failed to configure HTTP headers");
 
         const CURLcode perform_result = curl_->perform();
-        log_debug_payload("HTTP model raw response", response.debug_body, credential);
+        log_debug_payload("HTTP model raw response", response.debug_body, api_key_);
         log_debug("HTTP transfer finished: curl_code=" + std::to_string(perform_result)
             + " status=" + std::to_string(response.status));
         if (response.error) {
@@ -1216,12 +1155,6 @@ GenerationResult ProviderClient::perform_once(
     }
 
     if (status < 200 || status >= 300) {
-        if (status == 401 && config.auth == ProviderAuth::openai_subscription) {
-            return complete({
-                GenerationOutcome::protocol_error,
-                "ChatGPT rejected this request. Reconnect before using this provider.",
-            }, status, content_type);
-        }
         return complete({
             .outcome = GenerationOutcome::protocol_error,
             .message = classified_http_error(status, response.body),

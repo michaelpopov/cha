@@ -5,7 +5,6 @@
 #include "app/settings_operations.h"
 #include "app/vault_operations.h"
 #include "app/workspace_operations.h"
-#include "providers/openai_oauth.h"
 #include "providers/api_key_store.h"
 #include "providers/provider_client.h"
 #include "providers/providers.h"
@@ -110,15 +109,6 @@ std::string_view application_state_name(ApplicationState state) noexcept {
 }
 
 namespace {
-
-ProviderClientFactory shared_openai_provider_factory(
-    OpenAiOAuth* oauth,
-    ApiKeyStore* api_keys) {
-    return [oauth, api_keys](SharedCharacterDefinition definition) {
-        return std::make_unique<ProviderClient>(
-            std::move(definition), oauth, api_keys);
-    };
-}
 
 CharacterSummary character_summary(
     const Workspace& workspace,
@@ -237,11 +227,8 @@ Application::Impl::Impl(
       api_keys(std::make_unique<ApiKeyStore>(
           *store,
           command.config_directory / "api-keys.json")),
-      openai_auth(std::make_unique<OpenAiOAuth>(
-          command.config_directory / openai_auth_filename)),
       assistant(std::make_unique<AssistantService>(AssistantService::Links{
           .store = store.get(),
-          .oauth = openai_auth.get(),
           .api_keys = api_keys.get(),
           .lifecycle = &lifecycle_mutex,
           .stopping = &stopping_flag,
@@ -311,8 +298,10 @@ Application::Impl::Impl(
               return paths;
           },
       })),
-      providers(shared_openai_provider_factory(
-          openai_auth.get(), api_keys.get()), {},
+      providers(
+          [keys = api_keys.get()](SharedCharacterDefinition definition) {
+              return std::make_unique<ProviderClient>(std::move(definition), keys);
+          }, {},
           [keys = api_keys.get()](const JevRequestInput& input, const std::atomic_bool& cancelled) {
               auto key = keys->value(input.config.api_key_id);
               if (cancelled.load()) return JevResult{JevOutcome::cancelled};
@@ -377,7 +366,7 @@ Application::Impl::Impl(
     audio_downloads = std::make_unique<AudioDownloadManager>(
         *sessions, [this] { return current_vault_.get().name; }, true);
     live_sessions = std::make_unique<LiveSessionManager>(settings, opener);
-    notes = std::make_unique<NotesService>(*store, *api_keys, *openai_auth, *sessions, *live_sessions,
+    notes = std::make_unique<NotesService>(*store, *api_keys, *sessions, *live_sessions,
         background_jobs, settings, lifecycle_mutex, published_epoch,
         [this](std::uint64_t epoch) { return admit_locked(epoch); },
         [this] { return state.load() == ApplicationState::running && !stopping_flag; },
@@ -1293,7 +1282,7 @@ std::shared_ptr<OperationReply> Application::test_provider(
         (void)settings::get_provider(*workspace, provider_id, *impl_->api_keys);
         try {
             test = settings::prepare_provider_test(
-                *workspace, provider_id, body, *impl_->openai_auth, *impl_->api_keys);
+                *workspace, provider_id, body, *impl_->api_keys);
         } catch (const ApplicationError& error) {
             reply->fail(error.code, error.what());
             return reply;
@@ -1686,84 +1675,6 @@ void Application::disconnect_d1_storage(std::uint64_t epoch) {
     };
     drop_queue(true);
     drop_queue(false);
-}
-
-OpenAiAuth Application::openai_auth_status(std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    return settings::openai_auth_status(*impl_->openai_auth);
-}
-
-std::shared_ptr<OperationReply> Application::start_openai_auth(
-    std::uint64_t epoch) {
-    auto reply = std::make_shared<OperationReply>();
-    OpenAiOAuth* oauth = nullptr;
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
-        oauth = impl_->openai_auth.get();
-    }
-    if (!impl_->background_jobs.launch(
-            [reply, oauth](std::atomic_bool& cancel) {
-                try {
-                    const auto result =
-                        settings::start_openai_auth(*oauth, cancel);
-                    if (cancel.load()) {
-                        reply->fail(
-                            ErrorCode::operation_cancelled,
-                            "The operation was cancelled.");
-                        return;
-                    }
-                    reply->complete(result);
-                } catch (const ApplicationError& error) {
-                    reply->fail(error.code, error.what());
-                } catch (...) {
-                    reply->fail(ErrorCode::internal_error, {});
-                }
-            })) {
-        reply->fail(
-            ErrorCode::operation_cancelled, "The operation was cancelled.");
-    }
-    return reply;
-}
-
-std::shared_ptr<OperationReply> Application::poll_openai_auth(
-    std::uint64_t epoch) {
-    auto reply = std::make_shared<OperationReply>();
-    OpenAiOAuth* oauth = nullptr;
-    {
-        const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-        impl_->require_admitted(epoch);
-        oauth = impl_->openai_auth.get();
-    }
-    if (!impl_->background_jobs.launch(
-            [reply, oauth](std::atomic_bool& cancel) {
-                try {
-                    const auto result =
-                        settings::poll_openai_auth(*oauth, cancel);
-                    if (cancel.load()) {
-                        reply->fail(
-                            ErrorCode::operation_cancelled,
-                            "The operation was cancelled.");
-                        return;
-                    }
-                    reply->complete(result);
-                } catch (const ApplicationError& error) {
-                    reply->fail(error.code, error.what());
-                } catch (...) {
-                    reply->fail(ErrorCode::internal_error, {});
-                }
-            })) {
-        reply->fail(
-            ErrorCode::operation_cancelled, "The operation was cancelled.");
-    }
-    return reply;
-}
-
-OpenAiAuth Application::disconnect_openai_auth(std::uint64_t epoch) {
-    const std::lock_guard lifecycle(impl_->lifecycle_mutex);
-    impl_->require_admitted(epoch);
-    return settings::disconnect_openai_auth(*impl_->openai_auth);
 }
 
 std::optional<FullSessionId> Application::selected_session() const {

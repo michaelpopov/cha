@@ -230,9 +230,7 @@ Provider secrets are managed on the Settings > API Keys screen and stored in
 the active vault database under `system/keys/api_key_N/config.toml`. Provider
 configs contain only the selected key ID; they never read model credentials
 from the process environment or `.env`. Keys are vault-specific and are
-included as plaintext TOML in workspace exports. OpenAI subscription
-credentials live in `openai-auth.json` in the application configuration
-directory.
+included as plaintext TOML in workspace exports.
 
 Native hosts load packaged frontend assets themselves. Relative `data`,
 `logging.file`, and the application-level `modify` base resolve against the
@@ -284,9 +282,9 @@ edits, including model and R2 credentials, validate an in-memory candidate and
 persist through SQLite before publication.
 
 The database, rollback journal, WAL/SHM sidecars, companion lock, private
-runtime session directory, workspace exports, legacy configuration-directory
-`.env` and `api-keys.json`, and `openai-auth.json` must remain accessible only
-to their owner.
+runtime session directory, workspace exports, and legacy configuration-directory
+files (`.env`, `api-keys.json`, and `openai-auth.json`) must remain accessible
+only to their owner.
 CHA enforces this for files it manages. Naively copying a live WAL database is
 unsafe; the R2 commands acquire the database lease, and upload checkpoints the
 WAL before transferring the main database file.
@@ -329,9 +327,9 @@ migrates those old files itself.
 ### Native setup and older installations
 
 Packaged macOS and Windows hosts initialize their configuration directory with
-an empty Default vault and the shared seed configuration. Connect ChatGPT in
-Settings → OpenAI, or add model credentials in Settings → API Keys and choose
-them in a provider. Later launches reuse the existing database.
+a Default vault with the Assistant using the OpenAI provider. Save an OpenAI API
+key in Settings → API Keys and select it in Settings → Providers → OpenAI.
+Later launches reuse the existing database.
 
 The seed and example configuration live under `packaging/shared/`. Existing
 schema-v1 and legacy per-session databases need a separately planned migration;

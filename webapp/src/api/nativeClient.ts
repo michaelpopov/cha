@@ -32,7 +32,6 @@ import {
   isCommandResult,
   isForumDetail,
   isMarkdownFile,
-  isOpenAiAuth,
   isPersonaDetail,
   isProviderDetail,
   isProviderSummary,
@@ -596,10 +595,6 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       { forum_id: forumId, session_id: sessionId, character_id: characterId },
       isCommandResult,
     ),
-    getOpenAiAuth: () => call('openaiAuth.get', {}, isOpenAiAuth),
-    startOpenAiAuth: () => call('openaiAuth.start', {}, isOpenAiAuth),
-    pollOpenAiAuth: () => call('openaiAuth.poll', {}, isOpenAiAuth),
-    disconnectOpenAiAuth: () => call('openaiAuth.disconnect', {}, isOpenAiAuth),
     listVaults: () => call(
       'vault.list',
       {},

@@ -407,11 +407,11 @@ CreateProviderRequest parse_create_provider_request(const nlohmann::json& json) 
 ProviderUpdate parse_provider_update(
     const nlohmann::json& json,
     const std::vector<std::string>& existing_openrouter_targets) {
-    static constexpr std::size_t legacy_field_count = 19;
+    static constexpr std::size_t required_field_count = 18;
     const bool includes_openrouter_targets =
         json.is_object() && json.contains("openrouter_targets");
     if (!json.is_object()
-        || json.size() != legacy_field_count + includes_openrouter_targets) {
+        || json.size() != required_field_count + includes_openrouter_targets) {
         throw std::invalid_argument("Invalid provider");
     }
     ProviderUpdate result;
@@ -449,8 +449,6 @@ ProviderUpdate parse_provider_update(
         required_field<std::string>(json, "reasoning_format"),
         parse_reasoning_format);
     result.config.https = required_field<bool>(json, "https");
-    result.config.auth = settings_choice(
-        required_field<std::string>(json, "auth"), parse_provider_auth);
     result.config.web_search = unused_options ? WebSearchMode::off : settings_choice(
         required_field<std::string>(json, "web_search"), parse_web_search_mode);
     result.config.cache_retention = unused_options ? CacheRetention::short_ : settings_choice(

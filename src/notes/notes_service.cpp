@@ -21,27 +21,27 @@ ErrorCode note_error_code(NoteFailure failure) {
     throw ApplicationError(note_error_code(error.failure), error.what());
 }
 
-NotesService::Impl::Impl(WorkspaceConfigStore& store, ApiKeyStore& api_keys, OpenAiOAuth& oauth,
+NotesService::Impl::Impl(WorkspaceConfigStore& store, ApiKeyStore& api_keys,
     SessionRepository& sessions, LiveSessionManager& live_sessions,
     BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
     std::atomic_uint64_t& epoch,
     std::function<std::optional<ErrorCode>(std::uint64_t)> admit,
     std::function<bool()> can_recover,
     std::function<std::string()> current_vault_name)
-    : store(&store), api_keys(&api_keys), openai_auth(&oauth), sessions(&sessions),
+    : store(&store), api_keys(&api_keys), sessions(&sessions),
       live_sessions(&live_sessions), background_jobs(jobs),
       settings(settings), published_epoch(epoch), lifecycle_mutex(lifecycle), admit_locked(std::move(admit)),
       can_recover(std::move(can_recover)), current_vault_name(std::move(current_vault_name)),
       folder_store_transport(settings.test_hooks.folder_store_transport) {}
 
-NotesService::NotesService(WorkspaceConfigStore& store, ApiKeyStore& api_keys, OpenAiOAuth& oauth,
+NotesService::NotesService(WorkspaceConfigStore& store, ApiKeyStore& api_keys,
     SessionRepository& sessions, LiveSessionManager& live_sessions,
     BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
     std::atomic_uint64_t& epoch,
     std::function<std::optional<ErrorCode>(std::uint64_t)> admit,
     std::function<bool()> can_recover,
     std::function<std::string()> current_vault_name)
-    : impl_(std::make_unique<Impl>(store, api_keys, oauth, sessions, live_sessions, jobs,
+    : impl_(std::make_unique<Impl>(store, api_keys, sessions, live_sessions, jobs,
         settings, lifecycle, epoch, std::move(admit), std::move(can_recover),
         std::move(current_vault_name))) {}
 

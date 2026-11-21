@@ -43,7 +43,6 @@ export type InputRequest = components['schemas']['InputRequest'];
 export type TextFileRequest = components['schemas']['TextFileRequest'];
 export type CoverRequest = components['schemas']['CoverRequest'];
 export type DeleteTurnRequest = components['schemas']['DeleteTurnRequest'];
-export type OpenAiAuth = components['schemas']['OpenAiAuth'];
 export type VaultDetail = components['schemas']['VaultDetail'];
 export type CreateVaultRequest = components['schemas']['CreateVaultRequest'];
 export type VaultUpdate = Omit<components['schemas']['UpdateVaultRequest'], 'vault_name'>;
@@ -289,10 +288,6 @@ export interface ChaClient {
     sessionId: string,
     characterId: string,
   ): Promise<CommandResult>;
-  getOpenAiAuth(): Promise<OpenAiAuth>;
-  startOpenAiAuth(): Promise<OpenAiAuth>;
-  pollOpenAiAuth(): Promise<OpenAiAuth>;
-  disconnectOpenAiAuth(): Promise<OpenAiAuth>;
   listVaults(): Promise<VaultDetail[]>;
   createVault(request: CreateVaultRequest): Promise<VaultDetail>;
   listR2Vaults(): Promise<string[]>;
@@ -550,7 +545,6 @@ export function isProviderDetail(value: unknown): value is ProviderDetail {
     && isOneOf(value.reasoning_format, ['auto', 'none', 'reasoning_content', 'reasoning'])
     && typeof value.https === 'boolean'
     && isOneOf(value.api, ['chat_completions', 'responses', 'google', 'anthropic'])
-    && isOneOf(value.auth, ['none', 'openai_subscription'])
     && isOneOf(value.web_search, ['off', 'auto'])
     && isOneOf(value.cache_retention, ['off', 'short', 'long'])
     && Array.isArray(value.openrouter_targets)
@@ -740,23 +734,6 @@ export function isD1StorageDetail(value: unknown): value is D1StorageDetail {
     && typeof value.account_id === 'string'
     && typeof value.database_id === 'string'
     && typeof value.has_api_token === 'boolean';
-}
-
-export function isOpenAiAuth(value: unknown): value is OpenAiAuth {
-  return isRecord(value)
-    && (value.status === 'signed_out'
-      || value.status === 'waiting'
-      || value.status === 'connected')
-    && (value.user_code === undefined || typeof value.user_code === 'string')
-    && (value.verification_url === undefined
-      || typeof value.verification_url === 'string')
-    && (value.attempt_expires_at === undefined
-      || (typeof value.attempt_expires_at === 'number'
-        && Number.isSafeInteger(value.attempt_expires_at)))
-    && (value.next_poll_delay_ms === undefined
-      || (typeof value.next_poll_delay_ms === 'number'
-        && Number.isSafeInteger(value.next_poll_delay_ms)))
-    && (value.error === undefined || typeof value.error === 'string');
 }
 
 export function isSessionListingArray(value: unknown): value is SessionListing[] {

@@ -533,7 +533,6 @@ describe('native CHA client', () => {
       reasoning_format: 'auto' as const,
       https: false,
       api: 'responses' as const,
-      auth: 'none' as const,
       web_search: 'off' as const,
       cache_retention: 'short' as const,
       openrouter_targets: [],
@@ -570,7 +569,6 @@ describe('native CHA client', () => {
       'd1Storage.get': () => d1,
       'd1Storage.save': () => d1,
       'd1Storage.delete': () => ({}),
-      'openaiAuth.get': () => ({ status: 'signed_out' }),
       'voiceInput.runtime': () => ({
         provider: 'openai',
         url: 'https://api.openai.com/v1/realtime',
@@ -593,7 +591,6 @@ describe('native CHA client', () => {
       database_id: 'database-one', api_token: null,
     })).resolves.toEqual(d1);
     await expect(client.deleteD1Storage()).resolves.toBeUndefined();
-    await expect(client.getOpenAiAuth()).resolves.toEqual({ status: 'signed_out' });
     await expect(client.getVoiceInputRuntime()).resolves.toEqual({
       provider: 'openai',
       url: 'https://api.openai.com/v1/realtime',

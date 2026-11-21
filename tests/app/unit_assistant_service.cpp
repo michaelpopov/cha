@@ -4,7 +4,6 @@
 #include "app/workspace_operations.h"
 #include "providers/api_key_store.h"
 #include "providers/maintenance.h"
-#include "providers/openai_oauth.h"
 #include "storage/folder_store_storage.h"
 #include "support/test_workspace.h"
 #include "util/logging.h"
@@ -85,15 +84,12 @@ public:
         initialize_diagnostic_logging(log_directory_ / "cha.log", "info");
         database_ = test::import_test_database(workspace_.root());
         store_ = WorkspaceConfigStore::open(database_);
-        oauth_path_ = log_directory_ / "openai-auth.json";
-        oauth_ = std::make_unique<OpenAiOAuth>(oauth_path_);
         keys_ = std::make_unique<ApiKeyStore>(*store_);
         bind();
     }
 
     ~ServiceHarness() {
         service_.reset();
-        oauth_.reset();
         store_.reset();
         shutdown_diagnostic_logging();
         std::error_code ignored;
@@ -121,20 +117,6 @@ public:
         fail_code_ = code;
     }
 
-    void use_oauth(std::string_view json) {
-        {
-            std::ofstream file(oauth_path_, std::ios::binary);
-            file << json;
-        }
-        oauth_ = std::make_unique<OpenAiOAuth>(oauth_path_);
-        bind();
-    }
-
-    void use_oauth(OpenAiOAuthTransport transport, OpenAiOAuthClock clock) {
-        oauth_ = std::make_unique<OpenAiOAuth>(oauth_path_, std::move(transport), std::move(clock));
-        bind();
-    }
-
     Json run(std::string_view name, const Json& arguments) {
         return run_raw(name, arguments.dump());
     }
@@ -147,7 +129,6 @@ private:
     void bind() {
         service_ = std::make_unique<AssistantService>(AssistantService::Links{
             .store = store_.get(),
-            .oauth = oauth_.get(),
             .api_keys = keys_.get(),
             .lifecycle = &lifecycle_,
             .stopping = &stopping_,
@@ -170,10 +151,8 @@ private:
     test::TestWorkspace workspace_;
     std::filesystem::path database_;
     std::filesystem::path log_directory_;
-    std::filesystem::path oauth_path_;
     std::unique_ptr<WorkspaceConfigStore> store_;
     std::unique_ptr<ApiKeyStore> keys_;
-    std::unique_ptr<OpenAiOAuth> oauth_;
     std::unique_ptr<AssistantService> service_;
     std::timed_mutex lifecycle_;
     std::atomic_bool stopping_{false};
@@ -184,117 +163,6 @@ private:
     int fail_after_{};
     ErrorCode fail_code_{ErrorCode::vault_changed};
 };
-
-TEST(AssistantService, OpenAiLoginStartsAndCompletesWithoutReturningTokens) {
-    ServiceHarness harness;
-    auto now = std::chrono::system_clock::now();
-    const std::string token = "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF90ZXN0In19.sig";
-    int requests = 0;
-    harness.use_oauth([&](const OpenAiOAuthHttpRequest& request) {
-        // Network and waiting must not hold the application's lifecycle lock.
-        std::unique_lock lock(harness.lifecycle(), std::try_to_lock);
-        EXPECT_TRUE(lock.owns_lock());
-        ++requests;
-        Json response;
-        if (requests == 1) {
-            EXPECT_TRUE(request.url.ends_with("/usercode"));
-            response = {{"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 1}};
-        } else if (requests == 2) {
-            EXPECT_TRUE(request.url.ends_with("/deviceauth/token"));
-            response = {{"authorization_code", "private-code"}, {"code_verifier", "private-verifier"}};
-        } else {
-            EXPECT_TRUE(request.url.ends_with("/oauth/token"));
-            response = {{"access_token", token}, {"refresh_token", "private-refresh"}, {"expires_in", 3600}};
-        }
-        return OpenAiOAuthHttpResponse{200, response.dump()};
-    }, [&] { return now; });
-
-    const auto start = harness.run("assistant_openai_login", {{"action", "start"}});
-    EXPECT_EQ(start["status"], "waiting");
-    EXPECT_EQ(start["user_code"], "TEST-CODE");
-    EXPECT_EQ(start["verification_url"], "https://auth.openai.com/codex/device");
-    EXPECT_EQ(requests, 1);
-    EXPECT_FALSE(std::filesystem::exists(harness.config_directory() / "openai-auth.json"));
-
-    now += std::chrono::seconds(1);
-    const auto done = harness.run("assistant_openai_login", {{"action", "complete"}});
-    EXPECT_EQ(done, Json({{"status", "connected"}}));
-    EXPECT_EQ(requests, 3);
-    EXPECT_EQ(start.dump().find("private-"), std::string::npos);
-    EXPECT_EQ(done.dump().find(token), std::string::npos);
-    OpenAiOAuth reloaded(harness.config_directory() / "openai-auth.json");
-    EXPECT_EQ(reloaded.status().state, OpenAiOAuthState::connected);
-    EXPECT_EQ(harness.run("assistant_openai_login", {{"action", "start"}}), done);
-    EXPECT_EQ(requests, 3);
-}
-
-TEST(AssistantService, OpenAiLoginRejectsPathsAndRequiresWelcomeAndAnAttempt) {
-    ServiceHarness harness;
-    for (const Json& arguments : {Json::object(), Json{{"action", "disconnect"}},
-            Json{{"action", "start"}, {"path", "other.json"}}}) {
-        EXPECT_EQ(harness.run("assistant_openai_login", arguments)["error"], "invalid_argument");
-    }
-    EXPECT_EQ(harness.run("assistant_openai_login", {{"action", "complete"}})["error"], "invalid_argument");
-    harness.context().session_id = "other";
-    EXPECT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["error"], "unavailable");
-}
-
-TEST(AssistantService, OpenAiLoginCompleteChecksOnceAndKeepsAPendingCode) {
-    ServiceHarness harness;
-    auto now = std::chrono::system_clock::now();
-    int requests = 0;
-    harness.use_oauth([&](const OpenAiOAuthHttpRequest&) {
-        if (++requests == 1) {
-            return OpenAiOAuthHttpResponse{200, Json{
-                {"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 1},
-            }.dump()};
-        }
-        return OpenAiOAuthHttpResponse{400, Json{{"error", "deviceauth_authorization_pending"}}.dump()};
-    }, [&] { return now; });
-    ASSERT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["status"], "waiting");
-    now += std::chrono::seconds(1);
-    const auto result = harness.run("assistant_openai_login", {{"action", "complete"}});
-    EXPECT_EQ(result["status"], "waiting");
-    EXPECT_EQ(result["user_code"], "TEST-CODE");
-    EXPECT_EQ(result["verification_url"], "https://auth.openai.com/codex/device");
-    EXPECT_EQ(requests, 2);
-}
-
-TEST(AssistantService, OpenAiLoginReportsAnExpiredAttempt) {
-    ServiceHarness harness;
-    auto now = std::chrono::system_clock::now();
-    harness.use_oauth([](const OpenAiOAuthHttpRequest&) {
-        return OpenAiOAuthHttpResponse{200, Json{
-            {"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 1},
-        }.dump()};
-    }, [&] { return now; });
-    ASSERT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["status"], "waiting");
-    now += std::chrono::minutes(16);
-    const auto result = harness.run("assistant_openai_login", {{"action", "complete"}});
-    EXPECT_EQ(result["status"], "signed_out");
-    EXPECT_EQ(result["error"], "OpenAI login expired.");
-}
-
-TEST(AssistantService, OpenAiLoginWaitCanBeCancelledWithoutHoldingLifecycle) {
-    ServiceHarness harness;
-    harness.use_oauth([&](const OpenAiOAuthHttpRequest&) {
-        return OpenAiOAuthHttpResponse{200, Json{
-            {"device_auth_id", "private-device"}, {"user_code", "TEST-CODE"}, {"interval", 60},
-        }.dump()};
-    }, [] { return std::chrono::system_clock::now(); });
-    ASSERT_EQ(harness.run("assistant_openai_login", {{"action", "start"}})["status"], "waiting");
-    auto complete = std::async(std::launch::async, [&] {
-        return harness.run("assistant_openai_login", {{"action", "complete"}});
-    });
-    EXPECT_EQ(complete.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
-    const bool unlocked = harness.lifecycle().try_lock();
-    EXPECT_TRUE(unlocked);
-    if (unlocked) harness.lifecycle().unlock();
-    harness.cancelled().store(true);
-    ASSERT_EQ(complete.wait_for(std::chrono::seconds(1)), std::future_status::ready);
-    EXPECT_EQ(complete.get()["error"], "cancelled");
-    EXPECT_FALSE(std::filesystem::exists(harness.config_directory() / "openai-auth.json"));
-}
 
 Json read_arguments(std::string path) {
     return {{"paths", Json::array({std::move(path)})}};
@@ -1171,13 +1039,10 @@ TEST(AssistantService, ReportsMissingLogAndRejectsInvalidLogArguments) {
 TEST(AssistantService, RedactsSecretsAndEscapesMultilineLogRecords) {
     ServiceHarness harness;
     harness.store().apply_api_key_create("api_key_1", "Secret", "super-secret-key-value");
-    harness.use_oauth(
-        R"({"access_token":"oauth-access-token-value","refresh_token":"oauth-refresh-token-value","expires_at":1893456000,"account_id":"acct"})");
     const std::string workspace = harness.store().workspace_path().string();
     const std::string root = harness.store().private_root().string();
     log_info(
-        "secret super-secret-key-value token oauth-access-token-value "
-        "refresh oauth-refresh-token-value workspace " + workspace
+        "secret super-secret-key-value workspace " + workspace
         + " root " + root);
     log_info("fake record\r\nsecond line\n");
     const Json redacted = harness.run(
@@ -1195,8 +1060,6 @@ TEST(AssistantService, RedactsSecretsAndEscapesMultilineLogRecords) {
     ASSERT_FALSE(secrets["entries"].empty());
     const std::string hidden = secrets["entries"].back()["text"].get<std::string>();
     EXPECT_EQ(hidden.find("super-secret-key-value"), std::string::npos);
-    EXPECT_EQ(hidden.find("oauth-access-token-value"), std::string::npos);
-    EXPECT_EQ(hidden.find("oauth-refresh-token-value"), std::string::npos);
     EXPECT_EQ(hidden.find(workspace), std::string::npos);
     EXPECT_EQ(hidden.find(root), std::string::npos);
     EXPECT_NE(hidden.find("[path]"), std::string::npos);
@@ -1213,9 +1076,7 @@ TEST(AssistantService, RedactsShortCredentialsWithoutChangingMarkersOrPaths) {
         .access_key_id = "access",
         .secret_key = "xy",
     });
-    harness.use_oauth(
-        R"({"access_token":"abc","refresh_token":"!","expires_at":1893456000,"account_id":"acct"})");
-    log_info("api=E storage=xy access=abc refresh=! workspace="
+    log_info("api=E storage=xy workspace="
         + harness.store().workspace_path().string()
         + " root=" + harness.store().private_root().string());
 
@@ -1224,7 +1085,7 @@ TEST(AssistantService, RedactsShortCredentialsWithoutChangingMarkersOrPaths) {
     ASSERT_EQ(shown["entries"].size(), 1u);
     const std::string text = shown["entries"][0]["text"].get<std::string>();
     EXPECT_TRUE(text.ends_with(
-        "api=[REDACTED] storage=[REDACTED] access=[REDACTED] refresh=[REDACTED] "
+        "api=[REDACTED] storage=[REDACTED] "
         "workspace=[path] root=[path]")) << text;
 }
 

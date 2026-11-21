@@ -2615,10 +2615,6 @@ TEST_F(BridgeRouterTest, ListsProvidersAndApiKeyMetadataWithoutSecrets) {
     EXPECT_EQ(reply.dump().find("private-router-secret"), std::string::npos);
     EXPECT_TRUE(reply["result"].at("has_value").get<bool>());
 
-    reply = call("openaiAuth.get");
-    ASSERT_TRUE(reply["ok"]);
-    EXPECT_EQ(reply["result"].at("status"), "signed_out");
-
     reply = call("r2Storage.get");
     ASSERT_TRUE(reply["ok"]);
     if (!reply["result"].is_null()) {
@@ -2796,26 +2792,6 @@ TEST_F(BridgeRouterTest, SpeechAndAudioMethodsUseOpaqueResources) {
     const auto cancelled = call("speech.cancel", {{"request_id", 1}});
     EXPECT_TRUE(cancelled["ok"]);
     server.join();
-}
-
-TEST_F(BridgeRouterTest, StaleOauthCompletionDoesNotPublishAfterContextChange) {
-    bootstrap_epoch();
-    const auto old_epoch = epoch_;
-    const auto start_id = next_id_++;
-    router_->handle_request(
-        connection_,
-        request_json(connection_, start_id, old_epoch, "openaiAuth.start").dump());
-    router_->run_tasks();
-    application_->request_shutdown();
-    EXPECT_TRUE(application_->join_shutdown(2s));
-    auto batch = wait_delivery(*router_, connection_, 500ms);
-    if (batch) {
-        auto reply = reply_with_id(*batch, start_id);
-        if (!reply.empty() && reply.contains("ok") && !reply["ok"].get<bool>()) {
-            EXPECT_EQ(reply["error"]["code"], "application_unavailable");
-        }
-        ack_delivery(*router_, connection_, *batch);
-    }
 }
 
 void expect_note_error(

@@ -169,7 +169,6 @@ void WorkspaceConfigEditor::write_provider(
     table.insert("reasoning_format", to_string(provider.reasoning_format));
     table.insert("https", provider.https);
     table.insert("api", to_string(provider.api));
-    table.insert("auth", to_string(provider.auth));
     table.insert("web_search", to_string(provider.web_search));
     table.insert("cache_retention", to_string(provider.cache_retention));
     if (!provider.openrouter_targets.empty()) {
@@ -219,7 +218,6 @@ void WorkspaceConfigEditor::create_provider(
         table.insert("reasoning_format", "auto");
         table.insert("https", true);
         table.insert("api", "responses");
-        table.insert("auth", "none");
         table.insert("web_search", "off");
         table.insert("cache_retention", "short");
     } else {
@@ -228,6 +226,7 @@ void WorkspaceConfigEditor::create_provider(
             throw std::invalid_argument("Unknown provider to copy");
         }
         table = read_toml(source_, source->second, "provider config");
+        table.erase("auth");
         table.insert_or_assign("display_name", std::string(display_name));
     }
 

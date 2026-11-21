@@ -3,7 +3,6 @@
 #include "notes/notes_service.h"
 #include "app/background_jobs.h"
 #include "providers/api_key_store.h"
-#include "providers/openai_oauth.h"
 #include "providers/providers.h"
 #include "runtime/live_session_manager.h"
 #include "runtime/runtime_settings.h"
@@ -39,7 +38,7 @@ struct NoteSummaryLine {
 };
 
 struct NotesService::Impl {
-    Impl(WorkspaceConfigStore& store, ApiKeyStore& api_keys, OpenAiOAuth& oauth,
+    Impl(WorkspaceConfigStore& store, ApiKeyStore& api_keys,
         SessionRepository& sessions, LiveSessionManager& live_sessions,
         BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
         std::atomic_uint64_t& epoch,
@@ -49,7 +48,6 @@ struct NotesService::Impl {
 
     WorkspaceConfigStore* store;
     ApiKeyStore* api_keys;
-    OpenAiOAuth* openai_auth;
     SessionRepository* sessions;
     LiveSessionManager* live_sessions;
     BackgroundJobs& background_jobs;

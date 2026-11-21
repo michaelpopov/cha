@@ -25,7 +25,6 @@ ModelBackendConfig openai_config(std::string key_id = "api_key_1") {
     config.mode = Mode::net;
     config.https = true;
     config.api = ProviderApi::responses;
-    config.auth = ProviderAuth::none;
     config.api_key_id = std::move(key_id);
     return config;
 }
@@ -38,7 +37,6 @@ ModelBackendConfig google_config(std::string key_id = "api_key_1") {
     config.mode = Mode::net;
     config.https = true;
     config.api = ProviderApi::google;
-    config.auth = ProviderAuth::none;
     config.api_key_id = std::move(key_id);
     return config;
 }
@@ -87,9 +85,6 @@ TEST_F(FolderStoreClientTest, MatchesExactOpenAiAndGoogleEndpoints) {
     openai.api = ProviderApi::chat_completions;
     EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
     openai = openai_config(openai_key_);
-    openai.auth = ProviderAuth::openai_subscription;
-    EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
-    openai = openai_config(openai_key_);
     openai.base_path = "/v1";
     EXPECT_FALSE(folder_store_match(openai, keys_->list()).service);
 
@@ -121,9 +116,6 @@ TEST_F(FolderStoreClientTest, ClassifiesEndpointsBeforeAuthenticationAndKeyValid
     for (auto config : {openai_config("missing"), google_config("missing")}) {
         const auto expected = config.api == ProviderApi::responses
             ? FolderStoreService::openai : FolderStoreService::google;
-        EXPECT_EQ(folder_store_endpoint_service(config), expected);
-        EXPECT_FALSE(folder_store_match(config, keys_->list()).service);
-        config.auth = ProviderAuth::openai_subscription;
         EXPECT_EQ(folder_store_endpoint_service(config), expected);
         EXPECT_FALSE(folder_store_match(config, keys_->list()).service);
         config.https = false;

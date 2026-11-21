@@ -2441,11 +2441,10 @@ it('names an unavailable API, hides arbitrary exception details, and retries sta
   expect(getBootstrap).toHaveBeenCalledTimes(2);
 });
 
-it('opens Settings from the gear, fetches OpenAI status, and keeps the conversation', async () => {
-  const getOpenAiAuth = vi.fn(async () => ({ status: 'signed_out' as const }));
+it('opens Settings from the gear and keeps the conversation', async () => {
   render(
     <App
-      client={fixtureClient({ getOpenAiAuth })}
+      client={fixtureClient()}
       connectSessionEvents={inertSessionEvents}
     />,
   );
@@ -2454,16 +2453,17 @@ it('opens Settings from the gear, fetches OpenAI status, and keeps the conversat
   expect(screen.getByRole('combobox', { name: 'Choose message target' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Personas' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'OpenAI' })).not.toBeInTheDocument();
   fireEvent.click(within(screen.getByLabelText('Sidebar')).getByRole('button', { name: 'Settings' }));
   expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
-  expect(screen.getByRole('heading', { name: 'OpenAI' })).toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: 'Connect ChatGPT' })).toBeEnabled();
-  expect(getOpenAiAuth).toHaveBeenCalledTimes(1);
+
+  expect(within(screen.getByLabelText('Configuration')).getAllByRole('button').map((row) => row.textContent)).toEqual([
+    'Personas', 'Characters', 'Forums', 'Vaults', 'Providers', 'Styles', 'Session settings',
+    'Notes settings', 'Events', 'Search API', 'Voices', 'API Keys', 'Cloud stores', 'Prompts',
+  ]);
+  expect(within(screen.getByRole('region', { name: 'Settings' })).getAllByRole('region')).toHaveLength(1);
 
   fireEvent.click(screen.getByRole('button', { name: 'WelcomeEntrance' }));
   expect(await screen.findByLabelText('Current chat context')).toHaveTextContent('Entrance');
-  expect(screen.queryByRole('button', { name: 'Connect ChatGPT' })).not.toBeInTheDocument();
 });
 
 it('shows the settings row only after a writable character detail loads', async () => {

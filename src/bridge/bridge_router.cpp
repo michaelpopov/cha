@@ -1485,16 +1485,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 start_background(connection_id, id, application.read_note_picture(
                     require_string(params, "url"), epoch));
                 return;
-            case Method::openai_auth_start:
-                require_only_keys(params, {});
-                start_background(
-                    connection_id, id, application.start_openai_auth(epoch));
-                return;
-            case Method::openai_auth_poll:
-                require_only_keys(params, {});
-                start_background(
-                    connection_id, id, application.poll_openai_auth(epoch));
-                return;
             default:
                 if (auto workspace_result = dispatch_workspace_operation(
                         application, method, params, epoch)) {

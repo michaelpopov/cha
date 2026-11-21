@@ -3319,21 +3319,20 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ApplyRejectsProviderBasePathChangeWithSa
     EXPECT_EQ(store->config_revision(), revision);
 }
 
-void expect_package_seed_subscription(const ModelBackendConfig& config) {
-    EXPECT_EQ(config.auth, ProviderAuth::openai_subscription);
-    EXPECT_EQ(config.host, "chatgpt.com");
+void expect_package_seed_openai(const ModelBackendConfig& config) {
+    EXPECT_EQ(config.host, "api.openai.com");
     EXPECT_EQ(config.port, 443);
     EXPECT_TRUE(config.https);
-    EXPECT_EQ(config.base_path, "/backend-api/codex");
+    EXPECT_TRUE(config.base_path.empty());
     EXPECT_EQ(config.mode, Mode::net);
     EXPECT_EQ(config.api, ProviderApi::responses);
-    EXPECT_EQ(config.model, "gpt-5.6-terra");
+    EXPECT_EQ(config.model, "gpt-5");
     EXPECT_TRUE(config.stream);
     EXPECT_TRUE(config.api_key_id.empty());
     EXPECT_FALSE(config.temperature);
     EXPECT_FALSE(config.max_tokens);
     EXPECT_EQ(config.web_search, WebSearchMode::off);
-    EXPECT_EQ(config.cache_retention, CacheRetention::off);
+    EXPECT_EQ(config.cache_retention, CacheRetention::short_);
 }
 
 TEST(WorkspaceConfigStore, SystemPromptPreviewUsesSavedSettingsWithoutChangingConfiguration) {
@@ -3398,28 +3397,29 @@ TEST(WorkspaceConfigStore, ImportsPackageSeedWithoutApiKey) {
     const auto workspace = store->snapshot();
     ASSERT_NE(workspace, nullptr);
 
-    const WorkspaceProvider* const chatgpt = workspace->find_provider("chatgpt");
-    ASSERT_NE(chatgpt, nullptr);
-    expect_package_seed_subscription(chatgpt->config);
+    const WorkspaceProvider* const openai = workspace->find_provider("openai");
+    ASSERT_NE(openai, nullptr);
+    EXPECT_EQ(openai->label, "OpenAI");
+    expect_package_seed_openai(openai->config);
 
     EXPECT_EQ(
         workspace->find_character(workspace_assistant_id)->provider_id,
-        "chatgpt");
-    EXPECT_EQ(workspace->find_character("epictetus")->provider_id, "chatgpt");
+        "openai");
+    EXPECT_EQ(workspace->find_character("epictetus")->provider_id, "openai");
     EXPECT_EQ(
-        workspace->find_character("markus_aurelius")->provider_id, "chatgpt");
-    EXPECT_EQ(workspace->find_character("seneca")->provider_id, "chatgpt");
+        workspace->find_character("markus_aurelius")->provider_id, "openai");
+    EXPECT_EQ(workspace->find_character("seneca")->provider_id, "openai");
 
-    expect_package_seed_subscription(
+    expect_package_seed_openai(
         workspace->character_definition(
             workspace_entrance_id, workspace_assistant_id)
             .provider.config);
-    expect_package_seed_subscription(
+    expect_package_seed_openai(
         workspace->character_definition("stoics", "epictetus").provider.config);
-    expect_package_seed_subscription(
+    expect_package_seed_openai(
         workspace->character_definition("stoics", "markus_aurelius")
             .provider.config);
-    expect_package_seed_subscription(
+    expect_package_seed_openai(
         workspace->character_definition("stoics", "seneca").provider.config);
     (void)store;
 }

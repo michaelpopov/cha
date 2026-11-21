@@ -16,7 +16,6 @@
   "reasoning_format": "auto",
   "https": false,
   "api": "responses",
-  "auth": "none",
   "web_search": "off",
   "cache_retention": "short",
   "openrouter_targets": [],

@@ -5,7 +5,6 @@ import type {
   CharacterDetail,
   ForumDetail,
   NotesClient,
-  OpenAiAuth,
   PersonaDetail,
   SessionSnapshot,
   VoiceDetail,
@@ -152,18 +151,6 @@ export const forumDetailFixture: ForumDetail = {
   writable: true,
 };
 
-export const signedOutAuth: OpenAiAuth = { status: 'signed_out' };
-
-export const waitingAuth: OpenAiAuth = {
-  status: 'waiting',
-  user_code: 'TEST-ONLY',
-  verification_url: 'https://auth.openai.com/codex/device',
-  attempt_expires_at: 1700000900,
-  next_poll_delay_ms: 1000,
-};
-
-export const connectedAuth: OpenAiAuth = { status: 'connected' };
-
 export const snapshotFixture: SessionSnapshot = {
   chat_settings: {
     model_locked: false,
@@ -287,10 +274,6 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     stopGeneration: async () => ({ clear_input: false }),
     setDefaultCharacter: async () => ({ clear_input: false }),
     setCharacterSettings: async () => ({ clear_input: false }),
-    getOpenAiAuth: async () => signedOutAuth,
-    startOpenAiAuth: async () => signedOutAuth,
-    pollOpenAiAuth: async () => signedOutAuth,
-    disconnectOpenAiAuth: async () => signedOutAuth,
     listVaults: async () => [],
     createVault: async () => { throw new Error('No vault fixture'); },
     listR2Vaults: async () => [],

@@ -21,7 +21,6 @@ class WorkspaceConfigStore;
 class SessionRepository;
 class LiveSessionManager;
 class ApiKeyStore;
-class OpenAiOAuth;
 struct RuntimeSettings;
 struct GenerationResult;
 struct NoteAudioService;
@@ -42,7 +41,7 @@ std::optional<std::string> flex_test_failure(const GenerationResult& result);
 // the service or its borrowed dependencies; the service destructor does not join.
 class NotesService {
 public:
-    NotesService(WorkspaceConfigStore& store, ApiKeyStore& api_keys, OpenAiOAuth& oauth,
+    NotesService(WorkspaceConfigStore& store, ApiKeyStore& api_keys,
         SessionRepository& sessions, LiveSessionManager& live_sessions,
         BackgroundJobs& jobs, const RuntimeSettings& settings, std::timed_mutex& lifecycle,
         std::atomic_uint64_t& epoch,

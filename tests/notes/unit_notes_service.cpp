@@ -2,7 +2,6 @@
 #include "app/background_jobs.h"
 #include "providers/api_key_store.h"
 #include "providers/model_backend.h"
-#include "providers/openai_oauth.h"
 #include "runtime/runtime_settings.h"
 #include "runtime/live_session_manager.h"
 #include "storage/session_repository.h"
@@ -26,7 +25,6 @@ protected:
     std::timed_mutex lifecycle;
     std::optional<ErrorCode> denied;
     ApiKeyStore keys{*store, workspace.root() / "api-keys.json"};
-    OpenAiOAuth oauth{workspace.root() / "openai-auth.json"};
     BackgroundJobs jobs;
     RuntimeSettings settings;
     std::atomic_uint64_t epoch{1};
@@ -38,7 +36,7 @@ protected:
             throw std::logic_error("These service tests do not open live sessions");
         }};
     void TearDown() override { jobs.request_stop(); jobs.join(); }
-    NotesService notes{*store, keys, oauth, sessions, live_sessions, jobs, settings, lifecycle, epoch, [this](std::uint64_t epoch) {
+    NotesService notes{*store, keys, sessions, live_sessions, jobs, settings, lifecycle, epoch, [this](std::uint64_t epoch) {
         return epoch == 1 ? denied : std::optional{ErrorCode::vault_changed};
     }, [] { return true; }, [] { return std::string("Test"); }};
 };

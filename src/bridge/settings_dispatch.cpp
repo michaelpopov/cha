@@ -231,14 +231,6 @@ std::optional<nlohmann::json> dispatch_settings_operation(
         application.disconnect_d1_storage(epoch);
         result = nlohmann::json::object();
         break;
-    case Method::openai_auth_get:
-        require_only_keys(params, {});
-        result = application.openai_auth_status(epoch);
-        break;
-    case Method::openai_auth_disconnect:
-        require_only_keys(params, {});
-        result = application.disconnect_openai_auth(epoch);
-        break;
     default:
         return std::nullopt;
     }

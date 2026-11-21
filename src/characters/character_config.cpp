@@ -35,7 +35,7 @@ bool is_openrouter_host(std::string_view host) {
 }
 
 bool eligible_for_flex_processing(const ModelBackendConfig& config) {
-    if (config.mode != Mode::net || config.auth != ProviderAuth::none
+    if (config.mode != Mode::net
         || (config.api_key_id.empty() && config.api_key_env.empty())) return false;
 
     switch (config.api) {
@@ -105,14 +105,6 @@ std::string_view to_string(ProviderApi value) {
     throw std::logic_error("Unknown provider API");
 }
 
-std::string_view to_string(ProviderAuth value) {
-    switch (value) {
-    case ProviderAuth::none: return "none";
-    case ProviderAuth::openai_subscription: return "openai_subscription";
-    }
-    throw std::logic_error("Unknown provider auth");
-}
-
 std::string_view to_string(ReasoningFormat value) {
     switch (value) {
     case ReasoningFormat::automatic: return "auto";
@@ -143,12 +135,6 @@ std::optional<ProviderApi> parse_provider_api(std::string_view value) {
     if (value == "responses") return ProviderApi::responses;
     if (value == "google") return ProviderApi::google;
     if (value == "anthropic") return ProviderApi::anthropic;
-    return std::nullopt;
-}
-
-std::optional<ProviderAuth> parse_provider_auth(std::string_view value) {
-    if (value == "none") return ProviderAuth::none;
-    if (value == "openai_subscription") return ProviderAuth::openai_subscription;
     return std::nullopt;
 }
 
@@ -226,22 +212,6 @@ std::optional<std::string_view> provider_config_error(
         && !provider_supports_web_search(config)) {
         return "enables web search for an unsupported provider";
     }
-    if (config.auth == ProviderAuth::openai_subscription) {
-        if (config.host != "chatgpt.com"
-            || config.port != 443
-            || !config.https
-            || config.base_path != "/backend-api/codex"
-            || config.mode != Mode::net
-            || config.api != ProviderApi::responses
-            || !config.stream
-            || !config.api_key_id.empty()
-            || !config.api_key_env.empty()
-            || config.temperature
-            || config.max_tokens
-            || config.cache_retention != CacheRetention::off) {
-            return "has invalid openai_subscription settings";
-        }
-    }
     return std::nullopt;
 }
 
@@ -254,9 +224,6 @@ std::string_view to_string(WebSearchMode value) {
 }
 
 std::string provider_endpoint(const ModelBackendConfig& config) {
-    if (config.auth == ProviderAuth::openai_subscription) {
-        return "https://chatgpt.com/backend-api/codex/responses";
-    }
     std::string host = config.host;
     if (host.find(':') != std::string::npos && !host.starts_with('[')) {
         host = '[' + host + ']';

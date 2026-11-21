@@ -1,0 +1,10 @@
+display_name = "OpenAI"
+host = "api.openai.com"
+port = 443
+https = true
+mode = "net"
+api = "responses"
+model = "gpt-5"
+stream = true
+web_search = "off"
+cache_retention = "short"

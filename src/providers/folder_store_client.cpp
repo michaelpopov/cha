@@ -404,7 +404,7 @@ FolderStoreEligibility folder_store_match(
     const ModelBackendConfig& config, std::span<const ApiKeyInfo> keys) {
     FolderStoreEligibility result;
     const auto service = folder_store_endpoint_service(config);
-    if (!service || config.auth != ProviderAuth::none) return result;
+    if (!service) return result;
     result.api_key_id = resolve_key_id(config, keys);
     if (result.api_key_id.empty()) return result;
     result.service = service;

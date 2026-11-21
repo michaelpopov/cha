@@ -40,7 +40,6 @@ call repeatedly.
 | `chat_completions_api.*` | Chat Completions request encoding and response decoding. |
 | `responses_api.*` | Responses API request encoding and response decoding. |
 | `sse_framer.*` | Protocol-neutral server-sent event framing. |
-| `openai_oauth.*` | OpenAI subscription login, refresh, persistence, and cancellation. |
 | `api_key_store.*` / `credentials.h` | Vault-backed model and R2 credential values and lifecycle. |
 | `voice_output_config.*` | Voice output endpoint and format validation. |
 | `voice_output.*` | FishAudio and ElevenLabs requests, streaming transport, and audio validation. |
@@ -55,7 +54,7 @@ it. Its decision selects one character, all characters, or the captured
 fallback target. Classification failure falls back without losing the prompt.
 
 The on-demand `web_search` function works with both protocol
-encoders, including subscription Responses. `ProviderClient::perform()` runs
+encoders. `ProviderClient::perform()` runs
 the continuation loop, aggregates token usage, and limits tool attempts to
 four. At the limit it removes tools and requests a final answer. Intermediate
 tool-round text stays out of the answer stream. Search results are untrusted

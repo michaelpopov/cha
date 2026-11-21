@@ -232,7 +232,7 @@ ChatResult run_chat(bool stream) {
         share_character_definitions(std::move(definitions));
     Providers providers([&api_keys](SharedCharacterDefinition character) {
         return std::make_unique<ProviderClient>(
-            std::move(character), nullptr, &api_keys);
+            std::move(character), &api_keys);
     });
 
     const std::string input = "Reply with one short sentence confirming that the connection works.";
@@ -293,7 +293,7 @@ ChatResult run_cancelled_chat() {
         share_character_definitions(std::move(definitions));
     Providers providers([&api_keys](SharedCharacterDefinition character) {
         return std::make_unique<ProviderClient>(
-            std::move(character), nullptr, &api_keys);
+            std::move(character), &api_keys);
     });
 
     const std::string input = "Write a detailed essay of at least two thousand words about distributed systems.";

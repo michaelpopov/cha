@@ -747,7 +747,6 @@ TEST(Workspace, ResolvesCompleteProviderAndStyleValues) {
     EXPECT_EQ(provider->config.mode, Mode::net);
     EXPECT_EQ(provider->config.model, "model-one");
     EXPECT_EQ(provider->config.api_key_id, "api_key_1");
-    EXPECT_EQ(provider->config.auth, ProviderAuth::none);
     EXPECT_FALSE(provider->config.stream);
     EXPECT_EQ(provider->config.temperature, 0.25);
     EXPECT_EQ(provider->config.max_tokens, 512);
@@ -2151,151 +2150,16 @@ TEST(Workspace, PrefersExactForumHandlesAndSupportsUtf8Prefixes) {
         "stirlitz");
 }
 
-std::string subscription_provider_toml(std::string_view extra = {}) {
-    std::string text =
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\n"
-        "port = 443\n"
-        "https = true\n"
-        "base_path = \"/backend-api/codex\"\n"
-        "mode = \"net\"\n"
-        "api = \"responses\"\n"
-        "model = \"gpt-5.6-terra\"\n"
-        "stream = true\n"
-        "web_search = \"off\"\n"
-        "cache_retention = \"off\"\n";
-    text += extra;
-    return text;
-}
-
-TEST(Workspace, LoadsOpenAiSubscriptionProvider) {
-    test::TestWorkspace fixture;
-    fixture.write_provider("chatgpt", subscription_provider_toml());
-    fixture.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
-
-    const Workspace workspace = Workspace::load(fixture.root());
-    const WorkspaceProvider* const provider = workspace.find_provider("chatgpt");
-    ASSERT_NE(provider, nullptr);
-    EXPECT_EQ(provider->config.auth, ProviderAuth::openai_subscription);
-    EXPECT_EQ(provider->config.host, "chatgpt.com");
-    EXPECT_EQ(provider->config.port, 443);
-    EXPECT_TRUE(provider->config.https);
-    EXPECT_EQ(provider->config.base_path, "/backend-api/codex");
-    EXPECT_EQ(provider->config.mode, Mode::net);
-    EXPECT_EQ(provider->config.api, ProviderApi::responses);
-    EXPECT_EQ(provider->config.model, "gpt-5.6-terra");
-    EXPECT_TRUE(provider->config.stream);
-    EXPECT_TRUE(provider->config.api_key_id.empty());
-    EXPECT_FALSE(provider->config.temperature);
-    EXPECT_FALSE(provider->config.max_tokens);
-    EXPECT_EQ(provider->config.web_search, WebSearchMode::off);
-    EXPECT_EQ(provider->config.cache_retention, CacheRetention::off);
-    EXPECT_EQ(
-        workspace.character_definition("lobby", "guide").provider.config.auth,
-        ProviderAuth::openai_subscription);
-}
-
-TEST(Workspace, LoadsOpenAiSubscriptionHostedSearchModes) {
-    for (const auto mode : {WebSearchMode::automatic}) {
-        SCOPED_TRACE(to_string(mode));
-        test::TestWorkspace fixture;
-        auto config = subscription_provider_toml();
-        const auto position = config.find("web_search = \"off\"");
-        config.replace(position, std::string("web_search = \"off\"").size(),
-            "web_search = \"" + std::string(to_string(mode)) + "\"");
-        fixture.write_provider("chatgpt", config);
-        fixture.write_character_config("display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
-        const auto workspace = Workspace::load(fixture.root());
-        EXPECT_TRUE(provider_supports_web_search(workspace.find_provider("chatgpt")->config));
-        EXPECT_EQ(workspace.find_provider("chatgpt")->config.web_search, mode);
-        EXPECT_EQ(workspace.character_definition("lobby", "guide").provider.config.web_search, mode);
-    }
-}
-
-TEST(Workspace, RejectsUnknownProviderAuth) {
-    test::TestWorkspace fixture;
-    fixture.write_provider(
-        "chatgpt",
-        "auth = \"oauth\"\n"
-        "host = \"chatgpt.com\"\n"
-        "port = 443\n"
-        "mode = \"net\"\n"
-        "model = \"gpt-5.6-terra\"\n");
-    fixture.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
-    EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-}
-
-TEST(Workspace, RejectsInvalidOpenAiSubscriptionSettings) {
-    const std::vector<std::string> invalid{
-        subscription_provider_toml("temperature = 0.2\n"),
-        subscription_provider_toml("max_tokens = 128\n"),
-        subscription_provider_toml("api_key = \"api_key_1\"\n"),
-        "auth = \"openai_subscription\"\n"
-        "host = \"api.openai.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 80\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = false\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/v1\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"test\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"chat_completions\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = false\n"
-        "web_search = \"off\"\ncache_retention = \"off\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\ncache_retention = \"short\"\n",
-        "auth = \"openai_subscription\"\n"
-        "host = \"chatgpt.com\"\nport = 443\nhttps = true\n"
-        "base_path = \"/backend-api/codex\"\nmode = \"net\"\n"
-        "api = \"responses\"\nmodel = \"gpt-5.6-terra\"\nstream = true\n"
-        "web_search = \"off\"\n",
-    };
-    for (const std::string& contents : invalid) {
-        SCOPED_TRACE(contents);
-        test::TestWorkspace fixture;
-        fixture.write_provider("chatgpt", contents);
-        fixture.write_character_config(
-            "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
-        EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
-    }
-}
-
-TEST(Workspace, LoadsOpenAiSubscriptionWebSearchOverrides) {
+TEST(Workspace, LoadsOpenAiWebSearchOverrides) {
     for (const bool assistant : {false, true}) {
         test::TestWorkspace fixture;
-        fixture.write_provider("chatgpt", subscription_provider_toml());
+        fixture.write_provider("openai",
+            "host = \"api.openai.com\"\nport = 443\nhttps = true\nmode = \"net\"\n"
+            "model = \"gpt-5\"\napi = \"responses\"\n");
         const std::string path = assistant ? "system/assistant/character.toml"
             : "characters/guide/character.toml";
         const std::string source = "display_name = \"" + std::string(assistant ? "Assistant" : "Guide")
-            + "\"\nprovider = \"chatgpt\"\nweb_search = \"required\"\n";
+            + "\"\nprovider = \"openai\"\nweb_search = \"required\"\n";
         std::ofstream(fixture.root() / path, std::ios::binary) << source;
         LoadWarningCollector warnings;
         const auto workspace = Workspace::load(fixture.root(), &warnings);
@@ -2450,19 +2314,21 @@ TEST(Workspace, IgnoresUnusedForumMemberSettingsWithWarnings) {
     EXPECT_THROW((void)Workspace::load(fixture.root()), std::runtime_error);
 }
 
-TEST(Workspace, SavingOpenAiSubscriptionPreservesWebSearchOverrides) {
+TEST(Workspace, SavingOpenAiProviderPreservesWebSearchOverrides) {
     test::TestWorkspace fixture;
-    fixture.write_provider("chatgpt", subscription_provider_toml());
+    fixture.write_provider("openai",
+            "host = \"api.openai.com\"\nport = 443\nhttps = true\nmode = \"net\"\n"
+            "model = \"gpt-5\"\napi = \"responses\"\n");
     fixture.write_character_config(
-        "display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
+        "display_name = \"Guide\"\nprovider = \"openai\"\n");
     const Workspace workspace = Workspace::load(fixture.root());
     for (const auto mode : {WebSearchMode::automatic}) {
         EXPECT_NO_THROW(edit_fixture(workspace, [&](WorkspaceConfigEditor& editor) {
             editor.write_character_settings(
-                "guide", "chatgpt", std::nullopt, std::nullopt, std::nullopt, mode);
+                "guide", "openai", std::nullopt, std::nullopt, std::nullopt, mode);
         }));
         const Workspace reloaded = Workspace::load(fixture.root());
-        EXPECT_EQ(reloaded.find_character("guide")->provider_id, "chatgpt");
+        EXPECT_EQ(reloaded.find_character("guide")->provider_id, "openai");
         EXPECT_EQ(reloaded.find_character("guide")->web_search, mode);
         EXPECT_EQ(reloaded.character_definition("lobby", "guide").provider.config.web_search, mode);
     }
@@ -2497,8 +2363,8 @@ TEST(Workspace, SessionModelAndEffortUseConfiguredPrecedenceAndGuardSearch) {
     EXPECT_EQ(workspace.find_provider("other")->config.reasoning_effort, "low");
     for (const std::string api : {"responses", "google", "anthropic"}) {
         fixture.write_provider("other",
-            "host = \"chatgpt.com\"\nport = 443\nhttps = true\nmode = \"net\"\nmodel = \"other\"\napi = \""
-            + api + "\"\n" + (api == "responses" ? "auth = \"openai_subscription\"\nbase_path = \"/backend-api/codex\"\ncache_retention = \"off\"\n" : ""));
+            "host = \"api.openai.com\"\nport = 443\nhttps = true\nmode = \"net\"\nmodel = \"other\"\napi = \""
+            + api + "\"\n");
         workspace = Workspace::load(fixture.root());
         settings.provider_id = "other";
         selected = workspace.character_definition("lobby", "guide", &settings).provider;
@@ -2588,18 +2454,17 @@ TEST(Workspace, LibraryEligibilityUsesTheSavedKeyIdentityAndNativeEndpoint) {
     empty_key.value.clear();
     EXPECT_FALSE(provider_uses_key_stores(workspace, provider, empty_key));
     const auto base = config;
-    for (int variant = 0; variant < 8; ++variant) {
+    for (int variant = 0; variant < 7; ++variant) {
         SCOPED_TRACE(variant);
         config = base;
         switch (variant) {
         case 0: config.api_key_id = "api_key_3"; break;
-        case 1: config.auth = ProviderAuth::openai_subscription; break;
-        case 2: config.api = ProviderApi::chat_completions; break;
-        case 3: config.host = "proxy.example.com"; break;
-        case 4: config.base_path = "/v1"; break;
-        case 5: config.https = false; break;
-        case 6: config.port = 8443; break;
-        case 7: config.mode = Mode::test; break;
+        case 1: config.api = ProviderApi::chat_completions; break;
+        case 2: config.host = "proxy.example.com"; break;
+        case 3: config.base_path = "/v1"; break;
+        case 4: config.https = false; break;
+        case 5: config.port = 8443; break;
+        case 6: config.mode = Mode::test; break;
         }
         EXPECT_FALSE(provider_uses_key_stores(workspace, provider, key));
     }

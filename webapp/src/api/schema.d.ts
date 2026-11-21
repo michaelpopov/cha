@@ -21,37 +21,6 @@ export interface components {
         /** @example lobby */
         Identifier: string;
         EmptyObject: Record<string, never>;
-        OpenAiAuth: {
-            /** @enum {string} */
-            status: "signed_out" | "waiting" | "connected";
-            /**
-             * @description Present only while `status` is `waiting`. The code the user enters
-             *     at the verification URL.
-             */
-            user_code?: string;
-            /**
-             * Format: uri
-             * @description Present only while `status` is `waiting`. Always
-             *     `https://auth.openai.com/codex/device`.
-             */
-            verification_url?: string;
-            /**
-             * @description Present only while `status` is `waiting`. Unix seconds when this
-             *     pending login expires. The browser can compare with `Date.now()/1000`.
-             */
-            attempt_expires_at?: components["schemas"]["UnixTimestamp"];
-            /**
-             * @description Present only while `status` is `waiting`. Milliseconds until the
-             *     next eligible `POST /api/v1/openai/auth/poll`. The browser can pass
-             *     this value to `setTimeout`.
-             */
-            next_poll_delay_ms?: number;
-            /**
-             * @description Sanitized operator-facing message when the last owner operation
-             *     failed. Omitted when there is no such message.
-             */
-            error?: string;
-        };
         Health: {
             /** @constant */
             ready: true;
@@ -205,8 +174,6 @@ export interface components {
             /** @enum {string} */
             api: "chat_completions" | "responses" | "google" | "anthropic";
             /** @enum {string} */
-            auth: "none" | "openai_subscription";
-            /** @enum {string} */
             web_search: "off" | "auto";
             /** @enum {string} */
             cache_retention: "off" | "short" | "long";
@@ -234,8 +201,6 @@ export interface components {
             https: boolean;
             /** @enum {string} */
             api: "chat_completions" | "responses" | "google" | "anthropic";
-            /** @enum {string} */
-            auth: "none" | "openai_subscription";
             /** @enum {string} */
             web_search: "off" | "auto";
             /** @enum {string} */

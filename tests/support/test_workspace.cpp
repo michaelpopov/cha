@@ -61,9 +61,6 @@ void write_provider_config(
          << "reasoning_format = " << quoted(to_string(config.reasoning_format)) << '\n'
          << "https = " << (config.https ? "true" : "false") << '\n'
          << "api = " << quoted(to_string(config.api)) << '\n';
-    if (config.auth != ProviderAuth::none) {
-        file << "auth = " << quoted(to_string(config.auth)) << '\n';
-    }
     file << "web_search = " << quoted(to_string(config.web_search)) << '\n'
          << "cache_retention = " << quoted(to_string(config.cache_retention)) << '\n';
     if (!config.openrouter_targets.empty()) {

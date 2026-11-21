@@ -125,16 +125,12 @@ function providerUpdate(detail: ProviderDetail): ProviderUpdate {
   return update;
 }
 
-const openAiOAuthCredential = 'openai_oauth';
-
 function providerDraft(detail: ProviderDetail, keys: ApiKeyDetail[]): ProviderUpdate {
   const update = providerUpdate(detail);
-  const usesOpenAiOAuth = update.auth === 'openai_subscription';
   return {
     ...update,
-    api_key: !usesOpenAiOAuth && keys.some(({ id }) => id === update.api_key)
+    api_key: keys.some(({ id }) => id === update.api_key)
       ? update.api_key : null,
-    auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
   };
 }
 
@@ -240,25 +236,7 @@ export function ProviderScreen({
   }, [client, dispatch, id, reload.epoch, reload.attempt]);
 
   function change<Key extends keyof ProviderUpdate>(key: Key, value: ProviderUpdate[Key]) {
-    setDraft((current) => {
-      if (!current) return current;
-      const next = { ...current, [key]: value };
-      if (key === 'api' && (value === 'google' || value === 'anthropic') && current.auth === 'openai_subscription') {
-        next.auth = 'none';
-        next.api_key = null;
-      }
-      return next;
-    });
-    setError(null);
-    setTestSucceeded(false);
-  }
-
-  function changeCredential(value: string) {
-    setDraft((current) => current ? {
-      ...current,
-      api_key: value === openAiOAuthCredential ? null : value || null,
-      auth: value === openAiOAuthCredential ? 'openai_subscription' : 'none',
-    } : current);
+    setDraft((current) => current ? { ...current, [key]: value } : current);
     setError(null);
     setTestSucceeded(false);
   }
@@ -268,19 +246,6 @@ export function ProviderScreen({
     const connection = parseProviderBaseUrl(baseUrl);
     if (!connection) {
       setError('Base URL must be an HTTP or HTTPS address without credentials, query, or fragment.');
-      return null;
-    }
-    const usesOpenAiOAuth = draft.auth === 'openai_subscription';
-    if (usesOpenAiOAuth
-        && (!connection.https
-          || connection.port !== 443
-          || connection.host !== 'chatgpt.com'
-          || connection.basePath !== '/backend-api/codex')) {
-      setError('OpenAI OAuth requires Base URL https://chatgpt.com/backend-api/codex.');
-      return null;
-    }
-    if (usesOpenAiOAuth && draft.api !== 'responses') {
-      setError('OpenAI OAuth requires the Responses API format.');
       return null;
     }
     const targets = draft.api !== 'google' && draft.api !== 'anthropic' && isOpenRouterHost(connection.host)
@@ -299,14 +264,11 @@ export function ProviderScreen({
       mode: 'net',
       https: connection.https,
       stream: true,
-      api_key: usesOpenAiOAuth ? null : draft.api_key,
-      auth: usesOpenAiOAuth ? 'openai_subscription' : 'none',
       web_search: 'off',
       reasoning_effort: draft.reasoning_effort,
-      temperature: usesOpenAiOAuth || draft.api === 'anthropic' ? null : draft.temperature,
+      temperature: draft.api === 'anthropic' ? null : draft.temperature,
       reasoning_format: draft.api === 'anthropic' ? 'auto' : draft.reasoning_format,
-      max_tokens: usesOpenAiOAuth ? null : draft.max_tokens,
-      cache_retention: usesOpenAiOAuth ? 'off' : draft.api === 'anthropic' ? 'short' : draft.cache_retention,
+      cache_retention: draft.api === 'anthropic' ? 'short' : draft.cache_retention,
       openrouter_targets: targets,
     };
   }
@@ -374,7 +336,6 @@ export function ProviderScreen({
     draft.model !== detail.model
     || draft.reasoning_effort !== detail.reasoning_effort
     || draft.api !== detail.api
-    || draft.auth !== detail.auth
     || draft.api_key !== (keys.some(({ id: keyId }) => keyId === detail.api_key)
       ? detail.api_key : null)
     || baseUrl !== providerBaseUrl(detail)
@@ -438,8 +399,7 @@ export function ProviderScreen({
             <label>Base URL<input className="cha-form-control" onChange={(event) => { setBaseUrl(event.target.value); setError(null); setTestSucceeded(false); }} placeholder="https://api.openai.com" type="url" value={baseUrl} /></label>
             <div className="cha-settings-form-grid">
               <label>API format<select className="cha-form-control" onChange={(event) => change('api', event.target.value as ProviderUpdate['api'])} value={draft.api}><option value="responses">Responses</option><option value="chat_completions">Chat completions</option><option value="google">Google (Gemini)</option><option value="anthropic">Anthropic</option></select></label>
-              <label>Credentials<select className="cha-form-control" onChange={(event) => changeCredential(event.target.value)} value={draft.auth === 'openai_subscription'
-                ? openAiOAuthCredential : draft.api_key ?? ''}><option value="">No credentials</option>{draft.api !== 'google' && draft.api !== 'anthropic' && <option value={openAiOAuthCredential}>OpenAI OAuth</option>}{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
+              <label>Credentials<select className="cha-form-control" onChange={(event) => change('api_key', event.target.value || null)} value={draft.api_key ?? ''}><option value="">No credentials</option>{keys.map((key) => <option key={key.id} value={key.id}>{key.display_name}</option>)}</select></label>
             </div>
             {draft.api !== 'google' && draft.api !== 'anthropic' && isOpenRouterBaseUrl(baseUrl) && <label>Inference targets<textarea className="cha-form-control cha-provider-targets" onChange={(event) => { setOpenRouterTargets(event.target.value); setError(null); setTestSucceeded(false); }} rows={3} value={openRouterTargets} /></label>}
           </fieldset>

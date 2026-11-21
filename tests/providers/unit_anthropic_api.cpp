@@ -73,8 +73,7 @@ TEST(AnthropicApi, ConfigurationAndCustomEndpointsIgnoreUnusedValues) {
     config.max_tokens = 0;
     EXPECT_TRUE(provider_config_error(config));
     config.max_tokens = 100;
-    config.auth = ProviderAuth::openai_subscription;
-    EXPECT_TRUE(provider_config_error(config));
+    EXPECT_FALSE(provider_config_error(config));
 }
 
 TEST(AnthropicApi, EncodesExtraHighEffortForAdaptiveAndManualThinking) {

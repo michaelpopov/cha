@@ -11,7 +11,6 @@
 
 namespace cha {
 
-class OpenAiOAuth;
 class ApiKeyStore;
 
 // The narrow transport construction seam. Each call creates one independent
@@ -43,16 +42,9 @@ using ProviderHttpTransport = std::function<ProviderHttpResponse(
 // format. Each request-local client owns one connection handle.
 class ProviderClient final : public ModelBackend {
 public:
-    explicit ProviderClient(SharedCharacterDefinition definition);
-    ProviderClient(SharedCharacterDefinition definition, OpenAiOAuth* oauth);
-    ProviderClient(
+    explicit ProviderClient(
         SharedCharacterDefinition definition,
-        OpenAiOAuth* oauth,
-        ProviderHttpTransport transport);
-    ProviderClient(
-        SharedCharacterDefinition definition,
-        OpenAiOAuth* oauth,
-        ApiKeyStore* api_keys,
+        ApiKeyStore* api_keys = nullptr,
         ProviderHttpTransport transport = {});
     ~ProviderClient() override;
 
@@ -73,7 +65,6 @@ private:
     class CurlEasyHandle;
 
     SharedCharacterDefinition definition_;
-    OpenAiOAuth* oauth_{};
     ProviderHttpTransport transport_;
     std::string api_key_;
     std::unique_ptr<CurlEasyHandle> curl_;

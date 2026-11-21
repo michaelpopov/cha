@@ -101,18 +101,6 @@ std::vector<std::string> providers_using_key(
     return result;
 }
 
-std::string_view status_name(OpenAiOAuthState state) {
-    switch (state) {
-    case OpenAiOAuthState::waiting:
-        return "waiting";
-    case OpenAiOAuthState::connected:
-        return "connected";
-    case OpenAiOAuthState::signed_out:
-        return "signed_out";
-    }
-    return "signed_out";
-}
-
 const WorkspaceProvider& require_provider(
     const Workspace& workspace,
     std::string_view id,
@@ -218,7 +206,6 @@ ProviderDetail provider_detail(
         .reasoning_format = std::string(to_string(config.reasoning_format)),
         .https = config.https,
         .api = std::string(to_string(config.api)),
-        .auth = std::string(to_string(config.auth)),
         .web_search = std::string(to_string(config.web_search)),
         .cache_retention = std::string(to_string(config.cache_retention)),
         .openrouter_targets = config.openrouter_targets,
@@ -313,19 +300,6 @@ D1StorageDetail d1_storage_detail(const D1StorageInfo& key) {
         .database_id = key.database_id,
         .has_api_token = key.has_api_token,
     };
-}
-
-OpenAiAuth openai_auth_from(const OpenAiOAuthSnapshot& snapshot) {
-    OpenAiAuth result;
-    result.status = std::string(status_name(snapshot.state));
-    if (snapshot.state == OpenAiOAuthState::waiting) {
-        result.user_code = snapshot.user_code;
-        result.verification_url = snapshot.verification_url;
-        result.attempt_expires_at = snapshot.attempt_expires_at;
-        result.next_poll_delay_ms = snapshot.next_poll_delay_ms;
-    }
-    result.error = snapshot.error;
-    return result;
 }
 
 std::vector<ProviderSummary> list_providers(
@@ -438,7 +412,6 @@ std::function<void(const std::atomic_bool&)> prepare_provider_test(
     const Workspace& workspace,
     std::string_view id,
     const nlohmann::json& body,
-    OpenAiOAuth& openai_auth,
     ApiKeyStore& api_keys) {
     const WorkspaceProvider& provider = require_provider(workspace, id, false);
     ProviderUpdate candidate;
@@ -472,7 +445,7 @@ std::function<void(const std::atomic_bool&)> prepare_provider_test(
             .prompt_text = "Reply with OK.",
         },
     };
-    auto client = std::make_shared<ProviderClient>(definition, &openai_auth, &api_keys);
+    auto client = std::make_shared<ProviderClient>(definition, &api_keys);
     return [client, request](const std::atomic_bool& cancellation) {
         const GenerationResult result = client->perform(
             client->prepare(request),
@@ -1033,26 +1006,6 @@ void delete_d1_storage(ApiKeyStore& api_keys) {
         }
         return 0;
     });
-}
-
-OpenAiAuth openai_auth_status(const OpenAiOAuth& owner) {
-    return openai_auth_from(owner.status());
-}
-
-OpenAiAuth start_openai_auth(
-    OpenAiOAuth& owner,
-    const std::atomic_bool& cancelled) {
-    return openai_auth_from(owner.start([&] { return cancelled.load(); }));
-}
-
-OpenAiAuth poll_openai_auth(
-    OpenAiOAuth& owner,
-    const std::atomic_bool& cancelled) {
-    return openai_auth_from(owner.poll([&] { return cancelled.load(); }));
-}
-
-OpenAiAuth disconnect_openai_auth(OpenAiOAuth& owner) {
-    return openai_auth_from(owner.disconnect());
 }
 
 } // namespace cha::app::settings

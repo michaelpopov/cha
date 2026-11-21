@@ -116,7 +116,7 @@ std::string_view pricing_model(std::string_view model) {
 } // namespace
 
 bool uses_openai_api_key(const ModelBackendConfig& config) {
-    return config.mode == Mode::net && config.auth == ProviderAuth::none
+    return config.mode == Mode::net
         && (config.api == ProviderApi::responses || config.api == ProviderApi::chat_completions)
         && is_direct_openai_host(config.host)
         && (!config.api_key_id.empty() || !config.api_key_env.empty());

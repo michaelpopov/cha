@@ -757,7 +757,6 @@ return await (async function() {
     const providers = await rpc('provider.list', {}, boot.context_epoch);
     const keys = await rpc('apiKey.list', {}, boot.context_epoch);
     const r2 = await rpc('r2Storage.get', {}, boot.context_epoch);
-    const auth = await rpc('openaiAuth.get', {}, boot.context_epoch);
     const runtime = await rpc('voiceInput.runtime', {}, boot.context_epoch);
     if (!Array.isArray(providers) || JSON.stringify(providers).indexOf('private-') !== -1) {
       report.reason = 'provider list missing or contained a secret';
@@ -769,7 +768,6 @@ return await (async function() {
     }
     report.providerCount = providers.length;
     report.r2 = r2;
-    report.authStatus = auth && auth.status;
     report.voiceRuntimeHasKey = !!(runtime && runtime.api_key);
     report.ok = true;
     return report;

@@ -10,7 +10,6 @@ namespace cha {
 enum class Mode { net, test };
 enum class ReasoningFormat { automatic, none, reasoning_content, reasoning };
 enum class ProviderApi { chat_completions, responses, google, anthropic };
-enum class ProviderAuth { none, openai_subscription };
 enum class WebSearchMode { off, automatic };
 enum class CacheRetention { off, short_, long_ };
 
@@ -24,14 +23,12 @@ bool is_direct_openai_host(std::string_view host);
 bool is_openrouter_host(std::string_view host);
 std::string_view to_string(Mode value);
 std::string_view to_string(ProviderApi value);
-std::string_view to_string(ProviderAuth value);
 std::string_view to_string(ReasoningFormat value);
 std::string_view to_string(CacheRetention value);
 std::string_view to_string(WebSearchMode value);
 
 std::optional<Mode> parse_mode(std::string_view value);
 std::optional<ProviderApi> parse_provider_api(std::string_view value);
-std::optional<ProviderAuth> parse_provider_auth(std::string_view value);
 std::optional<ReasoningFormat> parse_reasoning_format(std::string_view value);
 std::optional<WebSearchMode> parse_web_search_mode(std::string_view value);
 std::optional<CacheRetention> parse_cache_retention(std::string_view value);
@@ -57,7 +54,6 @@ struct ModelBackendConfig {
     ReasoningFormat reasoning_format{ReasoningFormat::automatic};
     bool https{};
     ProviderApi api{default_provider_api};
-    ProviderAuth auth{ProviderAuth::none};
     WebSearchMode web_search{default_web_search_mode};
     CacheRetention cache_retention{CacheRetention::short_};
     // OpenRouter provider slugs tried in order. An empty list leaves routing to

@@ -47,43 +47,6 @@ components:
       type: object
       additionalProperties: false
 
-    OpenAiAuth:
-      type: object
-      additionalProperties: false
-      required: [status]
-      properties:
-        status:
-          type: string
-          enum: [signed_out, waiting, connected]
-        user_code:
-          type: string
-          description: |
-            Present only while `status` is `waiting`. The code the user enters
-            at the verification URL.
-        verification_url:
-          type: string
-          format: uri
-          description: |
-            Present only while `status` is `waiting`. Always
-            `https://auth.openai.com/codex/device`.
-        attempt_expires_at:
-          $ref: "#/components/schemas/UnixTimestamp"
-          description: |
-            Present only while `status` is `waiting`. Unix seconds when this
-            pending login expires. The browser can compare with `Date.now()/1000`.
-        next_poll_delay_ms:
-          type: integer
-          minimum: 0
-          description: |
-            Present only while `status` is `waiting`. Milliseconds until the
-            next eligible `POST /api/v1/openai/auth/poll`. The browser can pass
-            this value to `setTimeout`.
-        error:
-          type: string
-          description: |
-            Sanitized operator-facing message when the last owner operation
-            failed. Omitted when there is no such message.
-
     Health:
       type: object
       additionalProperties: false
@@ -422,7 +385,6 @@ components:
         - reasoning_format
         - https
         - api
-        - auth
         - web_search
         - cache_retention
       properties:
@@ -469,9 +431,6 @@ components:
         api:
           type: string
           enum: [chat_completions, responses, google, anthropic]
-        auth:
-          type: string
-          enum: [none, openai_subscription]
         web_search:
           type: string
           enum: [off, auto]
@@ -504,7 +463,6 @@ components:
         - reasoning_format
         - https
         - api
-        - auth
         - web_search
         - cache_retention
         - openrouter_targets
@@ -549,9 +507,6 @@ components:
         api:
           type: string
           enum: [chat_completions, responses, google, anthropic]
-        auth:
-          type: string
-          enum: [none, openai_subscription]
         web_search:
           type: string
           enum: [off, auto]

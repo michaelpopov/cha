@@ -384,7 +384,6 @@ struct ProviderDetail {
     std::string reasoning_format;
     bool https{};
     std::string api;
-    std::string auth;
     std::string web_search;
     std::string cache_retention;
     std::vector<std::string> openrouter_targets;
@@ -582,15 +581,6 @@ struct SaveD1StorageRequest {
     std::optional<std::string> api_token;
 };
 
-struct OpenAiAuth {
-    std::string status;
-    std::optional<std::string> user_code;
-    std::optional<std::string> verification_url;
-    std::optional<std::int64_t> attempt_expires_at;
-    std::optional<std::int64_t> next_poll_delay_ms;
-    std::optional<std::string> error;
-};
-
 struct Error {
     ErrorCode code{ErrorCode::internal_error};
     std::string message;
@@ -665,7 +655,6 @@ void to_json(nlohmann::json& json, const VoiceOutputRuntime& value);
 void to_json(nlohmann::json& json, const ApiKeyDetail& value);
 void to_json(nlohmann::json& json, const R2StorageDetail& value);
 void to_json(nlohmann::json& json, const D1StorageDetail& value);
-void to_json(nlohmann::json& json, const OpenAiAuth& value);
 void to_json(nlohmann::json& json, const Error& value);
 void to_json(nlohmann::json& json, const SnapshotEvent& value);
 void to_json(nlohmann::json& json, const AppendEvent& value);

@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -64,6 +65,160 @@ nlohmann::json provider_body(const ProviderDetail& provider) {
     json.erase("used_by");
     json.erase("writable");
     return json;
+}
+
+void test_save_and_use_responses_provider(
+    Application& app,
+    const ProviderDetail& provider,
+    const FullSessionId& session,
+    std::string_view character_id) {
+    const auto epoch = app.context_epoch();
+    const auto key = app.create_api_key(
+        {.display_name = "OpenAI API key", .value = "test-responses-key"}, epoch);
+    auto body = provider_body(provider);
+    body["api_key"] = key.id;
+    body["host"] = "api.openai.com";
+    body["port"] = 443;
+    body["base_path"] = "";
+    body["https"] = true;
+    body["model"] = "gpt-5";
+    EXPECT_EQ(provider_endpoint(parse_provider_update(body, {}).config),
+        "https://api.openai.com:443/v1/responses");
+
+    // Exercise the same request path through curl against a disposable server.
+    const auto response = http_response("text/event-stream",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Key accepted\"}\n\n"
+        "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n");
+    MockHttpServer server({response, response});
+    server.start();
+    body["host"] = "127.0.0.1";
+    body["port"] = server.port();
+    body["https"] = false;
+    const auto reply = app.test_provider(provider.id, body, epoch);
+    const auto test_deadline = std::chrono::steady_clock::now() + 5s;
+    auto result = reply->peek();
+    while (!result && std::chrono::steady_clock::now() < test_deadline) {
+        std::this_thread::sleep_for(5ms);
+        result = reply->peek();
+    }
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(std::holds_alternative<nlohmann::json>(*result));
+    const auto saved = app.update_provider(provider.id, body, epoch);
+    EXPECT_EQ(saved.id, provider.id);
+    EXPECT_EQ(saved.api_key, key.id);
+    EXPECT_FALSE(nlohmann::json(saved).contains("auth"));
+
+    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
+        app.open_session(session.forum_id, session.session_id, epoch)));
+    ASSERT_TRUE(std::holds_alternative<CommandResult>(
+        app.submit(session.forum_id, session.session_id, RawCommand{"Hello"}, epoch)));
+    server.join();
+    ASSERT_EQ(server.requests().size(), 2U);
+    for (const auto& request : server.requests()) {
+        EXPECT_TRUE(request.starts_with("POST /v1/responses HTTP/1.1\r\n"));
+        EXPECT_NE(request.find("\r\nAuthorization: Bearer test-responses-key\r\n"), std::string::npos);
+        EXPECT_EQ(request.find("chatgpt-account-id:"), std::string::npos);
+        EXPECT_EQ(request.find("OpenAI-Beta:"), std::string::npos);
+        EXPECT_EQ(request.find("originator:"), std::string::npos);
+        const auto payload = nlohmann::json::parse(request.substr(request.find("\r\n\r\n") + 4));
+        EXPECT_EQ(payload["model"], "gpt-5");
+        EXPECT_EQ(payload["store"], false);
+    }
+
+    const auto chat_deadline = std::chrono::steady_clock::now() + 5s;
+    do {
+        const auto snapshot = app.snapshot(session.forum_id, session.session_id, epoch);
+        ASSERT_TRUE(std::holds_alternative<SessionSnapshot>(snapshot));
+        const auto& transcript = std::get<SessionSnapshot>(snapshot).transcript;
+        if (!transcript.empty() && transcript.back().text == "Key accepted"
+            && transcript.back().status == EntryStatus::complete) {
+            EXPECT_EQ(transcript.back().participant_id, character_id);
+            return;
+        }
+        std::this_thread::sleep_for(5ms);
+    } while (std::chrono::steady_clock::now() < chat_deadline);
+    ADD_FAILURE() << "The character did not finish its keyed Responses request";
+}
+
+TEST(ApplicationSettings, FreshAssistantUsesASavedOpenAiKey) {
+    test::TestWorkspace workspace;
+    const auto config = workspace.root() / "fresh-config";
+    std::filesystem::create_directory(config);
+    const std::string option = "--config=" + config.string();
+    const char* arguments[] = {"CHA", option.c_str()};
+    auto app = Application::open(parse_application_command(2, arguments));
+    const auto boot = app->bootstrap();
+    ASSERT_EQ(boot.state, ApplicationState::running);
+    EXPECT_EQ(boot.presentation.vault_name, "Default");
+    EXPECT_TRUE(app->list_api_keys(boot.context_epoch).empty());
+    const auto provider = app->get_provider("openai", boot.context_epoch);
+    EXPECT_EQ(provider.display_name, "OpenAI");
+    EXPECT_EQ(provider.host, "api.openai.com");
+    EXPECT_TRUE(provider.https);
+    EXPECT_EQ(provider.port, 443);
+    EXPECT_TRUE(provider.base_path.empty());
+    EXPECT_EQ(provider.model, "gpt-5");
+    EXPECT_EQ(provider.api, "responses");
+    EXPECT_FALSE(provider.api_key);
+    EXPECT_EQ(app->get_character(workspace_assistant_id, boot.context_epoch).provider, provider.id);
+    test_save_and_use_responses_provider(*app, provider,
+        {boot.presentation.initial_forum_id, boot.presentation.initial_session_id},
+        workspace_assistant_id);
+    EXPECT_FALSE(std::filesystem::exists(config / "openai-auth.json"));
+}
+
+TEST(ApplicationSettings, EditsLegacyProviderWithoutChangingItsReferences) {
+    for (const std::string_view auth : {"openai_subscription", "none"}) {
+        SCOPED_TRACE(auth);
+        test::TestWorkspace workspace;
+        const std::string original = "display_name = \"ChatGPT\"\nauth = \"" + std::string(auth)
+            + "\"\nhost = \"chatgpt.com\"\nport = 443\nhttps = true\n"
+              "base_path = \"/backend-api/codex\"\nmode = \"net\"\napi = \"responses\"\n"
+              "model = \"gpt-5.6-terra\"\ncache_retention = \"off\"\n";
+        workspace.write_provider("chatgpt", original);
+        workspace.write_character_config("display_name = \"Guide\"\nprovider = \"chatgpt\"\n");
+        std::ofstream(workspace.root() / "system/assistant/character.toml")
+            << "display_name = \"Assistant\"\nprovider = \"chatgpt\"\n";
+        std::filesystem::create_directories(workspace.root() / "system/notes");
+        std::ofstream(workspace.root() / "system/notes/config.toml")
+            << "compression_provider = \"chatgpt\"\n";
+        LoadWarningCollector warnings;
+        (void)Workspace::load(workspace.root(), &warnings);
+        const std::array<std::string, 1> paths{"system/providers/chatgpt/config.toml"};
+        EXPECT_TRUE(std::ranges::any_of(warnings, [&](const LoadWarning& warning) {
+            return warning.path == paths.front()
+                && warning.message.find("unsupported field 'auth'") != std::string::npos;
+        }));
+
+        const auto database = test::import_test_database(workspace.root());
+        const auto command = make_command(workspace, database);
+        const auto credential_file = command.config_directory / "openai-auth.json";
+        std::ofstream(credential_file) << "old credentials\n";
+        auto app = Application::open(command);
+        const auto epoch = app->context_epoch();
+        EXPECT_EQ(app->bootstrap().state, ApplicationState::running);
+        EXPECT_TRUE(app->list_api_keys(epoch).empty());
+        const auto provider = app->get_provider("chatgpt", epoch);
+        EXPECT_TRUE(provider.writable);
+        EXPECT_EQ(provider.host, "chatgpt.com");
+        EXPECT_EQ(app->store().read_config(paths).files.at(0).content, original);
+        const auto session = app->create_session("lobby", "Legacy provider", epoch);
+        test_save_and_use_responses_provider(*app, provider, {"lobby", session.id}, "guide");
+
+        app.reset();
+        app = Application::open(command);
+        const auto reopened_epoch = app->context_epoch();
+        const auto saved = app->get_provider("chatgpt", reopened_epoch);
+        EXPECT_TRUE(saved.api_key);
+        EXPECT_EQ(app->get_character("guide", reopened_epoch).provider, saved.id);
+        EXPECT_EQ(app->get_character(workspace_assistant_id, reopened_epoch).provider, saved.id);
+        EXPECT_EQ(app->get_notes_settings(reopened_epoch).compression_provider, saved.id);
+        EXPECT_EQ(app->store().read_config(paths).files.at(0).content.find("auth"), std::string::npos);
+        std::ifstream credential(credential_file);
+        std::string contents;
+        ASSERT_TRUE(std::getline(credential, contents));
+        EXPECT_EQ(contents, "old credentials");
+    }
 }
 
 TEST(ApplicationSettings, SavesWhenLoadedFilesContainHarmlessFields) {
@@ -593,9 +748,6 @@ TEST(ApplicationSettings, MigratesAppearanceKeysR2AndNonsecretRuntime) {
     application->delete_r2_storage(epoch);
     EXPECT_FALSE(application->get_r2_storage(epoch));
     EXPECT_FALSE(application->capabilities().can_transfer_r2);
-
-    const auto auth = application->openai_auth_status(epoch);
-    EXPECT_EQ(auth.status, "signed_out");
 }
 
 TEST(ApplicationSettings, SavesXaiVoiceInputWithoutVoiceOutput) {

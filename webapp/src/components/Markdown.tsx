@@ -18,12 +18,8 @@ const markdown = new Marked({
     html({ text }) {
       return escapeHtml(text);
     },
-    link({ href, tokens }) {
-      const label = this.parser.parseInline(tokens);
-      if (href === 'https://auth.openai.com/codex/device') {
-        return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
-      }
-      return label;
+    link({ tokens }) {
+      return this.parser.parseInline(tokens);
     },
     image({ text }) {
       return escapeHtml(text);
@@ -33,7 +29,7 @@ const markdown = new Marked({
 
 const allowedTags = [
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'br', 'hr', 'blockquote', 'a',
+  'p', 'strong', 'em', 'ul', 'ol', 'li', 'code', 'pre', 'br', 'hr', 'blockquote',
   'table', 'thead', 'tbody', 'tr', 'th', 'td',
 ];
 
@@ -42,7 +38,7 @@ export function renderRestrictedMarkdown(source: string): string {
   if (typeof rendered !== 'string') throw new TypeError('Markdown rendering became asynchronous.');
   return DOMPurify.sanitize(rendered, {
     ALLOWED_TAGS: allowedTags,
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'align'],
+    ALLOWED_ATTR: ['align'],
     KEEP_CONTENT: true,
   });
 }

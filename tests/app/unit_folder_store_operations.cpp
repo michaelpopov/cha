@@ -123,7 +123,6 @@ protected:
         body["port"] = 443;
         body["https"] = true;
         body["api"] = "responses";
-        body["auth"] = "none";
         body["base_path"] = "";
         body["api_key"] = key_;
         (void)application_->update_provider("test", body, epoch_);

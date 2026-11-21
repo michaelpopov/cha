@@ -123,7 +123,6 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
             .idle_timeout_s = 60,
             .reasoning_format = "auto",
             .api = "responses",
-            .auth = "none",
             .web_search = "off",
             .cache_retention = "short",
             .writable = true,
@@ -139,15 +138,6 @@ TEST(WebWireFixtures, SerializesBootstrapSnapshotCommandsErrorsAndAppends) {
             .used_by = {"Test"},
         }),
         load_fixture("api-key-detail.json"));
-    EXPECT_EQ(
-        nlohmann::json(OpenAiAuth{
-            .status = "waiting",
-            .user_code = "ABCD-EFGH",
-            .verification_url = "https://auth.openai.com/codex/device",
-            .attempt_expires_at = 1700000900,
-            .next_poll_delay_ms = 1000,
-        }),
-        load_fixture("openai-auth-status.json"));
     EXPECT_EQ(
         nlohmann::json(VoiceInputRuntime{
             .url = "https://api.openai.com/v1/realtime",

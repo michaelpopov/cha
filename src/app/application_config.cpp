@@ -394,21 +394,20 @@ void bootstrap_configuration_directory(
             std::vector<ConfigFile> configuration{
                 {
                     "system/assistant/character.toml",
-                    "display_name = \"Assistant\"\nprovider = \"chatgpt\"\n",
+                    "display_name = \"Assistant\"\nprovider = \"openai\"\n",
                 },
                 {
-                    "system/providers/chatgpt/config.toml",
-                    "auth = \"openai_subscription\"\n"
-                    "host = \"chatgpt.com\"\n"
+                    "system/providers/openai/config.toml",
+                    "display_name = \"OpenAI\"\n"
+                    "host = \"api.openai.com\"\n"
                     "port = 443\n"
                     "https = true\n"
-                    "base_path = \"/backend-api/codex\"\n"
                     "mode = \"net\"\n"
                     "api = \"responses\"\n"
-                    "model = \"gpt-5.6-terra\"\n"
+                    "model = \"gpt-5\"\n"
                     "stream = true\n"
                     "web_search = \"off\"\n"
-                    "cache_retention = \"off\"\n",
+                    "cache_retention = \"short\"\n",
                 },
             };
             for (auto& row : default_prompt_config_files()) configuration.push_back(std::move(row));

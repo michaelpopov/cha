@@ -46,7 +46,6 @@ const provider: ProviderDetail = {
   reasoning_format: 'auto',
   https: true,
   api: 'chat_completions',
-  auth: 'none',
   web_search: 'off',
   cache_retention: 'short',
   openrouter_targets: [],
@@ -1097,13 +1096,12 @@ describe('Settings screens', () => {
   });
 
 
-  it.each([['key', 'google'], ['oauth', 'google'], ['key', 'anthropic'], ['oauth', 'anthropic']] as const)('switches from %s credentials to %s and keeps effort available on Test and Save', async (credential, api) => {
+  it.each(['google', 'anthropic'] as const)('switches to %s and keeps effort and the saved key available on Test and Save', async (api) => {
     const configured: ProviderDetail = {
       ...provider, reasoning_effort: 'high', api: 'responses',
-      host: api === 'google' ? 'generativelanguage.googleapis.com' : credential === 'key' ? 'openrouter.ai' : 'api.anthropic.com',
+      host: api === 'google' ? 'generativelanguage.googleapis.com' : 'openrouter.ai',
       base_path: api === 'google' ? '/v1beta' : '', temperature: 0.8,
-      api_key: credential === 'key' ? 'api_key_1' : null,
-      auth: credential === 'oauth' ? 'openai_subscription' : 'none',
+      api_key: 'api_key_1',
     };
     const updateProvider = vi.fn<ChaClient['updateProvider']>(async (_id, update) => ({ ...configured, ...update }));
     const testProvider = vi.fn(async () => undefined);
@@ -1125,21 +1123,20 @@ describe('Settings screens', () => {
     expect(reasoning).toHaveValue('high');
     await userEvent.selectOptions(reasoning, 'low');
     expect(screen.queryByLabelText('Inference targets')).not.toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'OpenAI OAuth' })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Credentials')).toHaveValue(credential === 'key' ? 'api_key_1' : '');
+    expect(screen.getByLabelText('Credentials')).toHaveValue('api_key_1');
     expect(baseUrl).toHaveValue(api === 'google' ? 'https://generativelanguage.googleapis.com/v1beta' : `https://${configured.host}`);
     expect(screen.getByLabelText('Model')).toHaveValue(configured.model);
     await userEvent.click(screen.getByRole('button', { name: 'Test' }));
     expect(testProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
-      api, auth: 'none', api_key: credential === 'key' ? 'api_key_1' : null,
+      api, api_key: 'api_key_1',
       reasoning_effort: 'low', base_path: configured.base_path, model: configured.model,
       temperature: api === 'anthropic' ? null : 0.8,
     }));
     await screen.findByText('Provider responded successfully.');
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(updateProvider).toHaveBeenCalledWith(provider.id, expect.objectContaining({
-      api, auth: 'none', reasoning_effort: 'low',
-      api_key: credential === 'key' ? 'api_key_1' : null,
+      api, reasoning_effort: 'low',
+      api_key: 'api_key_1',
     }));
     expect(reasoning).toHaveValue('low');
   });
@@ -1217,82 +1214,60 @@ describe('Settings screens', () => {
       mode: 'net',
       stream: true,
       web_search: 'off',
-      auth: 'none',
       timeout_s: 600,
       reasoning_format: 'auto',
     }));
   });
 
-  it('preserves OpenAI OAuth as an explicit credential choice', async () => {
-    const oauthProvider: ProviderDetail = {
+  it('tests and saves a key and the OpenAI base URL on an existing provider', async () => {
+    const existing: ProviderDetail = {
       ...provider,
       id: 'chatgpt',
       display_name: 'ChatGPT',
       host: 'chatgpt.com',
       base_path: '/backend-api/codex',
+      model: 'gpt-5',
       api: 'responses',
-      auth: 'openai_subscription',
-      cache_retention: 'off',
-    };
-    const updateProvider = vi.fn(async (_id, update) => ({
-      id: oauthProvider.id, used_by: oauthProvider.used_by, writable: true, ...update,
-    }));
-    render(
-      <ProviderScreen
-        client={fixtureClient({
-          getProvider: async () => oauthProvider,
-          listApiKeys: async () => [],
-          updateProvider,
-        })}
-        dispatch={vi.fn()} navigate={vi.fn()}
-        state={{
-          ...initialAppState,
-          inspectedProvider: { ...initialAppState.inspectedProvider, id: oauthProvider.id },
-        }}
-      />,
-    );
-
-    expect(await screen.findByLabelText('Credentials')).toHaveDisplayValue('OpenAI OAuth');
-    await userEvent.clear(screen.getByLabelText('Model'));
-    await userEvent.type(screen.getByLabelText('Model'), 'gpt-5.6-sol');
-    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-
-    expect(updateProvider).toHaveBeenCalledWith(oauthProvider.id, expect.objectContaining({
-      auth: 'openai_subscription',
       api_key: null,
-      host: 'chatgpt.com',
-      base_path: '/backend-api/codex',
-      api: 'responses',
+    };
+    const updateProvider = vi.fn<ChaClient['updateProvider']>(async (_id, update) => ({
+      ...existing, ...update,
     }));
-  });
-
-  it('rejects OpenAI OAuth for a non-OpenAI OAuth endpoint', async () => {
-    const updateProvider = vi.fn();
+    const testProvider = vi.fn(async () => undefined);
     render(
       <ProviderScreen
         client={fixtureClient({
-          getProvider: async () => provider,
-          listApiKeys: async () => [],
-          updateProvider,
+          getProvider: async () => existing,
+          listApiKeys: async () => [
+            { id: 'api_key_1', display_name: 'OpenAI key', has_value: true, cloud_store: 'none', used_by: [] },
+          ],
+          testProvider, updateProvider,
         })}
         dispatch={vi.fn()} navigate={vi.fn()}
         state={{
           ...initialAppState,
-          inspectedProvider: { ...initialAppState.inspectedProvider, id: provider.id },
+          inspectedProvider: { ...initialAppState.inspectedProvider, id: existing.id },
         }}
       />,
     );
 
-    await userEvent.selectOptions(
-      await screen.findByLabelText('Credentials'),
-      screen.getByRole('option', { name: 'OpenAI OAuth' }),
-    );
+    const credentials = await screen.findByLabelText('Credentials');
+    expect(within(credentials).getAllByRole('option').map((option) => option.textContent))
+      .toEqual(['No credentials', 'OpenAI key']);
+    const baseUrl = screen.getByLabelText('Base URL');
+    await userEvent.clear(baseUrl);
+    await userEvent.type(baseUrl, 'https://api.openai.com');
+    await userEvent.selectOptions(credentials, 'api_key_1');
+    await userEvent.click(screen.getByRole('button', { name: 'Test' }));
+    await screen.findByText('Provider responded successfully.');
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'OpenAI OAuth requires Base URL https://chatgpt.com/backend-api/codex.',
-    );
-    expect(updateProvider).not.toHaveBeenCalled();
+    const expected = expect.objectContaining({
+      api_key: 'api_key_1', host: 'api.openai.com', port: 443, https: true,
+      base_path: '', api: 'responses',
+    });
+    expect(testProvider).toHaveBeenCalledWith(existing.id, expected);
+    expect(updateProvider).toHaveBeenCalledWith(existing.id, expected);
   });
 
   it('renames the provider from the shared editable title', async () => {

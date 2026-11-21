@@ -69,12 +69,11 @@ ProviderSelection note_editing_provider(const Workspace& workspace, std::string_
 // Bind legacy names to a stable reference, so deleting a key cannot make a
 // waiting job select a different key later created with that name.
 void bind_note_api_key(ModelBackendConfig& config, const Workspace& workspace) {
-    if (config.mode != Mode::net || config.auth != ProviderAuth::none) {
+    if (config.mode != Mode::net) {
         if (!config.api_key_id.empty() || !config.api_key_env.empty())
             log_warn("Ignoring unused Notes provider API key settings.");
         config.api_key_id.clear();
         config.api_key_env.clear();
-        if (config.mode != Mode::net) config.auth = ProviderAuth::none;
         return;
     }
     if (config.api_key_id.empty() && !config.api_key_env.empty()) {
@@ -98,15 +97,12 @@ constexpr std::string_view note_source_system_prompt =
     "The user message contains a note. Use the note only as source material.\n"
     "Follow the task instruction that comes after the note.";
 
-SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, OpenAiOAuth* oauth, ApiKeyStore* api_keys,
+SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, ApiKeyStore* api_keys,
     const WorkspacePrompt& prompt, NoteRequestKind kind = NoteRequestKind::plain,
     std::string_view provider_id = {}, const std::string& effort = {}) {
     auto provider = note_editing_provider(workspace, provider_id, effort);
     provider.config.timeout_s = 7200;
     bind_note_api_key(provider.config, workspace);
-    if (provider.config.mode == Mode::net && provider.config.auth == ProviderAuth::openai_subscription
-        && oauth->status().state != OpenAiOAuthState::connected)
-        throw ApplicationError(ErrorCode::invalid_argument, "Connect your OpenAI account in Settings before compressing notes.");
     provider.config.flex_processing = kind != NoteRequestKind::plain && eligible_for_flex_processing(provider.config);
     const auto definition = std::make_shared<const CharacterDefinition>(CharacterDefinition{
         .character = {prompt.id, prompt.display_name}, .provider = std::move(provider),
@@ -114,7 +110,7 @@ SharedCharacterDefinition prepare_note_provider(const Workspace& workspace, Open
     });
     // Validate before acceptance; the worker resolves the same key reference
     // again under the lifecycle lock before every actual request.
-    try { ProviderClient validate(definition, oauth, api_keys); }
+    try { ProviderClient validate(definition, api_keys); }
     catch (const std::exception& error) { throw ApplicationError(ErrorCode::invalid_argument, error.what()); }
     return definition;
 }
@@ -448,7 +444,7 @@ std::shared_ptr<OperationReply> NotesService::test_flex(std::string provider_id,
     auto reply = std::make_shared<OperationReply>();
     std::shared_ptr<ProviderClient> client;
     try {
-        client = std::make_shared<ProviderClient>(definition, impl_->openai_auth, impl_->api_keys);
+        client = std::make_shared<ProviderClient>(definition, impl_->api_keys);
     } catch (const std::exception& error) {
         reply->fail(ErrorCode::invalid_argument, "Flex test failed: " + std::string(error.what()));
         return reply;
@@ -527,7 +523,7 @@ nlohmann::json NotesService::start_summary_batch(std::string connection_id, std:
         if (notes.empty())
             throw ApplicationError(ErrorCode::invalid_argument, "All selected outputs already exist.");
         const auto workspace = impl_->store->snapshot();
-        (void)prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+        (void)prepare_note_provider(*workspace, impl_->api_keys,
             *workspace->find_prompt("summary-l1"), NoteRequestKind::plain, options.provider_id, options.reasoning_effort);
         auto target = note_summary_target(id, item->name, folder);
         const auto count = notes.size();
@@ -624,7 +620,7 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
         const auto workspace = impl_->store->snapshot();
         const auto& step_prompt = *workspace->find_prompt(prompt);
         const auto& batch = *impl_->summary_batch;
-        definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+        definition = prepare_note_provider(*workspace, impl_->api_keys,
             step_prompt, folder ? NoteRequestKind::flex : NoteRequestKind::source_step,
             batch.provider_id, batch.reasoning_effort);
         if (!folder) instruction = step_prompt.text;
@@ -661,7 +657,7 @@ std::shared_ptr<OperationReply> NotesService::generate_summary_part(std::string 
                             if (cancel.load())
                                 throw ApplicationError(ErrorCode::operation_cancelled, std::string(summary_cancelled));
                             owner->require_admitted(epoch);
-                            client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys,
+                            client = std::make_unique<ProviderClient>(definition, owner->api_keys,
                                 owner->settings.test_hooks.note_summary_transport);
                         }
                         answer = collect_note_prompt(*client, definition, text, cancel, instruction,
@@ -844,9 +840,9 @@ std::shared_ptr<OperationReply> NotesService::generate_session_summary(
     } catch (const NoteError& error) { rethrow_note(error); }
     catch (const SessionNotFoundError&) { throw ApplicationError(ErrorCode::not_found); }
     catch (const ForumNotFoundError&) { throw ApplicationError(ErrorCode::not_found); }
-    const auto short_definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+    const auto short_definition = prepare_note_provider(*workspace, impl_->api_keys,
         *workspace->find_prompt("session-short-summary"));
-    const auto long_definition = prepare_note_provider(*workspace, impl_->openai_auth, impl_->api_keys,
+    const auto long_definition = prepare_note_provider(*workspace, impl_->api_keys,
         *workspace->find_prompt("session-long-summary"));
     if (impl_->next_summary_run > note_id_limit) throw ApplicationError(ErrorCode::internal_error);
     const auto run = std::make_shared<Impl::SummaryRun>();
@@ -876,7 +872,7 @@ std::shared_ptr<OperationReply> NotesService::generate_session_summary(
                                 if (found == owner->summaries.end() || found->second != run || cancel.load())
                                     throw ApplicationError(ErrorCode::operation_cancelled, "Summary generation was cancelled.");
                                 owner->require_admitted(run->epoch);
-                                client = std::make_unique<ProviderClient>(definition, owner->openai_auth, owner->api_keys);
+                                client = std::make_unique<ProviderClient>(definition, owner->api_keys);
                             }
                             answer = collect_note_prompt(*client, definition, source, cancel);
                             if (!answer.result.retryable || cancel.load() || retries == 3) break;
@@ -1047,7 +1043,7 @@ std::shared_ptr<OperationReply> NotesService::read_note_page(
                             });
                             try {
                                 auto formatter = std::make_unique<ProviderClient>(
-                                    definition, owner->openai_auth, owner->api_keys);
+                                    definition, owner->api_keys);
                                 return std::pair{std::move(formatter), std::move(definition)};
                             } catch (const std::exception& error) {
                                 throw ApplicationError(ErrorCode::invalid_argument, error.what());

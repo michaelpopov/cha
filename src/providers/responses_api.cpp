@@ -148,15 +148,11 @@ std::string build_responses_request_body(
         {"store", false},
         {"input", std::move(messages)},
     };
-    const bool subscription = config.auth == ProviderAuth::openai_subscription;
     if (config.flex_processing) {
         body["service_tier"] = "flex";
-    } else if (subscription || is_direct_openai_host(config.host) || is_openrouter_host(config.host)) {
-        // Use Fast mode for OpenAI, OpenRouter, and ChatGPT subscription requests.
+    } else if (is_direct_openai_host(config.host) || is_openrouter_host(config.host)) {
+        // Use Fast mode for OpenAI and OpenRouter requests.
         body["service_tier"] = "priority";
-    }
-    if (subscription && instructions.empty()) {
-        instructions = "You are a helpful assistant.";
     }
     if (text_sizes) text_sizes->system_prompt_bytes = instructions.size();
     if (!instructions.empty()) {
@@ -179,26 +175,24 @@ std::string build_responses_request_body(
             {"allow_fallbacks", false},
         };
     }
-    if (!subscription) {
-        if (config.temperature) {
-            body["temperature"] = *config.temperature;
-        }
-        if (config.max_tokens) {
-            body["max_output_tokens"] = std::max(*config.max_tokens, 16);
-        }
-        if (!input.run.prompt_cache_key.empty()
-            && config.cache_retention != CacheRetention::off) {
-            if (is_direct_openai_host(config.host)) {
-                body["prompt_cache_key"] = input.run.prompt_cache_key;
-                if (config.cache_retention == CacheRetention::long_) {
-                    body["prompt_cache_options"] = {
-                        {"mode", "implicit"},
-                        {"ttl", "30m"},
-                    };
-                }
-            } else if (is_openrouter_host(config.host)) {
-                body["session_id"] = input.run.prompt_cache_key;
+    if (config.temperature) {
+        body["temperature"] = *config.temperature;
+    }
+    if (config.max_tokens) {
+        body["max_output_tokens"] = std::max(*config.max_tokens, 16);
+    }
+    if (!input.run.prompt_cache_key.empty()
+        && config.cache_retention != CacheRetention::off) {
+        if (is_direct_openai_host(config.host)) {
+            body["prompt_cache_key"] = input.run.prompt_cache_key;
+            if (config.cache_retention == CacheRetention::long_) {
+                body["prompt_cache_options"] = {
+                    {"mode", "implicit"},
+                    {"ttl", "30m"},
+                };
             }
+        } else if (is_openrouter_host(config.host)) {
+            body["session_id"] = input.run.prompt_cache_key;
         }
     }
 
@@ -223,7 +217,7 @@ std::string build_responses_request_body(
     if (input.web_read_tool) add_web_read_tool(body, config.api);
     if (!input.maintenance_tool) {
         if (input.summary_tool) add_summary_tools(body, config.api);
-        if (!subscription && !input.library_store_ids.empty()) {
+        if (!input.library_store_ids.empty()) {
             if (!body.contains("tools")) body["tools"] = Json::array();
             body["tools"].push_back({{"type", "file_search"},
                 {"vector_store_ids", input.library_store_ids}});

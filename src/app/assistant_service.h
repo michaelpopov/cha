@@ -20,7 +20,6 @@ namespace cha {
 
 class ApiKeyStore;
 class LiveSessionManager;
-class OpenAiOAuth;
 class SessionRepository;
 class WorkspaceConfigStore;
 
@@ -30,7 +29,6 @@ class AssistantService {
 public:
     struct Links {
         WorkspaceConfigStore* store{};
-        OpenAiOAuth* oauth{};
         ApiKeyStore* api_keys{};
         std::timed_mutex* lifecycle{};
         std::atomic_bool* stopping{};

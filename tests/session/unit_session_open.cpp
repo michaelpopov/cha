@@ -376,7 +376,7 @@ TEST_F(ForumLibraryTest, CatalogueAndNativeToolsUseTheSameSnapshotWithoutChangin
             EXPECT_EQ(data.dump().find(key), std::string::npos);
             EXPECT_EQ(data.dump().find("\n<tool_availability>"), std::string::npos);
             ApiKeyStore keys(*store_);
-            ProviderClient client(definitions[i], nullptr, &keys);
+            ProviderClient client(definitions[i], &keys);
             auto payload = client.prepare(requests[i]);
             auto body = nlohmann::json::parse(payload.bytes);
             const auto api = definitions[i]->provider.config.api;

@@ -277,7 +277,7 @@ WorkspaceProvider load_provider(
         "display_name", "host", "port", "base_path", "mode", "model", "stream",
         "temperature", "max_tokens", "timeout_s", "idle_timeout_s",
         "api_key", "api_key_env", "reasoning_effort", "reasoning_format", "https",
-        "api", "auth", "web_search", "cache_retention", "openrouter_targets"};
+        "api", "web_search", "cache_retention", "openrouter_targets"};
     warn_unknown_fields(table, path, fields, "Provider config", warnings);
 
     const auto api = choice(table, path, "api", parse_provider_api, ProviderApi::responses);
@@ -335,8 +335,6 @@ WorkspaceProvider load_provider(
             .https = optional_value<bool>(table, path, "https", "a boolean")
                          .value_or(false),
             .api = api,
-            .auth = choice(
-                table, path, "auth", parse_provider_auth, ProviderAuth::none),
             .web_search = unused_options ? WebSearchMode::off : choice(
                 table, path, "web_search", parse_web_search_mode, WebSearchMode::off),
             .cache_retention = unused_options ? CacheRetention::short_ : choice(

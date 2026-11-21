@@ -426,7 +426,6 @@ void to_json(nlohmann::json& json, const ProviderDetail& value) {
         {"reasoning_format", value.reasoning_format},
         {"https", value.https},
         {"api", value.api},
-        {"auth", value.auth},
         {"web_search", value.web_search},
         {"cache_retention", value.cache_retention},
         {"openrouter_targets", value.openrouter_targets},
@@ -565,15 +564,6 @@ void to_json(nlohmann::json& json, const D1StorageDetail& value) {
         {"database_id", value.database_id},
         {"has_api_token", value.has_api_token},
     };
-}
-
-void to_json(nlohmann::json& json, const OpenAiAuth& value) {
-    json = {{"status", value.status}};
-    put_optional(json, "user_code", value.user_code);
-    put_optional(json, "verification_url", value.verification_url);
-    put_optional(json, "attempt_expires_at", value.attempt_expires_at);
-    put_optional(json, "next_poll_delay_ms", value.next_poll_delay_ms);
-    put_optional(json, "error", value.error);
 }
 
 void to_json(nlohmann::json& json, const Error& value) {

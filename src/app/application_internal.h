@@ -8,7 +8,6 @@
 #include "app/xai_voice_session.h"
 #include "media/pending_media_registry.h"
 #include "providers/api_key_store.h"
-#include "providers/openai_oauth.h"
 #include "providers/providers.h"
 #include "storage/session_repository.h"
 #include "app/d1_sync.h"
@@ -148,7 +147,6 @@ struct Application::Impl {
     std::unique_ptr<WorkspaceConfigStore> store;
     std::shared_ptr<SessionRepository> sessions;
     std::unique_ptr<ApiKeyStore> api_keys;
-    std::unique_ptr<OpenAiOAuth> openai_auth;
     std::mutex web_search_url_mutex;
     std::string web_search_url_override;
     std::unique_ptr<AssistantService> assistant;

@@ -22,7 +22,7 @@ public:
     ErrorCode code;
 };
 
-// Terminal result for provider tests and OAuth network work. Abandoned replies
+// Terminal result for provider tests. Abandoned replies
 // ignore a later completion; the work itself is not rolled back.
 class OperationReply {
 public:

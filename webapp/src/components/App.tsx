@@ -62,7 +62,7 @@ import {
   type NavigationAction,
   type AppState,
 } from '../state/view';
-import { OpenAiConnectionScreen } from './OpenAiConnection';
+import { SettingsNavigation } from './Settings';
 import { ChatScreen, type ChatActions } from './ChatScreen';
 import { AppErrorBoundary } from './AppErrorBoundary';
 import { TopBar } from './TopBar';
@@ -416,11 +416,9 @@ function ScreenContent({
       />
     );
     case 'settings': return (
-      <OpenAiConnectionScreen
-        client={client}
-        navigate={navigate}
-        state={state}
-      />
+      <section className="cha-screen cha-navigation cha-settings" aria-label="Settings">
+        <SettingsNavigation navigate={navigate} />
+      </section>
     );
     case 'settings-vaults': return (
       <VaultsScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
