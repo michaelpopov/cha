@@ -78,7 +78,6 @@ VoiceSynthesis parse_synthesis_fields(const nlohmann::json& params) {
 
 bool deadline_exempt(Method method) noexcept {
     switch (method) {
-    case Method::vault_merge:
     case Method::vault_upload:
     case Method::vault_download:
     case Method::vault_import:
@@ -998,18 +997,6 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
                 };
                 break;
             }
-            case Method::vault_merge: {
-                const auto merged = application.merge_vault(
-                    require_string(params, "source_vault"),
-                    optional_string(params, "password"),
-                    epoch);
-                epoch = merged.context_epoch;
-                result = {
-                    {"state", app::application_state_name(merged.state)},
-                    {"context_epoch", merged.context_epoch},
-                };
-                break;
-            }
             case Method::vault_upload: {
                 require_only_keys(params, {"etag"});
                 if (!params.contains("etag")) {
@@ -1544,11 +1531,7 @@ struct BridgeRouter::Impl : std::enable_shared_from_this<Impl> {
         } catch (const UnknownVaultError& error) {
             fail(ErrorCode::invalid_argument, error.what());
         } catch (const VaultPasswordError& error) {
-            fail(
-                method == Method::vault_merge
-                    ? ErrorCode::source_vault_password_required
-                    : ErrorCode::vault_password_required,
-                error.what());
+            fail(ErrorCode::vault_password_required, error.what());
         } catch (const SessionNotFoundError&) {
             fail(ErrorCode::not_found);
         } catch (const ForumNotFoundError&) {

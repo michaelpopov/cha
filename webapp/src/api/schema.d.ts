@@ -130,10 +130,6 @@ export interface components {
             vault_name: string;
             password: string | null;
         };
-        MergeVaultRequest: {
-            source_vault: string;
-            password: string | null;
-        };
         VaultDetail: {
             display_name: string;
             protected: boolean;
@@ -808,7 +804,7 @@ export interface components {
         ErrorResponse: {
             error: {
                 /** @enum {string} */
-                code: "not_found" | "body_too_large" | "prompt_too_large" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "source_vault_password_required" | "invalid_argument" | "operation_cancelled" | "application_unavailable";
+                code: "not_found" | "body_too_large" | "prompt_too_large" | "internal_error" | "speech_busy" | "vault_changed" | "session_stopping" | "session_limit_reached" | "session_open_timeout" | "server_stopping" | "session_not_live" | "command_timeout" | "command_queue_full" | "vault_password_required" | "invalid_argument" | "operation_cancelled" | "application_unavailable";
                 message: string;
             };
         };

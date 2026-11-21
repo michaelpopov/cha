@@ -46,7 +46,6 @@ export type DeleteTurnRequest = components['schemas']['DeleteTurnRequest'];
 export type OpenAiAuth = components['schemas']['OpenAiAuth'];
 export type VaultDetail = components['schemas']['VaultDetail'];
 export type CreateVaultRequest = components['schemas']['CreateVaultRequest'];
-export type MergeVaultRequest = components['schemas']['MergeVaultRequest'];
 export type VaultUpdate = Omit<components['schemas']['UpdateVaultRequest'], 'vault_name'>;
 export type ProviderSummary = components['schemas']['ProviderSummary'];
 export type ProviderDetail = components['schemas']['ProviderDetail'];
@@ -390,7 +389,6 @@ export interface ChaClient {
   ): Promise<XaiVoicePieces>;
   cancelXaiVoiceInput(sessionId: string): Promise<void>;
   switchVault(vaultName: string, password?: string): Promise<void>;
-  mergeVault(sourceVault: string, password?: string): Promise<void>;
   checkVaultUpload(): Promise<VaultUploadCheck>;
   uploadVault(check: VaultUploadCheck): Promise<number>;
   downloadVault(): Promise<number>;

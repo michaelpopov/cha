@@ -40,7 +40,6 @@ const knownErrorCodes: Record<string, true> = {
   command_timeout: true,
   command_queue_full: true,
   vault_password_required: true,
-  source_vault_password_required: true,
   invalid_argument: true,
   operation_cancelled: true,
   application_unavailable: true,
@@ -84,7 +83,7 @@ type Pending = {
 type EventHandler = (payload: unknown) => void;
 
 function changesContext(method: string): boolean {
-  return method === 'vault.switch' || method === 'vault.merge' || method === 'vault.update'
+  return method === 'vault.switch' || method === 'vault.update'
     || method === 'vault.upload' || method === 'vault.download'
     || method === 'vault.import' || method === 'vault.export';
 }

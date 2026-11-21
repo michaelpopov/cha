@@ -1426,36 +1426,6 @@ TEST_F(SyncConfigTest, ImportCollisionMovesOnlyTheLocalD1Key) {
     EXPECT_TRUE(sync_connected(handle, sync_machine));
 }
 
-TEST_F(SyncConfigTest, MergePreservesDestinationD1OnCollision) {
-    const auto database = fresh_database();
-    (void)import_workspace_configuration(
-        workspace_.root(), database, WorkspaceConfigLease::acquire);
-    add_d1_to_database(database);
-    test::TestWorkspace other;
-    write_key_file(other.root(), "api_key_3", models_key_toml(), 4);
-    other.write_provider(
-        "keyed",
-        "host = \"test\"\nport = 1\nmode = \"test\"\nmodel = \"m\"\napi_key = \"api_key_3\"\n");
-    const auto source_db = other.root() / "workspace.sqlite3";
-    (void)import_workspace_configuration(
-        other.root(), source_db, WorkspaceConfigLease::acquire);
-    auto store = open_connected(database);
-    const SessionLease lease = SessionLease::acquire(source_db, "test");
-    store->merge(source_db, lease);
-    const auto rows = config_map(database);
-    EXPECT_EQ(rows.at("system/keys/api_key_3/config.toml"), models_key_toml());
-    std::string relocated;
-    for (const auto& [name, content] : rows) {
-        if (sync_is_d1_row(name, content)) {
-            EXPECT_TRUE(relocated.empty());
-            relocated = name;
-            EXPECT_EQ(content, d1_key_toml("D1", "account-A", "database-A", "token-A"));
-        }
-    }
-    EXPECT_FALSE(relocated.empty());
-    EXPECT_NE(relocated, "system/keys/api_key_3/config.toml");
-}
-
 TEST_F(SyncConfigTest, ReceiveCollisionMovesOnlyTheLocalD1Key) {
     const auto database = fresh_database();
     (void)import_workspace_configuration(

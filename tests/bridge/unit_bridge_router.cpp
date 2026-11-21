@@ -1229,13 +1229,15 @@ TEST_F(BridgeRouterTest, RejectsMalformedUnknownStaleDuplicateAndUnavailableMeth
     auto batch = wait_delivery(*router_, connection_, 200ms);
     EXPECT_FALSE(batch) << "Malformed requests without an id send no reply";
 
-    auto reply = call("settings.save", nlohmann::json::object());
-    ASSERT_FALSE(reply.empty());
-    EXPECT_FALSE(reply["ok"]);
-    EXPECT_EQ(reply["error"]["code"], "invalid_argument");
-    EXPECT_EQ(reply["error"]["message"], "That method is not available.");
+    for (const auto method : {"settings.save", "vault.merge"}) {
+        const auto reply = call(method, nlohmann::json::object());
+        ASSERT_FALSE(reply.empty()) << method;
+        EXPECT_FALSE(reply["ok"]) << method;
+        EXPECT_EQ(reply["error"]["code"], "invalid_argument") << method;
+        EXPECT_EQ(reply["error"]["message"], "That method is not available.") << method;
+    }
 
-    reply = call(
+    auto reply = call(
         "session.submit",
         {{"forum_id", "lobby"},
          {"session_id", "missing"},
@@ -1901,7 +1903,6 @@ TEST_F(BridgeRouterTest, MaintenanceRequestsIgnoreTheOrdinaryCommandDeadline) {
     bootstrap_epoch();
 
     const std::vector<std::pair<std::string, nlohmann::json>> requests{
-        {"vault.merge", nlohmann::json::object()},
         {"vault.upload", {{"etag", "expected-etag"}}},
         {"vault.download", nlohmann::json::object()},
         {"vault.import", nlohmann::json::object()},
@@ -2307,16 +2308,15 @@ TEST_F(BridgeRouterTest, BusyVaultLeasePreservesTheCurrentContextAndSession) {
         {"session_id", session["result"]["id"]}};
     ASSERT_TRUE(call("session.open", identity)["ok"]);
     EXPECT_FALSE(call("vault.switch", {{"vault_name", "Busy"}, {"password", nullptr}})["ok"]);
-    EXPECT_FALSE(call("vault.merge", {{"source_vault", "Busy"}, {"password", nullptr}})["ok"]);
     EXPECT_EQ(application_->context_epoch(), epoch_);
     EXPECT_TRUE(call("session.snapshot", identity)["ok"]);
 }
 
-TEST_F(BridgeRouterTest, FailedMergeRecoveryKeepsShellAvailableAndRejectsDomainWork) {
+TEST_F(BridgeRouterTest, FailedVaultSwitchKeepsShellAvailableAndRejectsDomainWork) {
     bootstrap_epoch();
-    (void)application_->create_vault({.display_name = "Source"}, epoch_);
+    (void)application_->create_vault({.display_name = "Other"}, epoch_);
     force_next_forum_sync_failure();
-    const auto failed = call("vault.merge", {{"source_vault", "Source"}, {"password", nullptr}});
+    const auto failed = call("vault.switch", {{"vault_name", "Other"}, {"password", nullptr}});
     ASSERT_FALSE(failed["ok"]);
     EXPECT_EQ(failed["error"]["code"], "application_unavailable");
     EXPECT_EQ(failed["error"]["message"], "The application is unavailable.");

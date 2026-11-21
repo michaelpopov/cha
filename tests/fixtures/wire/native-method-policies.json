@@ -58,7 +58,6 @@
   "vault.update": {"requires_context_epoch": true, "changes_context": true},
   "vault.delete": {"requires_context_epoch": true, "changes_context": false},
   "vault.switch": {"requires_context_epoch": true, "changes_context": true},
-  "vault.merge": {"requires_context_epoch": true, "changes_context": true},
   "vault.upload": {"requires_context_epoch": true, "changes_context": true},
   "vault.upload.check": {"requires_context_epoch": true, "changes_context": false},
   "vault.download": {"requires_context_epoch": true, "changes_context": true},

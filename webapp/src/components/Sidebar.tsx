@@ -88,7 +88,6 @@ const settingsViews: MainView[] = [
   'settings-vaults',
   'settings-new-vault',
   'settings-download-vault',
-  'settings-merge-vault',
   'settings-vault',
   'settings-providers',
   'settings-new-provider',

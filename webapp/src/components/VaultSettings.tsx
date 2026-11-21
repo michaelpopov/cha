@@ -5,14 +5,12 @@ import {
   type FormEvent,
 } from 'react';
 import {
-  ChaError,
   publicErrorMessage,
   type ChaClient,
   type VaultDetail,
   type VaultUploadCheck,
 } from '../api/client';
 import { DetailRefreshProvider, StaleNotice, useFormReload } from '../detailRefresh';
-import { validateBootstrap } from '../state/bootstrap';
 import { useLoad } from '../useLoad';
 import { ConfirmDialog } from './ConfirmDialog';
 import { EditableTitle } from './DetailActions';
@@ -26,7 +24,6 @@ import {
   FileUpIcon,
   PlusIcon,
 } from './Icons';
-import { PasswordDialog } from './PasswordDialog';
 import { TransliteratingInput } from './TransliterationMode';
 import {
   BackToSettings,
@@ -190,117 +187,6 @@ export function DownloadVaultScreen({ client, dispatch, navigate }: SettingsScre
         </div>
       )}
       {names !== null && error && <p className="cha-error-message" role="alert">{error}</p>}
-    </section>
-  );
-}
-
-export function MergeVaultScreen({ client, dispatch, navigate, state }: SettingsScreenProps) {
-  const { data: vaults, error: loadError, retry } = useLoad(
-    client, loadVaults, 'Vaults could not be loaded.',
-  );
-  const [source, setSource] = useState('');
-  const [confirming, setConfirming] = useState(false);
-  const [passwordPrompt, setPasswordPrompt] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const [complete, setComplete] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const pendingRef = useRef(false);
-
-  const destination = vaults?.find((vault) => vault.active)?.display_name ?? '';
-  const sources = vaults?.filter((vault) => !vault.active) ?? [];
-
-  async function merge(password?: string) {
-    if (!source || !destination || pendingRef.current) return;
-    pendingRef.current = true;
-    setPending(true);
-    setError(null);
-    setComplete(false);
-    if (password) setPasswordError(null);
-    try {
-      await client.mergeVault(source, password);
-      setPasswordPrompt(false);
-      setPasswordError(null);
-      try {
-        dispatch({
-          type: 'bootstrap-refreshed',
-          bootstrap: validateBootstrap(await client.getBootstrap()),
-        });
-      } catch {
-        // Discovery refresh is non-critical; merge already succeeded.
-      }
-      setComplete(true);
-    } catch (failure: unknown) {
-      if (failure instanceof ChaError && failure.code === 'source_vault_password_required') {
-        setPasswordPrompt(true);
-        setPasswordError(password
-          ? publicErrorMessage(failure, 'The vault could not be merged.')
-          : null);
-      } else {
-        setPasswordPrompt(false);
-        setPasswordError(null);
-        setError(publicErrorMessage(failure, 'The vault could not be merged.'));
-      }
-    } finally {
-      pendingRef.current = false;
-      setPending(false);
-    }
-  }
-
-  const ready = vaults !== null;
-
-  return (
-    <section className="cha-screen cha-navigation" aria-label="Merge vault settings">
-      <button
-        className="cha-back-row"
-        onClick={() => navigate(state.inspectedVaultName
-          ? { type: 'inspect-vault', vaultName: state.inspectedVaultName }
-          : { type: 'show-settings-vaults' })}
-        type="button"
-      ><ChevronLeftIcon /><span>{state.inspectedVaultName ?? 'Vaults'}</span></button>
-      {!ready && !loadError && <p className="cha-state-message" role="status">Loading vaults…</p>}
-      {loadError && !ready && <LoadFailure message={loadError} retry={retry} />}
-      {ready && sources.length === 0 && <p className="cha-empty-list">No other vaults</p>}
-      {ready && sources.length > 0 && (
-        <form
-          className="cha-settings-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!source || !destination || pending) return;
-            setConfirming(true);
-          }}
-        >
-          <fieldset disabled={pending}>
-            <label>Source vault<select className="cha-form-control" onChange={(event) => setSource(event.target.value)} value={source}><option value="">Select a vault</option>{sources.map((vault) => <option key={vault.display_name} value={vault.display_name}>{vault.display_name}</option>)}</select></label>
-          </fieldset>
-          {complete && <p className="cha-state-message" role="status">Merge complete</p>}
-          {error && <p className="cha-error-message" role="alert">{error}</p>}
-          <div className="cha-settings-form-actions"><button className="cha-button cha-button-primary" disabled={!source || !destination || pending} type="submit">{pending ? 'Merging…' : 'Merge'}</button></div>
-        </form>
-      )}
-      {confirming && (
-        <ConfirmDialog
-          confirmLabel="Merge"
-          message={`Merge “${source}” into “${destination}”? Source files overwrite destination files at matching paths. This cannot be undone.`}
-          onCancel={() => setConfirming(false)}
-          onConfirm={() => {
-            setConfirming(false);
-            void merge();
-          }}
-          title="Merge vault?"
-        />
-      )}
-      {passwordPrompt && (
-        <PasswordDialog
-          error={passwordError}
-          name={source}
-          onCancel={() => {
-            setPasswordPrompt(false);
-            setPasswordError(null);
-          }}
-          onSubmit={(password) => void merge(password)}
-        />
-      )}
     </section>
   );
 }
@@ -567,12 +453,6 @@ export function VaultScreen({ client, dispatch, navigate, state, onBackgroundErr
           {detail.active && <p className="cha-settings-note">This vault is active.</p>}
           {detail.active && (
             <div className="cha-list">
-              <SettingsRow
-                disabled={busy}
-                icon={<DatabaseIcon />}
-                label="Merge"
-                onClick={() => navigate({ type: 'show-settings-merge-vault' })}
-              />
               <SettingsRow
                 description={!canTransferR2 ? 'R2 storage is not configured' : undefined}
                 disabled={!canTransferR2 || busy}

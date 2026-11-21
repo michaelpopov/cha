@@ -935,14 +935,6 @@ export function createNativeChaClient(bridge: NativeBridge): ChaClient & NotesCl
       );
       bridge.setContextEpoch(result.context_epoch);
     },
-    mergeVault: async (sourceVault, password) => {
-      const result = await call(
-        'vault.merge',
-        { source_vault: sourceVault, password: password || null },
-        isMaintenanceResult,
-      );
-      bridge.setContextEpoch(result.context_epoch);
-    },
     checkVaultUpload: () => call(
       'vault.upload.check', {}, isVaultUploadCheck,
     ),

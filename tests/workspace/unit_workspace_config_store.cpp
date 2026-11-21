@@ -696,18 +696,6 @@ std::string stored_config(
     return statement.text(0);
 }
 
-std::map<std::string, std::int64_t> config_rowids(
-    const std::filesystem::path& database) {
-    Database handle(database, Database::Mode::read_only);
-    Statement statement = handle.prepare(
-        "SELECT name, rowid FROM config ORDER BY name");
-    std::map<std::string, std::int64_t> result;
-    while (statement.step()) {
-        result.emplace(statement.text(0), statement.integer(1));
-    }
-    return result;
-}
-
 std::map<std::string, std::string> config_contents(
     const std::filesystem::path& database) {
     Database handle(database, Database::Mode::read_only);
@@ -802,51 +790,6 @@ protected:
     std::filesystem::path export_;
 };
 
-std::filesystem::path import_source_database(
-    const test::TestWorkspace& source,
-    std::string_view password = {}) {
-    const std::filesystem::path database = source.root() / "source.sqlite3";
-    (void)import_workspace_configuration(
-        source.root(), database, WorkspaceConfigLease::acquire, password);
-    return database;
-}
-
-void merge_from(
-    WorkspaceConfigStore& store,
-    const std::filesystem::path& source_database,
-    std::string_view password = {}) {
-    const SessionLease lease = SessionLease::acquire(source_database, "test");
-    store.merge(source_database, lease, password);
-}
-
-constexpr std::string_view merge_model_key_toml =
-    "display_name = \"Models\"\n"
-    "type = \"models\"\n"
-    "value = \"secret\"\n";
-
-constexpr std::string_view merge_r2_key_toml =
-    "display_name = \"Storage\"\n"
-    "type = \"R2\"\n"
-    "url = \"https://r2.example\"\n"
-    "access_key_id = \"access\"\n"
-    "secret_key = \"storage-secret\"\n";
-
-void write_saved_key(
-    const std::filesystem::path& root,
-    std::string_view id,
-    std::string_view content) {
-    write_bytes(
-        root / "system" / "keys" / std::string(id) / "config.toml", content);
-}
-
-void write_key_next_id(
-    const std::filesystem::path& root,
-    std::uint64_t next_id) {
-    write_bytes(
-        root / "system" / "keys" / "config.toml",
-        "next_id = " + std::to_string(next_id) + "\n");
-}
-
 NoteItem linked_folder(WorkspaceConfigStore& store, std::string_view forum_id) {
     for (const auto& item : store.list_note_items()) {
         if (item.forum_id && *item.forum_id == forum_id) return item;
@@ -931,22 +874,14 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFolderFailureRollsBackConfiguration
     EXPECT_THROW(store->apply_forum_update("lobby", "Changed", ""), std::runtime_error);
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFoldersReconcileMergeAndOfflineRemovalOnReopen) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, ForumFoldersReconcileOfflineRemovalOnReopen) {
+    {
+        auto store = open_store();
+        EXPECT_TRUE(linked_folder(*store, "lobby").forum_id.has_value());
+    }
+    std::filesystem::remove_all(source() / "forums");
+    (void)import_workspace_configuration(source(), database());
     auto store = open_store();
-    const auto lobby = linked_folder(*store, "lobby");
-    test::TestWorkspace other;
-    other.add_forum("lobby", "Source name", "guide");
-    const auto source_db = import_source_database(other);
-    merge_from(*store, source_db);
-    EXPECT_EQ(linked_folder(*store, "lobby").id, lobby.id);
-    EXPECT_EQ(linked_folder(*store, "lobby").name, "Source name");
-    EXPECT_TRUE(std::ranges::all_of(store->list_note_items(), [](const auto& item) {
-        return item.kind == NoteItemKind::folder && item.forum_id.has_value();
-    }));
-    store.reset();
-    std::filesystem::remove_all(other.root() / "forums");
-    (void)import_workspace_configuration(other.root(), database());
-    store = open_store();
     ASSERT_EQ(store->list_note_items().size(), 1u);
     EXPECT_EQ(linked_folder(*store, "").name, "Forums");
 }
@@ -2151,7 +2086,7 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, PromptFallbackAndSavePreserveRawRowsAndS
     EXPECT_EQ(before->find_prompt("note-compression")->text, prompt_catalog.front().embedded_text());
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, MalformedPromptBytesDoNotBlockImportOrMergeWithD1) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, MalformedPromptBytesDoNotBlockImportWithD1) {
     constexpr auto path = "system/prompts/note-compression.md";
     constexpr auto valid_path = "system/prompts/page-formatting.md";
     const std::string invalid(1, static_cast<char>(0xff));
@@ -2181,25 +2116,9 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, MalformedPromptBytesDoNotBlockImportOrMe
     (void)import_workspace_configuration(source(), database(), WorkspaceConfigLease::acquire, {}, "mac");
     check_queued("Imported");
     EXPECT_EQ(stored_config(database(), path), invalid);
-    {
-        Database handle(database(), Database::Mode::read_write);
-        storage::SqliteTransaction transaction(handle);
-        sync_clear_outgoing(handle);
-        transaction.commit();
-    }
     const auto store = WorkspaceConfigStore::open(database(), {}, "mac");
     EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, prompt_catalog.front().embedded_text());
     EXPECT_EQ(store->snapshot()->find_prompt("page-formatting")->text, "Imported");
-
-    test::TestWorkspace incoming;
-    const std::string changed_invalid(1, static_cast<char>(0xfe));
-    write_bytes(incoming.root() / path, changed_invalid);
-    write_bytes(incoming.root() / valid_path, "Merged");
-    merge_from(*store, import_source_database(incoming));
-    check_queued("Merged");
-    EXPECT_EQ(stored_config(database(), path), changed_invalid);
-    EXPECT_EQ(store->snapshot()->find_prompt("note-compression")->text, prompt_catalog.front().embedded_text());
-    EXPECT_EQ(store->snapshot()->find_prompt("page-formatting")->text, "Merged");
 }
 
 TEST_F(RuntimeWorkspaceConfigStoreTest, RuntimeEditsNeverReadOrWriteConfigurationFiles) {
@@ -2259,509 +2178,6 @@ TEST_F(RuntimeWorkspaceConfigStoreTest, RetargetReopensTheNewDatabaseInTheSameTr
     EXPECT_EQ(
         test::probe_lease(other_database), test::LeaseProbeResult::busy);
 #endif
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeOverlaysExactPathsAndRetainsDestinationOnlyRows) {
-    write_bytes(
-        source() / "characters" / "mix" / "yoda" / "character.toml",
-        "display_name = \"Yoda\"\nprovider = \"test\"\n");
-    write_bytes(
-        source() / "characters" / "mix" / "yoda" / "CHARACTER.md",
-        "Do or do not.\n");
-    write_bytes(
-        source() / "forums" / "lobby" / "members" / "guide" / "CHARACTER.md",
-        "Destination prompt override\n");
-    (void)import_workspace_configuration(source(), database());
-    {
-        Database handle(database(), Database::Mode::read_write);
-        seed_session_rows(handle);
-    }
-
-    test::TestWorkspace source_workspace;
-    source_workspace.add_persona("beta", "Beta");
-    source_workspace.add_forum("stoics", "Stoics", "guide");
-    write_bytes(
-        source_workspace.root() / "characters" / "guide" / "CHARACTER.md",
-        "Source guide instructions\n");
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    {
-        Database handle(source_database, Database::Mode::read_write);
-        seed_session_rows(handle);
-        handle.execute("ALTER TABLE entries DROP COLUMN output_tokens");
-        handle.execute("ALTER TABLE entries DROP COLUMN input_tokens");
-    }
-    const auto source_before = config_contents(source_database);
-
-    const auto store = open_store();
-    merge_from(*store, source_database);
-
-    EXPECT_EQ(store->snapshot()->root(), store->workspace_path());
-    ASSERT_NE(store->snapshot()->find_persona("beta"), nullptr);
-    EXPECT_EQ(
-        stored_config(database(), "characters/guide/CHARACTER.md"),
-        "Source guide instructions\n");
-    EXPECT_NE(store->snapshot()->find_character("writer"), nullptr);
-    EXPECT_NE(store->snapshot()->find_character("yoda"), nullptr);
-    EXPECT_EQ(
-        stored_config(
-            database(), "forums/lobby/members/guide/CHARACTER.md"),
-        "Destination prompt override\n");
-    EXPECT_FALSE(
-        stored_config(
-            database(), "forums/lobby/members/character_defaults.toml")
-            .empty());
-    EXPECT_FALSE(
-        stored_config(
-            database(), "forums/lobby/members/writer/character.toml")
-            .empty());
-    EXPECT_NE(store->snapshot()->find_forum("stoics"), nullptr);
-    EXPECT_NE(store->snapshot()->find_forum("lobby"), nullptr);
-    {
-        Database handle(database(), Database::Mode::read_only);
-        expect_seeded_session_rows(handle);
-    }
-    EXPECT_EQ(config_contents(source_database), source_before);
-    {
-        Database handle(source_database, Database::Mode::read_only);
-        expect_seeded_session_rows(handle);
-    }
-
-    {
-        Database handle(source_database, Database::Mode::read_write);
-        handle.execute("DELETE FROM config WHERE name LIKE 'personas/beta/%'");
-        handle.execute("DELETE FROM config WHERE name LIKE 'forums/stoics/%'");
-    }
-    merge_from(*store, source_database);
-    EXPECT_NE(store->snapshot()->find_persona("beta"), nullptr);
-    EXPECT_NE(store->snapshot()->find_forum("stoics"), nullptr);
-    EXPECT_EQ(
-        stored_config(database(), "characters/guide/CHARACTER.md"),
-        "Source guide instructions\n");
-    EXPECT_NE(store->snapshot()->find_character("writer"), nullptr);
-    {
-        Database handle(database(), Database::Mode::read_only);
-        expect_seeded_session_rows(handle);
-    }
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeRejectsCandidateConflictsBeforeCommit) {
-    const auto store = open_store();
-    const auto before = config_contents(database());
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-
-    {
-        test::TestWorkspace source_workspace;
-        std::filesystem::remove_all(
-            source_workspace.root() / "characters" / "guide");
-        write_bytes(
-            source_workspace.root() / "characters" / "other" / "guide"
-                / "character.toml",
-            "display_name = \"Other Guide\"\nprovider = \"test\"\n");
-        write_bytes(
-            source_workspace.root() / "characters" / "other" / "guide"
-                / "CHARACTER.md",
-            "Other guide\n");
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        std::filesystem::remove_all(
-            source_workspace.root() / "personas" / "reader");
-        write_bytes(
-            source_workspace.root() / "personas" / "extra" / "reader"
-                / "persona.toml",
-            "display_name = \"Reader\"\n");
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        source_workspace.add_persona("scribe", "Writer");
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        write_bytes(
-            source_workspace.root() / "characters" / "writer" / "character.toml",
-            "display_name = \"Writer\"\n");
-        write_bytes(
-            source_workspace.root() / "characters" / "writer" / "CHARACTER.md",
-            "Writer instructions\n");
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeRejectsMissingSourceIncludesDuringStandaloneLoad) {
-    write_bytes(
-        source() / "characters" / "guide" / "shared.md",
-        "Destination include body\n");
-    (void)import_workspace_configuration(source(), database());
-    const auto store = open_store();
-    const auto before = config_contents(database());
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-
-    test::TestWorkspace source_workspace;
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    {
-        Database handle(source_database, Database::Mode::read_write);
-        handle.execute(
-            "UPDATE config SET content = '$$(shared.md)\nSource guide\n' "
-            "WHERE name = 'characters/guide/CHARACTER.md'");
-    }
-    EXPECT_THROW(merge_from(*store, source_database), std::runtime_error);
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeRejectsMalformedSourceProvidersAndStyles) {
-    const auto store = open_store();
-    const auto before = config_contents(database());
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-
-    {
-        test::TestWorkspace source_workspace;
-        source_workspace.write_provider("broken", "not toml\n");
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        source_workspace.write_style("broken", "font = \"nope\"\n");
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeKeepsMalformedDestinationOnlyProvidersAndStyles) {
-    {
-        Database handle(database(), Database::Mode::read_write);
-        handle.execute(
-            "INSERT INTO config (name, content) VALUES "
-            "('system/providers/broken/config.toml', 'not toml\n'), "
-            "('system/styles/broken/config.toml', 'font = \"nope\"\n')");
-    }
-    test::TestWorkspace source_workspace;
-    source_workspace.add_persona("beta", "Beta");
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    merge_from(*store, source_database);
-
-    EXPECT_EQ(
-        stored_config(database(), "system/providers/broken/config.toml"),
-        "not toml\n");
-    EXPECT_EQ(
-        stored_config(database(), "system/styles/broken/config.toml"),
-        "font = \"nope\"\n");
-    EXPECT_NE(store->snapshot()->find_persona("beta"), nullptr);
-    EXPECT_EQ(store->snapshot()->find_provider("broken"), nullptr);
-    EXPECT_EQ(store->snapshot()->find_style("broken"), nullptr);
-}
-
-TEST_F(RuntimeWorkspaceConfigStoreTest, MergeNormalizesSavedKeyNextId) {
-    {
-        Database handle(database(), Database::Mode::read_write);
-        handle.execute(
-            "INSERT INTO config (name, content) VALUES "
-            "('system/keys/config.toml', 'next_id = 5\n'), "
-            "('system/keys/api_key_1/config.toml', "
-            "'display_name = \"Dest\"\ntype = \"models\"\nvalue = \"d\"\n')");
-    }
-    test::TestWorkspace source_workspace;
-    write_key_next_id(source_workspace.root(), 4);
-    write_saved_key(
-        source_workspace.root(), "api_key_3", merge_model_key_toml);
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    merge_from(*store, source_database);
-
-    EXPECT_EQ(
-        stored_config(database(), "system/keys/config.toml"),
-        "next_id = 5\n");
-    EXPECT_NE(store->snapshot()->find_api_key("api_key_1"), nullptr);
-    EXPECT_NE(store->snapshot()->find_api_key("api_key_3"), nullptr);
-    EXPECT_EQ(store->snapshot()->next_api_key_id(), 5U);
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeRejectsMalformedCountersAndKeyIdExhaustion) {
-    const auto store = open_store();
-    const auto before = config_contents(database());
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-
-    {
-        test::TestWorkspace source_workspace;
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        {
-            Database handle(source_database, Database::Mode::read_write);
-            handle.execute(
-                "INSERT INTO config (name, content) VALUES "
-                "('system/keys/config.toml', 'next_id = 0\n')");
-        }
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        {
-            Database handle(source_database, Database::Mode::read_write);
-            handle.execute(
-                "INSERT INTO config (name, content) VALUES "
-                "('system/keys/api_key_9223372036854775807/config.toml', "
-                "'display_name = \"Huge\"\ntype = \"models\"\n"
-                "value = \"secret\"\n')");
-        }
-        EXPECT_THROW(
-            merge_from(*store, source_database), std::runtime_error);
-    }
-
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeReplacesDestinationR2WithSourceR2AtADifferentId) {
-    {
-        Database handle(database(), Database::Mode::read_write);
-        handle.execute(
-            "INSERT INTO config (name, content) VALUES "
-            "('system/keys/config.toml', 'next_id = 2\n'), "
-            "('system/keys/api_key_1/config.toml', '"
-            + std::string(merge_r2_key_toml) + "')");
-    }
-    test::TestWorkspace source_workspace;
-    write_key_next_id(source_workspace.root(), 3);
-    write_saved_key(source_workspace.root(), "api_key_2", merge_r2_key_toml);
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    ASSERT_TRUE(store->snapshot()->r2_storage());
-    EXPECT_EQ(store->snapshot()->r2_storage()->id, "api_key_1");
-
-    merge_from(*store, source_database);
-
-    ASSERT_TRUE(store->snapshot()->r2_storage());
-    EXPECT_EQ(store->snapshot()->r2_storage()->id, "api_key_2");
-    EXPECT_TRUE(
-        stored_config(database(), "system/keys/api_key_1/config.toml").empty());
-    EXPECT_EQ(
-        stored_config(database(), "system/keys/config.toml"),
-        "next_id = 3\n");
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeKeepsDestinationR2WhenSourceHasNone) {
-    {
-        Database handle(database(), Database::Mode::read_write);
-        handle.execute(
-            "INSERT INTO config (name, content) VALUES "
-            "('system/keys/config.toml', 'next_id = 2\n'), "
-            "('system/keys/api_key_1/config.toml', '"
-            + std::string(merge_r2_key_toml) + "')");
-    }
-    test::TestWorkspace source_workspace;
-    source_workspace.add_persona("beta", "Beta");
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    merge_from(*store, source_database);
-
-    ASSERT_TRUE(store->snapshot()->r2_storage());
-    EXPECT_EQ(store->snapshot()->r2_storage()->id, "api_key_1");
-    EXPECT_NE(store->snapshot()->find_persona("beta"), nullptr);
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeReplacesDestinationR2WithSourceModelKeyAtTheSamePath) {
-    {
-        Database handle(database(), Database::Mode::read_write);
-        handle.execute(
-            "INSERT INTO config (name, content) VALUES "
-            "('system/keys/config.toml', 'next_id = 2\n'), "
-            "('system/keys/api_key_1/config.toml', '"
-            + std::string(merge_r2_key_toml) + "')");
-    }
-    test::TestWorkspace source_workspace;
-    write_key_next_id(source_workspace.root(), 2);
-    write_saved_key(
-        source_workspace.root(), "api_key_1", merge_model_key_toml);
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    merge_from(*store, source_database);
-
-    EXPECT_FALSE(store->snapshot()->r2_storage());
-    ASSERT_NE(store->snapshot()->find_api_key("api_key_1"), nullptr);
-    EXPECT_EQ(store->snapshot()->find_api_key("api_key_1")->value, "secret");
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeRejectsWrongPasswordInvalidSchemaInactiveLeaseAndSelfPath) {
-    const auto store = open_store();
-    const auto before = config_contents(database());
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-
-    {
-        test::TestWorkspace source_workspace;
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace, "secret");
-        const SessionLease lease =
-            SessionLease::acquire(source_database, "test");
-        EXPECT_THROW(
-            store->merge(source_database, lease, "wrong"),
-            std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        const std::filesystem::path source_database =
-            source_workspace.root() / "v1.sqlite3";
-        make_v1_database(source_database);
-        const SessionLease lease =
-            SessionLease::acquire(source_database, "test");
-        EXPECT_THROW(
-            store->merge(source_database, lease), std::runtime_error);
-    }
-    {
-        test::TestWorkspace source_workspace;
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        SessionLease lease = SessionLease::acquire(source_database, "test");
-        SessionLease moved = std::move(lease);
-        EXPECT_FALSE(lease.active());
-        EXPECT_THROW(
-            store->merge(source_database, lease), std::runtime_error);
-        (void)moved;
-    }
-    {
-        test::TestWorkspace source_workspace;
-        const std::filesystem::path source_database =
-            import_source_database(source_workspace);
-        const SessionLease lease =
-            SessionLease::acquire(source_database, "test");
-        EXPECT_THROW(
-            store->merge(store->database_path(), lease), std::runtime_error);
-    }
-
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeSkipsSqliteWhenRowsAreIdentical) {
-    test::TestWorkspace source_workspace;
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    merge_from(*store, source_database);
-    const auto rowids_before = config_rowids(database());
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-
-    force_next_workspace_config_fault(WorkspaceConfigFault::sqlite_begin);
-    merge_from(*store, source_database);
-    EXPECT_EQ(config_rowids(database()), rowids_before);
-    EXPECT_NE(store->snapshot().get(), published.get());
-    EXPECT_EQ(store->snapshot()->root(), store->workspace_path());
-
-    EXPECT_THROW(
-        (void)store->apply_character_settings("guide", "second", std::nullopt),
-        std::runtime_error);
-    EXPECT_EQ(store->snapshot()->find_character("guide")->provider_id, "test");
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    MergeSqliteFailuresLeaveDestinationUnchanged) {
-    test::TestWorkspace source_workspace;
-    source_workspace.add_persona("beta", "Beta");
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-    const auto before = config_contents(database());
-    const std::filesystem::path workspace = store->workspace_path();
-    const WorkspaceConfigFault faults[]{
-        WorkspaceConfigFault::validation,
-        WorkspaceConfigFault::sqlite_begin,
-        WorkspaceConfigFault::sqlite_write,
-        WorkspaceConfigFault::sqlite_commit,
-    };
-    for (const WorkspaceConfigFault fault : faults) {
-        force_next_workspace_config_fault(fault);
-        EXPECT_THROW(merge_from(*store, source_database), std::runtime_error)
-            << static_cast<int>(fault);
-        EXPECT_EQ(config_contents(database()), before);
-        EXPECT_EQ(store->snapshot().get(), published.get());
-        EXPECT_EQ(store->snapshot()->find_persona("beta"), nullptr);
-        EXPECT_EQ(store->snapshot()->root(), workspace);
-    }
-}
-
-TEST_F(
-    RuntimeWorkspaceConfigStoreTest,
-    InvalidMergedCandidateCanBeDiscardedWithoutRestart) {
-    test::TestWorkspace source_workspace;
-    std::filesystem::remove_all(
-        source_workspace.root() / "characters" / "guide");
-    write_bytes(
-        source_workspace.root() / "characters" / "other" / "guide"
-            / "character.toml",
-        "display_name = \"Other Guide\"\nprovider = \"test\"\n");
-    write_bytes(
-        source_workspace.root() / "characters" / "other" / "guide"
-            / "CHARACTER.md",
-        "Other guide\n");
-    const std::filesystem::path source_database =
-        import_source_database(source_workspace);
-    const auto store = open_store();
-    const std::shared_ptr<const Workspace> published = store->snapshot();
-    const auto before = config_contents(database());
-    EXPECT_THROW(merge_from(*store, source_database), WorkspaceConfigValidationError);
-    EXPECT_EQ(config_contents(database()), before);
-    EXPECT_EQ(store->snapshot().get(), published.get());
-    EXPECT_NO_THROW(store->apply_character_settings("guide", "second", std::nullopt));
 }
 
 TEST_F(WorkspaceConfigStoreTest, ImportsHarmlessFieldsThenOpensAndReopens) {
@@ -4107,25 +3523,15 @@ TEST_F(WorkspaceConfigStoreTest, OpensOlderVaultsWithUnsupportedConfigurationRow
     EXPECT_EQ(stored_config(database(), "system/assistant/PORTRAIT.JPG"), "AP8=");
 }
 
-TEST_F(RuntimeWorkspaceConfigStoreTest, MergeIgnoresUnsupportedConfigurationRows) {
+TEST_F(RuntimeWorkspaceConfigStoreTest, CharacterDeletionPreservesUnsupportedConfigurationRows) {
     {
         Database handle(database(), Database::Mode::read_write);
         handle.execute("INSERT INTO config VALUES ('characters/writer/obsolete.dat', 'AP8=')");
     }
     const auto store = open_store();
-    test::TestWorkspace other;
-    other.add_character("writer", "Writer");
-    const auto other_database = import_source_database(other);
-    {
-        Database handle(other_database, Database::Mode::read_write);
-        handle.execute("INSERT INTO config VALUES ('characters/writer/obsolete.dat', 'new bytes'), "
-            "('characters/writer/cache.dat', 'new cache')");
-    }
-    merge_from(*store, other_database);
-    EXPECT_EQ(stored_config(database(), "characters/writer/obsolete.dat"), "AP8=");
-    EXPECT_FALSE(config_contents(database()).contains("characters/writer/cache.dat"));
     store->apply_forum_members_and_persona("lobby", std::vector<std::string>{"guide"}, "reader");
     store->apply_character_delete("writer");
+    EXPECT_EQ(store->snapshot()->find_character("writer"), nullptr);
     EXPECT_EQ(stored_config(database(), "characters/writer/obsolete.dat"), "AP8=");
 }
 

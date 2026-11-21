@@ -497,10 +497,6 @@ public:
         std::string_view name,
         std::string password,
         std::uint64_t epoch);
-    [[nodiscard]] MaintenanceResult merge_vault(
-        std::string_view source_name,
-        std::string password,
-        std::uint64_t epoch);
     [[nodiscard]] std::vector<std::string> list_r2_vaults(
         std::uint64_t epoch) const;
     [[nodiscard]] VaultDefinition download_r2_vault(

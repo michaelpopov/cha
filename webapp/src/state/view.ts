@@ -46,7 +46,6 @@ export type MainView =
   | 'settings-vaults'
   | 'settings-new-vault'
   | 'settings-download-vault'
-  | 'settings-merge-vault'
   | 'settings-vault'
   | 'settings-providers'
   | 'settings-new-provider'
@@ -274,7 +273,6 @@ export type AppAction =
   | { type: 'show-settings-vaults' }
   | { type: 'show-settings-new-vault' }
   | { type: 'show-settings-download-vault' }
-  | { type: 'show-settings-merge-vault' }
   | { type: 'inspect-vault'; vaultName: string }
   | { type: 'vault-created'; vault: VaultDetail }
   | { type: 'vault-downloaded'; vault: VaultDetail }
@@ -370,7 +368,6 @@ export type NavigationAction = Extract<AppAction, {
     | 'show-settings-vaults'
     | 'show-settings-new-vault'
     | 'show-settings-download-vault'
-    | 'show-settings-merge-vault'
     | 'inspect-vault'
     | 'vault-created'
     | 'vault-deleted'
@@ -830,8 +827,6 @@ function reduceApp(state: AppState, action: AppAction): AppState {
       return { ...state, mainView: 'settings-new-vault', ...idleSessionOperation() };
     case 'show-settings-download-vault':
       return { ...state, mainView: 'settings-download-vault', ...idleSessionOperation() };
-    case 'show-settings-merge-vault':
-      return { ...state, mainView: 'settings-merge-vault', ...idleSessionOperation() };
     case 'inspect-vault':
       return {
         ...state,
@@ -1257,7 +1252,6 @@ export function navigationTitle(state: AppState): string | null {
     case 'settings-vaults': return 'Vaults';
     case 'settings-new-vault': return 'New vault';
     case 'settings-download-vault': return 'Download vault';
-    case 'settings-merge-vault': return 'Merge vault';
     case 'settings-providers': return 'Providers';
     case 'settings-new-provider': return 'New provider';
     case 'settings-prompts': return 'Prompts';

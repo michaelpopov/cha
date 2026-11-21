@@ -32,7 +32,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -3039,91 +3038,4 @@ WorkspaceConfigApplyResult WorkspaceConfigStore::undo_config(
     const std::lock_guard lock(impl_->mutex);
     return impl_->undo_config(version, cancelled);
 }
-
-void WorkspaceConfigStore::merge(
-    const std::filesystem::path& source_database_path,
-    const SessionLease& source_lease,
-    std::string_view source_password) {
-    const std::filesystem::path source = normalize_path(source_database_path);
-    if (source == database_path()) {
-        fail_path(
-            "Source database '" + utf8_path(source)
-            + "' is the active destination database");
-    }
-    if (!source_lease.active()) {
-        fail_path("Source database lease is not active");
-    }
-
-    (void)impl_->edit([&](const Workspace& published, WorkspaceConfigEditor& editor) {
-        const WorkspaceDatabaseState state =
-            inspect_workspace_session_database(source, source_password);
-        if (state != WorkspaceDatabaseState::valid_v2) {
-            fail_database_state(source, state);
-        }
-
-        std::vector<ConfigFile> source_rows;
-        {
-            Database handle(source, Database::Mode::read_write, source_password);
-            validate_workspace_session_database_identity(handle);
-            validate_workspace_session_contents(handle);
-            source_rows = read_workspace_config_files(handle, true);
-            ignore_source_d1(source_rows);
-            validate_config_rows(source_rows);
-        }
-
-        Workspace source_workspace = [&] {
-            TextFiles files;
-            for (const auto& row : source_rows) files.emplace(row.name, row.content);
-            return Workspace::load(source, files);
-        }();
-        for (const ConfigFile& row : source_rows) {
-            if (const std::string_view id =
-                    stored_directory_id(row.name, "system/providers/");
-                !id.empty() && source_workspace.find_provider(id) == nullptr) {
-                fail_path(
-                    "Source directory 'system/providers/" + std::string(id)
-                    + "' is invalid");
-            }
-            if (const std::string_view id =
-                    stored_directory_id(row.name, "system/styles/");
-                !id.empty() && source_workspace.find_style(id) == nullptr) {
-                fail_path(
-                    "Source directory 'system/styles/" + std::string(id)
-                    + "' is invalid");
-            }
-        }
-
-        TextFiles& candidate = editor.files();
-
-        // S's R2 singleton replaces D's even when the saved-key IDs differ.
-        if (source_workspace.r2_storage() && published.r2_storage()) {
-            const std::string prefix =
-                "system/keys/" + published.r2_storage()->id + "/";
-            std::erase_if(candidate, [&](const auto& row) {
-                return row.first.starts_with(prefix);
-            });
-        }
-
-        for (const auto& row : source_rows) candidate[row.name] = row.content;
-
-        // Every merged key comes from S or D, and each loaded counter already
-        // exceeds its own highest key ID, so the larger counter is safe.
-        const std::uint64_t next_id = std::max(
-            source_workspace.next_api_key_id(), published.next_api_key_id());
-        if (next_id > static_cast<std::uint64_t>(
-                std::numeric_limits<std::int64_t>::max())) {
-            fail_path("API key ID space is exhausted");
-        }
-        candidate["system/keys/config.toml"] =
-            "next_id = " + std::to_string(next_id) + "\n";
-
-        // Source D1 rows never replace the destination setup. When a source
-        // ordinary key takes the destination D1 key's path, only the local
-        // D1 rows move to a free ID.
-        preserve_destination_d1(candidate, published.source_files());
-
-        return std::vector<std::string>{};
-    });
-}
-
 } // namespace cha

@@ -80,10 +80,6 @@ struct Application::Impl {
             std::string_view name,
             std::string password,
             std::uint64_t epoch);
-        MaintenanceResult merge_vault(
-            std::string_view source_name,
-            std::string password,
-            std::uint64_t epoch);
         R2UploadCheck check_database_upload(std::uint64_t epoch) const;
         std::shared_ptr<OperationReply> start_database_upload(
             std::optional<std::string> expected_etag,

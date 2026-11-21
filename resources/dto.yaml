@@ -245,17 +245,6 @@ components:
           type: [string, "null"]
           minLength: 1
 
-    MergeVaultRequest:
-      type: object
-      additionalProperties: false
-      required: [source_vault, password]
-      properties:
-        source_vault:
-          type: string
-          minLength: 1
-        password:
-          type: [string, "null"]
-
     VaultDetail:
       type: object
       additionalProperties: false
@@ -1886,7 +1875,6 @@ components:
                 - command_timeout
                 - command_queue_full
                 - vault_password_required
-                - source_vault_password_required
                 - invalid_argument
                 - operation_cancelled
                 - application_unavailable

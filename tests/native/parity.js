@@ -139,28 +139,20 @@ async function nativeParity() {
     await rpc('persona.delete', {persona_id: persona.id});
     await rpc('session.delete', {...identity, session_id: other.id});
     const copy = await rpc('vault.create', {display_name: 'Parity copy', copy_from: originalVault, password: null});
-    const toMerge = await rpc('persona.create', {display_name: 'Merged persona'});
     const beforeSwitch = epoch;
     const switched = await rpc('vault.switch', {vault_name: copy.display_name, password: null});
     check(switched.context_epoch > beforeSwitch && switched.context_epoch === epoch
       && switched.state === 'running', 'switch did not renew context');
-    const beforeMerge = epoch;
-    const merged = await rpc('vault.merge', {source_vault: originalVault, password: null});
-    check(merged.context_epoch > beforeMerge && merged.context_epoch === epoch
-      && merged.state === 'running', 'merge did not renew context');
-    check((await rpc('persona.get', {persona_id: toMerge.id})).display_name === 'Merged persona',
-      'vault merge lost the source configuration');
     check((await rpc('session.list', {forum_id: 'lobby'})).some((session) => session.label === 'Renamed parity'),
-      'vault merge lost the destination conversation');
+      'vault copy lost the original conversation');
     await rpc('vault.switch', {vault_name: originalVault, password: null});
     await rpc('vault.delete', {vault_name: copy.display_name});
-    await rpc('persona.delete', {persona_id: toMerge.id});
     await rpc('session.delete', identity);
     check(!(await rpc('session.list', {forum_id: 'lobby'})).some((session) => session.id === created.id),
       'deleted conversation remained in storage');
     return {ok: true, csp: 'inline scripts, event handlers, remote scripts and fetch blocked',
       sessions: 'rename/reopen/delete', navigation: '12 selections',
-      files: 'character and forum create/edit/delete', vaults: 'copy/switch/merge/delete'};
+      files: 'character and forum create/edit/delete', vaults: 'copy/switch/delete'};
   } catch (error) {
     return {ok: false, reason: String(error.message || error)};
   }

@@ -75,7 +75,6 @@ enum class Method {
     vault_update,
     vault_delete,
     vault_switch,
-    vault_merge,
     vault_upload,
     vault_upload_check,
     vault_download,

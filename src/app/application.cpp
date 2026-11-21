@@ -1931,14 +1931,6 @@ MaintenanceResult Application::switch_vault(
     return impl_->vault_maintenance.switch_vault(name, std::move(password), epoch);
 }
 
-MaintenanceResult Application::merge_vault(
-    std::string_view source_name,
-    std::string password,
-    std::uint64_t epoch) {
-    return impl_->vault_maintenance.merge_vault(
-        source_name, std::move(password), epoch);
-}
-
 R2UploadCheck Application::check_database_upload(std::uint64_t epoch) const {
     return impl_->vault_maintenance.check_database_upload(epoch);
 }

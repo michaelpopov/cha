@@ -266,7 +266,7 @@ shows:
 - When you select the vault in the **Vault** list. The active vault does not
   change.
 - For a vault command on a vault that is not active, for example a copy, a
-  rename, a merge or a deletion.
+  rename or a deletion.
 - In ChaWeb, for `/open`.
 
 To use a vault in a different process, close the process that has it open.
@@ -1528,22 +1528,6 @@ To get a vault with a different password, or with no password, create a new
 vault with **Copy** *vault name* and set the password that you want. The copy
 is a new vault with a new name.
 
-### Merge the configuration of a different vault
-
-**Merge** copies the configuration of a different vault into the active vault.
-It does not copy sessions or notes.
-
-1. Click **Settings → Vaults**, click the active vault, and click **Merge**.
-2. Select the **Source vault** and click **Merge**.
-3. Confirm.
-
-When the two vaults have the same item, the item of the source replaces the
-item of the active vault. This includes the saved keys, the R2 credentials
-and the prompts. You cannot undo a merge. The D1 credentials of the active
-vault do not change.
-
-If the source vault is protected, CHA asks for its password.
-
 ### Delete a vault
 
 1. Make a different vault active. You cannot delete the active vault or the
@@ -1564,7 +1548,6 @@ The screen of the active vault has these rows:
 
 | Row | Function | Chapter |
 | --- | --- | --- |
-| **Merge** | Copies the configuration of a different vault into this one. | This chapter |
 | **Upload** | Sends the vault to R2. | [19](#19-r2-storage) |
 | **Download** | Replaces the vault with the copy in R2. | [19](#19-r2-storage) |
 | **Import** | Replaces the configuration with the configuration files. | [21](#21-configuration-files-export-edit-import) |
@@ -1860,8 +1843,8 @@ stays in D1 and continues to collect records.
   [Replace the active vault with the copy in R2](#replace-the-active-vault-with-the-copy-in-r2).
 - After **Download** on the active vault, CHA makes the table of this computer
   again, if it is missing, and synchronizes.
-- **Import** and **Merge** keep the D1 credentials of the target vault. A new
-  vault gets the D1 credentials of its source. See
+- **Import** keeps the D1 credentials of the active vault. A new vault gets
+  the D1 credentials of its source. See
   [Create a vault](#create-a-vault).
 
 ### Problems
@@ -2748,7 +2731,7 @@ details. See [Messages](#32-messages).
 
 - The generation of note audio.
 - Vault commands other than `/open` and `/download`: create, rename,
-  protect, merge, delete, R2 upload, import and export.
+  protect, delete, R2 upload, import and export.
 - D1 synchronization.
 
 ### D1 synchronization on the server

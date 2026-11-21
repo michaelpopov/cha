@@ -103,7 +103,6 @@ import { ApiKeyScreen, ApiKeysScreen, NewApiKeyScreen } from './ApiKeySettings';
 import { CloudStoreKeysScreen, CloudStoreScreen, CloudStoresScreen } from './CloudStoreSettings';
 import {
   DownloadVaultScreen,
-  MergeVaultScreen,
   NewVaultScreen,
   VaultScreen,
   VaultsScreen,
@@ -431,9 +430,6 @@ function ScreenContent({
     );
     case 'settings-download-vault': return (
       <DownloadVaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
-    );
-    case 'settings-merge-vault': return (
-      <MergeVaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state} />
     );
     case 'settings-vault': return (
       <VaultScreen client={client} dispatch={dispatch} navigate={navigate} state={state}

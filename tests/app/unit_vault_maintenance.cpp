@@ -436,18 +436,12 @@ TEST(ApplicationVault, DownloadRefusesInvalidWorkspaceBeforeReplacingTheVault) {
 TEST(ApplicationVault, ConfigurationTransferExcludesNotes) {
     TwoVaults pair;
     const auto note = seed_notes(pair.database_a, "Destination");
-    (void)seed_notes(pair.database_b, "Source");
     const auto before = stored_notes(pair.database_a);
-    const auto source_before = stored_notes(pair.database_b);
     const auto exported = pair.workspace_a.root() / "export";
     pair.command.vault.modify = exported;
     pair.command.vaults.front() = pair.command.vault;
     auto application = Application::open(pair.command);
     application->select_note(note, application->context_epoch());
-    (void)application->merge_vault("B", {}, application->context_epoch());
-    EXPECT_EQ(application->bootstrap().presentation.current_note_id, note);
-    EXPECT_EQ(stored_notes(pair.database_a), before);
-    EXPECT_EQ(stored_notes(pair.database_b), source_before);
     (void)application->export_configuration(application->context_epoch());
     EXPECT_GT(std::distance(std::filesystem::recursive_directory_iterator(exported),
         std::filesystem::recursive_directory_iterator{}), 0);
@@ -871,50 +865,6 @@ TEST(ApplicationVault, OverlappingSessionIdsStayOnTheirVault) {
     EXPECT_TRUE(saw_a);
 }
 
-TEST(ApplicationVault, MergeUsesMaintenanceAndRetiresLiveSessions) {
-    TwoVaults pair;
-    auto application = Application::open(pair.command);
-    const auto created = application->create_session(
-        "lobby", "Before merge", application->context_epoch());
-    ASSERT_TRUE(std::holds_alternative<OpenSessionSuccess>(
-        application->open_session("lobby", created.id, application->context_epoch())));
-    const auto old_epoch = application->context_epoch();
-
-    const auto merged = application->merge_vault("B", {}, application->context_epoch());
-
-    EXPECT_EQ(merged.state, ApplicationState::running);
-    EXPECT_GT(merged.context_epoch, old_epoch);
-    EXPECT_EQ(application->current_vault().get().name, "A");
-    EXPECT_EQ(application->get_persona("beta", application->context_epoch()).summary.display_name,
-        "Beta");
-    EXPECT_EQ(application->check_context(old_epoch), ErrorCode::vault_changed);
-    const auto snapshot = application->snapshot(
-        "lobby", created.id, merged.context_epoch);
-    ASSERT_TRUE(std::holds_alternative<ErrorCode>(snapshot));
-    EXPECT_EQ(std::get<ErrorCode>(snapshot), ErrorCode::session_not_live);
-}
-
-TEST(ApplicationVault, MergeSynchronizationFailureMarksApplicationUnavailable) {
-    TwoVaults pair;
-    auto application = Application::open(pair.command);
-    const auto old_epoch = application->context_epoch();
-    force_next_forum_sync_failure();
-
-    EXPECT_THROW(
-        (void)application->merge_vault("B", {}, application->context_epoch()),
-        WorkspaceRestartRequiredError);
-
-    EXPECT_EQ(application->state(), ApplicationState::unavailable);
-    EXPECT_GT(application->context_epoch(), old_epoch);
-    EXPECT_EQ(
-        application->check_context(application->context_epoch()),
-        ErrorCode::application_unavailable);
-    const auto boot = application->bootstrap();
-    EXPECT_EQ(boot.state, ApplicationState::unavailable);
-    EXPECT_EQ(boot.presentation.vault_name, "A");
-    EXPECT_TRUE(boot.presentation.forums.empty());
-}
-
 TEST(ApplicationVault, ReopenFailureAfterDatabaseMaintenanceMarksApplicationUnavailable) {
     TwoVaults pair;
     pair.command.vault.modify = pair.workspace_a.root() / "export";
@@ -928,22 +878,6 @@ TEST(ApplicationVault, ReopenFailureAfterDatabaseMaintenanceMarksApplicationUnav
         WorkspaceRestartRequiredError);
 
     EXPECT_EQ(application->state(), ApplicationState::unavailable);
-}
-
-TEST(ApplicationVault, MergeChecksSourcePasswordBeforeMaintenance) {
-    TwoVaults pair;
-    auto application = Application::open(pair.command);
-    const auto on_b = application->switch_vault("B", {}, application->context_epoch());
-    (void)application->update_vault(
-        "B", {.display_name = "B", .password = "secret"}, on_b.context_epoch);
-    (void)application->switch_vault("A", {}, application->context_epoch());
-    const auto epoch = application->context_epoch();
-
-    EXPECT_ANY_THROW((void)application->merge_vault("B", "wrong", epoch));
-
-    // A wrong password must not pause sessions or publish a new context.
-    EXPECT_EQ(application->context_epoch(), epoch);
-    EXPECT_EQ(application->state(), ApplicationState::running);
 }
 
 TEST(ApplicationVault, ProtectionSetupFailureRestoresRunningContext) {

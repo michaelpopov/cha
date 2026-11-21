@@ -61,7 +61,6 @@ const std::pair<Method, std::string_view> kMethods[] = {
     {Method::vault_update, "vault.update"},
     {Method::vault_delete, "vault.delete"},
     {Method::vault_switch, "vault.switch"},
-    {Method::vault_merge, "vault.merge"},
     {Method::vault_upload, "vault.upload"},
     {Method::vault_upload_check, "vault.upload.check"},
     {Method::vault_download, "vault.download"},
@@ -216,7 +215,7 @@ bool requires_context_epoch(Method method) noexcept {
 }
 
 bool changes_context(Method method) noexcept {
-    return method == Method::vault_switch || method == Method::vault_merge
+    return method == Method::vault_switch
         || method == Method::vault_update || method == Method::vault_upload
         || method == Method::vault_download || method == Method::vault_import
         || method == Method::vault_export;

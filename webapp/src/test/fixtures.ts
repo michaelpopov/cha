@@ -398,7 +398,6 @@ export function fixtureClient(overrides: Partial<Omit<ChaClient & NotesClient, '
     stopXaiVoiceInput: async (sessionId) => ({ session_id: sessionId, pieces: [] }),
     cancelXaiVoiceInput: async () => undefined,
     switchVault: async () => undefined,
-    mergeVault: async () => undefined,
     uploadVault: async () => 0,
     checkVaultUpload: async () => ({ etag: 'fixture-etag', status: 'match', context_epoch: 1 }),
     downloadVault: async () => 0,
